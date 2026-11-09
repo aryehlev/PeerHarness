@@ -1,5 +1,6 @@
 [package]
 name = "ph-observer"
+description = "PeerHarness Claude Code hook observer: payload normalization, settings.json install/remove, spool, notification throttle"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,5 +12,19 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+ph-core.workspace = true
+serde.workspace = true
+# Not `preserve_order`: Cargo would unify it workspace-wide and break ph-protocol's
+# vector files. Settings key order is preserved by our own `json_doc` module instead.
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tempfile.workspace = true
+
+# O_NOFOLLOW / O_NONBLOCK / ELOOP constants for safe spool and settings opens (no unsafe code).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
 
 [dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true

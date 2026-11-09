@@ -1,5 +1,6 @@
 [package]
 name = "ph-network"
+description = "PeerHarness libp2p QUIC transport: bounded request/response codec, per-peer rate limits, async handle"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,5 +12,15 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+ph-core.workspace = true
+ph-protocol.workspace = true
+libp2p.workspace = true
+tokio.workspace = true
+futures.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
+ed25519-dalek.workspace = true
+

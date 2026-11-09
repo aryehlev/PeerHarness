@@ -1,5 +1,6 @@
 [package]
 name = "ph-learning"
+description = "PeerHarness local learning: deterministic correction detector, candidate dedup, skill drafts, optional advisory agent providers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,5 +12,16 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+ph-core.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
+ph-protocol.workspace = true
+tempfile.workspace = true
+toml.workspace = true

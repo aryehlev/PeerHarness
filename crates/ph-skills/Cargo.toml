@@ -1,5 +1,6 @@
 [package]
 name = "ph-skills"
+description = "PeerHarness skills: strict SKILL.md parsing and validation, risk scanning, content-addressed bundles, atomic install"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,5 +12,19 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+ph-core.workspace = true
+ph-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+similar.workspace = true
+regex.workspace = true
+hex.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.191"
 
 [dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
