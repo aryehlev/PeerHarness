@@ -1,0 +1,48 @@
+[package]
+name = "peerharness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Local-first, peer-to-peer learning harness for AI coding agents"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "peerharness"
+path = "src/main.rs"
+
+[dependencies]
+libp2p.workspace = true
+tokio.workspace = true
+futures.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+rand.workspace = true
+rusqlite.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+time.workspace = true
+base64.workspace = true
+hex.workspace = true
+zeroize.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
+keyring.workspace = true
+rpassword.workspace = true
+similar.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true

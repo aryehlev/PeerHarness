@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ph-core",
+    "crates/ph-protocol",
+    "crates/ph-identity",
+    "crates/ph-store",
+    "crates/ph-network",
+    "crates/ph-observer",
+    "crates/ph-learning",
+    "crates/ph-governance",
+    "crates/ph-skills",
+    "apps/peerharness",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/aryehlev/peerharness"
+authors = ["PeerHarness contributors"]
+
+[workspace.dependencies]
+# internal
+ph-core = { path = "crates/ph-core", version = "0.1.0" }
+ph-protocol = { path = "crates/ph-protocol", version = "0.1.0" }
+ph-identity = { path = "crates/ph-identity", version = "0.1.0" }
+ph-store = { path = "crates/ph-store", version = "0.1.0" }
+ph-network = { path = "crates/ph-network", version = "0.1.0" }
+ph-observer = { path = "crates/ph-observer", version = "0.1.0" }
+ph-learning = { path = "crates/ph-learning", version = "0.1.0" }
+ph-governance = { path = "crates/ph-governance", version = "0.1.0" }
+ph-skills = { path = "crates/ph-skills", version = "0.1.0" }
+
+# external (versions aligned with libp2p 0.57's own crypto stack)
+libp2p = { version = "0.57.1", default-features = false, features = ["quic", "request-response", "tokio", "ed25519", "macros"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal", "fs", "process"] }
+futures = "0.3.34"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+ed25519-dalek = { version = "3.0.0", features = ["rand_core", "zeroize"] }
+rand = "0.10.3"
+rand_core = "0.10.1"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+time = { version = "0.3.55", features = ["formatting", "parsing", "macros", "serde"] }
+base64 = "0.23.1"
+hex = "0.4.3"
+zeroize = { version = "1.9.1", features = ["derive"] }
+argon2 = "0.6.0"
+chacha20poly1305 = "0.11.0"
+keyring = "4.2.0"
+rpassword = "7.5.4"
+similar = "3.2.1"
+ureq = { version = "3.5.1", default-features = false, features = ["json"] }
+regex = "1.13.1"
+toml = "1.2.1"
+unicode-normalization = "0.1.26"
+tempfile = "3.27.0"
+proptest = "1.12.0"
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
