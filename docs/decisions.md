@@ -63,3 +63,17 @@ bundled SQLite for three reasons:
    SQLite's WAL plus file locking is proven for that pattern.
 3. Our write rate is tiny, so raw engine speed is not a bottleneck.
 All access goes through `ph-store`, so switching engines later stays a contained change.
+
+## ADR-010: REVOCATION authorization is by root-key binding
+A REVOCATION is authored by the circle root key, which holds no membership credential.
+It is therefore authorized by checking `derive(author) == circle_id` (see
+`ph_protocol::Authorization::CircleRoot`), not through the `MembershipOracle`.
+MEMBERSHIP events are authorized by their embedded credential and acceptance
+(`Authorization::EmbeddedCredential`).
+
+## ADR-011: Stricter-than-spec input rules
+* A `DeviceKey` must be a canonical point encoding and must not be small-order, so each
+  key has exactly one string, circle id and fingerprint.
+* Free-text fields reject bidi controls (Trojan-source) and, for single-line fields, the
+  U+2028/U+2029 line separators.
+* `Debug` output of peer-supplied text prints lengths only.

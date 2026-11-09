@@ -1,0 +1,20 @@
+{
+  "description": "Ed25519 seeds (RFC 8032 secret keys) used by every vector.",
+  "device": {
+    "fingerprint": "b2e4-2623-2e9e-981a-f166",
+    "public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101"
+  },
+  "peer": {
+    "fingerprint": "42b3-f969-e8d1-ba63-b0da",
+    "public_key": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+    "seed_hex": "0303030303030303030303030303030303030303030303030303030303030303"
+  },
+  "root": {
+    "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+    "circle_id_input_hex": "706565726861726e6573732d636972636c652d7630008139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+    "fingerprint": "75c1-acc2-d3b7-9dd2-140b",
+    "public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "seed_hex": "0202020202020202020202020202020202020202020202020202020202020202"
+  }
+}

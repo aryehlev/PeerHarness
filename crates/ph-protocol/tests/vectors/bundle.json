@@ -1,0 +1,22 @@
+{
+  "canonical": "{\"files\":[{\"path\":\"SKILL.md\",\"sha256\":\"sha256:0eae44733cd02d5d6331ee24a7ad8561e79274445f8ed925507b87fbbb3b4398\",\"size\":357}],\"schema\":\"peerharness.bundle/0.1\"}",
+  "context": "peerharness-bundle-v0",
+  "digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
+  "digest_input_hex": "706565726861726e6573732d62756e646c652d7630007b2266696c6573223a5b7b2270617468223a22534b494c4c2e6d64222c22736861323536223a227368613235363a30656165343437333363643032643564363333316565323461376164383536316537393237343434356638656439323535303762383766626262336234333938222c2273697a65223a3335377d5d2c22736368656d61223a22706565726861726e6573732e62756e646c652f302e31227d",
+  "files": [
+    {
+      "content": "---\nname: pnpm-repository-convention\ndescription: Use pnpm when installing packages or running package scripts in the specified repository.\n---\n\nWhen working in this repository, use pnpm instead of npm for dependency\ninstallation and package scripts. Verify repository configuration before\nchanging lockfiles; do not convert package managers automatically.\n",
+      "path": "SKILL.md"
+    }
+  ],
+  "manifest": {
+    "files": [
+      {
+        "path": "SKILL.md",
+        "sha256": "sha256:0eae44733cd02d5d6331ee24a7ad8561e79274445f8ed925507b87fbbb3b4398",
+        "size": 357
+      }
+    ],
+    "schema": "peerharness.bundle/0.1"
+  }
+}
