@@ -12,10 +12,9 @@ Agents can suggest rules. Only people decide: no step that approves, shares, vot
 installs can be answered from inside an agent's session. If you allow it, your agent
 can put a proposal or a ballot in front of you in a window, and your click decides.
 
-> **Status: pre-release, not audited.** No release is published yet, so for now the
-> install line below tells you to build from source. Everything else on this page works
-> and is tested end to end. Read [What works today](#what-works-today) and
-> [Known limits](#known-limits) before relying on it.
+> **Status: v0.1.0, early and not audited.** What this page describes works.
+> [What works today](#what-works-today) says how each part was tested and
+> [Known limits](#known-limits) says what is missing. Read both before relying on it.
 
 ## Install and see it run
 
@@ -266,7 +265,7 @@ command has `--help`.
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
 | Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. The logic is tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
-| The install script | tested against a stand-in release (a matching checksum installs, a changed archive does not). No release has been published yet: until one is, the script says so and prints the build-from-source command |
+| The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.1.0 on an Apple Silicon Mac. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet |
 | Windows | not supported yet |
 
 ## Known limits
