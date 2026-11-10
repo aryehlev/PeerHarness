@@ -664,12 +664,23 @@ pub enum RuleCommand {
         #[arg(long, value_name = "NAME")]
         circle: Option<String>,
     },
-    /// Keep one rule off this machine. Only this machine changes.
+    /// Keep one rule off this machine. Only this machine changes, unless you choose to
+    /// put it on the circle's record with --announce.
     OptOut {
         /// The rule's skill name.
         name: String,
         #[arg(long, value_name = "NAME")]
         circle: String,
+        /// Also tell the circle: a signed, permanent record that you do not follow this
+        /// rule. It changes nothing about the rule.
+        #[arg(long)]
+        announce: bool,
+        /// With --announce: why, shared with the members after redaction.
+        #[arg(long, value_name = "TEXT", requires = "announce")]
+        reason: Option<String>,
+        /// With --announce: skip the confirmation prompt (after reviewing the preview).
+        #[arg(long, requires = "announce")]
+        yes: bool,
     },
     /// Follow a rule again after opting out.
     OptIn {
@@ -677,6 +688,12 @@ pub enum RuleCommand {
         name: String,
         #[arg(long, value_name = "NAME")]
         circle: String,
+        /// Also tell the circle that you follow the rule again.
+        #[arg(long)]
+        announce: bool,
+        /// With --announce: skip the confirmation prompt (after reviewing the preview).
+        #[arg(long, requires = "announce")]
+        yes: bool,
     },
     /// Propose repealing a rule in force. The members who adopted it vote on it.
     Repeal {
@@ -813,6 +830,27 @@ mod tests {
             vec![
                 "peerharness",
                 "rule",
+                "opt-out",
+                "pnpm",
+                "--circle",
+                "team",
+                "--announce",
+                "--reason",
+                "Our CI images only ship npm.",
+            ],
+            vec![
+                "peerharness",
+                "rule",
+                "opt-in",
+                "pnpm",
+                "--circle",
+                "team",
+                "--announce",
+                "--yes",
+            ],
+            vec![
+                "peerharness",
+                "rule",
                 "repeal",
                 "pnpm",
                 "--circle",
@@ -915,6 +953,17 @@ mod tests {
             Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
         assert!(Cli::try_parse_from(["peerharness", "daemon", "--sync-every", "5"]).is_err());
+        assert!(Cli::try_parse_from([
+            "peerharness",
+            "rule",
+            "opt-out",
+            "pnpm",
+            "--circle",
+            "team",
+            "--reason",
+            "x"
+        ])
+        .is_err());
         assert!(Cli::try_parse_from([
             "peerharness",
             "circle",

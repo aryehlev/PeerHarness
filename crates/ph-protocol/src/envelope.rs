@@ -81,11 +81,16 @@ pub enum EventType {
     /// `REVOCATION`: convey a revocation, authored by the root key. Control plane.
     /// Permanent.
     Revocation,
+    /// `STANCE`: a member's public statement that they do not follow a rule in force on
+    /// their own machine, or follow it again. Authorized by the roll of the charter it
+    /// names. Permanent. It is a record and nothing else: it never changes whether a
+    /// rule passed, is in force, or is installed anywhere.
+    Stance,
 }
 
 impl EventType {
     /// All event types.
-    pub const ALL: [EventType; 8] = [
+    pub const ALL: [EventType; 9] = [
         EventType::Question,
         EventType::Answer,
         EventType::Proposal,
@@ -94,6 +99,7 @@ impl EventType {
         EventType::Charter,
         EventType::Membership,
         EventType::Revocation,
+        EventType::Stance,
     ];
 
     /// The wire string, e.g. `"QUESTION"`.
@@ -107,6 +113,7 @@ impl EventType {
             EventType::Charter => "CHARTER",
             EventType::Membership => "MEMBERSHIP",
             EventType::Revocation => "REVOCATION",
+            EventType::Stance => "STANCE",
         }
     }
 
@@ -122,7 +129,8 @@ impl EventType {
             | EventType::Result
             | EventType::Charter
             | EventType::Membership
-            | EventType::Revocation => None,
+            | EventType::Revocation
+            | EventType::Stance => None,
         }
     }
 
@@ -131,7 +139,9 @@ impl EventType {
         match self {
             EventType::Question => Authorization::Capability(Capability::Ask),
             EventType::Answer => Authorization::Capability(Capability::Answer),
-            EventType::Proposal | EventType::Vote | EventType::Result => Authorization::Roll,
+            EventType::Proposal | EventType::Vote | EventType::Result | EventType::Stance => {
+                Authorization::Roll
+            }
             EventType::Membership => Authorization::EmbeddedCredential,
             EventType::Charter | EventType::Revocation => Authorization::CircleRoot,
         }
@@ -148,7 +158,8 @@ impl EventType {
             | EventType::Vote
             | EventType::Result
             | EventType::Charter
-            | EventType::Revocation => Some(lifetimes::PERMANENT_SECS),
+            | EventType::Revocation
+            | EventType::Stance => Some(lifetimes::PERMANENT_SECS),
             EventType::Membership => None,
         }
     }
@@ -171,10 +182,21 @@ impl EventType {
         )
     }
 
+    /// Whether events of this type are authorized by a roll and read by the members
+    /// that roll entitles: the decision events and STANCE. With scope `*` they concern,
+    /// and reach, every member; with another scope, the members whose roll entry covers
+    /// it.
+    pub const fn is_roll_record(self) -> bool {
+        matches!(
+            self,
+            EventType::Proposal | EventType::Vote | EventType::Result | EventType::Stance
+        )
+    }
+
     /// Whether events of this type are permanent records whose `expires_at` is never
-    /// enforced (architecture section 10.11): the decision events, CHARTER and
-    /// REVOCATION. Outcomes of a vote must not depend on a clock, and a revocation must
-    /// never lapse.
+    /// enforced (architecture section 10.11): the decision events, CHARTER, REVOCATION
+    /// and STANCE. Outcomes of a vote must not depend on a clock, a revocation must
+    /// never lapse, and what a member put on the record stays there.
     pub const fn is_permanent(self) -> bool {
         matches!(
             self,
@@ -183,6 +205,7 @@ impl EventType {
                 | EventType::Result
                 | EventType::Charter
                 | EventType::Revocation
+                | EventType::Stance
         )
     }
 }
@@ -203,10 +226,10 @@ pub enum Authorization {
     /// credential, so do **not** ask the oracle. A CHARTER must additionally be a valid
     /// successor of the current charter (`ph-governance`).
     CircleRoot,
-    /// PROPOSAL, VOTE and RESULT: the author must be a device of a member in the
-    /// proposal's electorate, per the roll of the charter the proposal names
-    /// (architecture section 10). The credential oracle is **not** consulted, so the
-    /// answer does not change with time.
+    /// PROPOSAL, VOTE, RESULT and STANCE: the author must be a device of a member in the
+    /// proposal's electorate, per the roll of the charter the proposal names (for a
+    /// STANCE, the charter the stance itself names; architecture section 10). The
+    /// credential oracle is **not** consulted, so the answer does not change with time.
     Roll,
 }
 
@@ -557,6 +580,63 @@ pub struct VoteBody {
     pub rationale: Option<String>,
 }
 
+/// What a member says about a rule in force (STANCE `stance`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stance {
+    /// `"opted_out"`: the member keeps the rule off their own machine.
+    OptedOut,
+    /// `"following"`: the member follows the rule (again).
+    Following,
+}
+
+impl Stance {
+    /// The wire string.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Stance::OptedOut => "opted_out",
+            Stance::Following => "following",
+        }
+    }
+}
+
+/// STANCE body: a member's statement about one rule in force.
+///
+/// An opt-out is the owner's right and works without telling anyone. A STANCE is the
+/// choice to put it on the circle's record, so that "binding" keeps an honest meaning:
+/// the members can see who follows what they voted. It names the `adopt` proposal of the
+/// rule, and, like a proposal, the charter under which its author is a member, so every
+/// node judges it against the same roll at any time. A member's latest stance on a
+/// proposal (by `created_at`, then event id) is their current one.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StanceBody {
+    /// The `adopt` PROPOSAL whose rule the stance is about.
+    pub proposal_id: EventId,
+    /// Digest of the charter whose roll lists the author.
+    pub charter: Digest,
+    /// The stance.
+    pub stance: Stance,
+    /// Optional reason (0-2000 chars, multi-line).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "some"
+    )]
+    pub reason: Option<String>,
+}
+
+impl fmt::Debug for StanceBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StanceBody")
+            .field("proposal_id", &self.proposal_id)
+            .field("charter", &self.charter)
+            .field("stance", &self.stance)
+            .field("reason_len", &self.reason.as_ref().map(String::len))
+            .finish()
+    }
+}
+
 // Free text received from peers never appears in `Debug` output (architecture section
 // 13: logs carry ids and counts only). The impls below print lengths instead.
 
@@ -711,6 +791,8 @@ pub enum EventBody {
     Membership(MembershipBody),
     /// REVOCATION.
     Revocation(RevocationBody),
+    /// STANCE.
+    Stance(StanceBody),
 }
 
 fn opt_text(
@@ -745,6 +827,7 @@ impl EventBody {
             EventBody::Charter(_) => EventType::Charter,
             EventBody::Membership(_) => EventType::Membership,
             EventBody::Revocation(_) => EventType::Revocation,
+            EventBody::Stance(_) => EventType::Stance,
         }
     }
 
@@ -762,6 +845,7 @@ impl EventBody {
             EventType::Charter => EventBody::Charter(de(body)?),
             EventType::Membership => EventBody::Membership(de(body)?),
             EventType::Revocation => EventBody::Revocation(de(body)?),
+            EventType::Stance => EventBody::Stance(de(body)?),
         };
         b.validate()?;
         Ok(b)
@@ -778,6 +862,7 @@ impl EventBody {
             EventBody::Charter(b) => jcs::to_value(b),
             EventBody::Membership(b) => jcs::to_value(b),
             EventBody::Revocation(b) => jcs::to_value(b),
+            EventBody::Stance(b) => jcs::to_value(b),
         }
     }
 
@@ -842,6 +927,9 @@ impl EventBody {
             }
             EventBody::Revocation(b) => {
                 b.revocation.check_structure()?;
+            }
+            EventBody::Stance(b) => {
+                opt_text("reason", &b.reason, t::RATIONALE, Lines::Multi)?;
             }
         }
         Ok(())

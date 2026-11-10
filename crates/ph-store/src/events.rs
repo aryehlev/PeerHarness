@@ -238,6 +238,7 @@ fn refs(body: &EventBody) -> (Option<EventId>, Option<Digest>) {
             ProposalAction::Amend { .. } => (None, None),
         },
         EventBody::Vote(b) => (Some(b.proposal_id), None),
+        EventBody::Stance(b) => (Some(b.proposal_id), None),
         EventBody::Result(b) => (Some(b.proposal_id), None),
         EventBody::Question(_)
         | EventBody::Charter(_)
@@ -534,7 +535,7 @@ impl Store {
             }
             let ev = row(r)?;
             let for_every_member = ev.event_type.is_control_plane()
-                || (ev.event_type.is_decision() && ev.scope.is_wildcard());
+                || (ev.event_type.is_roll_record() && ev.scope.is_wildcard());
             if !(for_every_member || readable(&ev.scope)) {
                 out.last_seen = Some(id);
                 continue;
@@ -570,6 +571,13 @@ impl Store {
     /// first. Empty while the QUESTION event is not stored.
     pub fn answers_for_question(&self, question_id: &EventId) -> Result<Vec<StoredEvent>> {
         self.referencing(question_id, EventType::Answer, EventType::Question)
+    }
+
+    /// STANCE events referencing `proposal_id` in the proposal's own circle, oldest
+    /// first. They are a record and nothing else: callers show them, and count nothing
+    /// from them.
+    pub fn stances_for_proposal(&self, proposal_id: &EventId) -> Result<Vec<StoredEvent>> {
+        self.referencing(proposal_id, EventType::Stance, EventType::Proposal)
     }
 
     /// RESULT events referencing `proposal_id` in the proposal's own circle, oldest

@@ -11,7 +11,8 @@
 //! * Decision events with scope `*` are readable by every active member too. A `*`
 //!   proposal concerns the whole circle and its electorate is the whole roll
 //!   (architecture section 10.3); every `amend` proposal is one. Members could not vote
-//!   on what they cannot read.
+//!   on what they cannot read. A STANCE is read like the decision events of the rule it
+//!   is about.
 //!
 //! Use [`recipients_for_event`] (or [`recipients`]) to filter outgoing pushes and the
 //! outbox, [`filter_readable`] to filter `FetchEvents` responses, and
@@ -48,7 +49,7 @@ pub fn may_read_event(
     now: Timestamp,
 ) -> bool {
     let t = env.event_type();
-    if t.is_control_plane() || (t.is_decision() && env.scope.is_wildcard()) {
+    if t.is_control_plane() || (t.is_roll_record() && env.scope.is_wildcard()) {
         oracle.is_active_member(&env.circle_id, peer, now)
     } else {
         may_read(oracle, &env.circle_id, peer, &env.scope, now)

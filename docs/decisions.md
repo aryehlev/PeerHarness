@@ -348,3 +348,31 @@ here without answering anyone who is not, or was not, on a roll this node itself
 * `sync` without an argument syncs with every peer whose address is stored, and
   `daemon --sync-every <seconds>` does the same on a timer. Neither dials anyone the
   owner has not synced with before.
+
+## ADR-029: An opt-out can be put on the record (STANCE)
+An opt-out was local only: the circle could not tell a binding rule that everyone
+follows from one that half the members had quietly switched off. Recording dissent as a
+`reject` ballot does not cover it: a ballot counts only for the roll the proposal names,
+so a member admitted after a rule passed has no ballot to cast, and a member who
+approved and later opts out would be on record with both an approval and a rejection.
+A new event type, `STANCE`, carries the statement: the `adopt` proposal of the rule, the
+digest of the charter under which the author is a member, `opted_out` or `following`,
+and an optional reason. It is authorized like a ballot, by the roll, but by the roll of
+the charter **it names** rather than the proposal's, so members who joined later can
+make one, and the answer is the same on every node at any time. It is read like the
+decision events of its rule and never expires.
+
+It is a record and nothing else. No tally, certificate, rule set or installation reads
+it; "passed never reverts" and "an opt-out always wins" are untouched. Publishing one is
+the owner's choice (`rule opt-out --announce`, `rule opt-in --announce`), previewed and
+confirmed like everything that leaves the machine. The opt-out on the machine never
+waits for that confirmation: it has already happened when the prompt appears, and stays
+if the announcement is refused. A member's latest stance on a rule is the current one;
+stances of members no longer on the roll, and of revoked devices, are not shown. This is
+display state ordered by `created_at`, which is acceptable only because nothing is
+decided from it.
+
+Adding an event type is a protocol change: the envelope schema version is unchanged
+(existing events are byte-for-byte what they were, and the golden vectors only gained
+one entry), and a node that predates the type rejects a STANCE as an unknown event type
+without affecting anything else it holds.

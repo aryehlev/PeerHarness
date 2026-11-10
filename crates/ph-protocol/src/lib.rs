@@ -51,8 +51,8 @@ pub use envelope::{
     check_time_rules, check_time_rules_for, validate_stateless, validate_stateless_value,
     AdoptAction, AnswerBody, AnswerChoice, Authorization, CharterBody, EnvelopeBuilder, EventBody,
     EventType, MembershipBody, ProposalAction, ProposalBody, ProposalKind, QuestionBody,
-    ResultBody, RevocationBody, SignedEnvelope, UnsignedEnvelope, VerifiedEnvelope, VoteBody,
-    VoteDecision,
+    ResultBody, RevocationBody, SignedEnvelope, Stance, StanceBody, UnsignedEnvelope,
+    VerifiedEnvelope, VoteBody, VoteDecision,
 };
 pub use error::{JcsError, ProtocolError, TimeRule};
 pub use signing::{object_digest, sign_object, signing_input, verify_object, Context};

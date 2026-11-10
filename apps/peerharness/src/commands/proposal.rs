@@ -341,6 +341,28 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     for m in tally.silent() {
         t.line(format!("  (no ballot) {m}"));
     }
+    if p.kind() == ProposalKind::Adopt {
+        let recorded = governance::stances(
+            &node.store,
+            &circle.circle_id,
+            &p.event_id(),
+            &node.device_key(),
+        )?;
+        for s in recorded
+            .iter()
+            .filter(|s| s.stance == ph_protocol::Stance::OptedOut)
+        {
+            t.line(format!(
+                "  on record as opted out: {}{}",
+                s.member,
+                s.reason
+                    .as_deref()
+                    .filter(|r| !r.is_empty())
+                    .map(|r| format!(": {}", safe(r)))
+                    .unwrap_or_default()
+            ));
+        }
+    }
     if let Some(next) = p.amend_next() {
         let (_, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
         let diff = carried_diff(&next.carried, &rules);

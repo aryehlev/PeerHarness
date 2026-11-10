@@ -788,5 +788,51 @@
       "type": "REVOCATION"
     },
     "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"charter\":\"sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e\",\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\",\"reason\":\"Our CI images only ship npm.\",\"stance\":\"opted_out\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T10:00:00Z\",\"expires_at\":\"2027-12-15T10:00:00Z\",\"nonce\":\"base64url:GRkZGRkZGRkZGRkZGRkZGQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"STANCE\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:d584f58728107cef0ec5e1ee8e8d1dce6a0da3f545c11b55b56f270b571a02e3",
+    "name": "STANCE",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:B98HhDOI-77JKwXjasM6QrhXCONXZT164S5NJUPBvqBOjMBdA45YSmX_JGQ3FPDDHUbtBktpgOXULdSCWt_1Aw",
+    "signed": {
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "body": {
+        "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+        "reason": "Our CI images only ship npm.",
+        "stance": "opted_out"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-10T10:00:00Z",
+      "event_id": "sha256:d584f58728107cef0ec5e1ee8e8d1dce6a0da3f545c11b55b56f270b571a02e3",
+      "expires_at": "2027-12-15T10:00:00Z",
+      "nonce": "base64url:GRkZGRkZGRkZGRkZGRkZGQ",
+      "schema": "peerharness.event/0.1",
+      "scope": "team/backend",
+      "signature": "base64url:B98HhDOI-77JKwXjasM6QrhXCONXZT164S5NJUPBvqBOjMBdA45YSmX_JGQ3FPDDHUbtBktpgOXULdSCWt_1Aw",
+      "type": "STANCE"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"charter\":\"sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e\",\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\",\"reason\":\"Our CI images only ship npm.\",\"stance\":\"opted_out\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T10:00:00Z\",\"event_id\":\"sha256:d584f58728107cef0ec5e1ee8e8d1dce6a0da3f545c11b55b56f270b571a02e3\",\"expires_at\":\"2027-12-15T10:00:00Z\",\"nonce\":\"base64url:GRkZGRkZGRkZGRkZGRkZGQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:B98HhDOI-77JKwXjasM6QrhXCONXZT164S5NJUPBvqBOjMBdA45YSmX_JGQ3FPDDHUbtBktpgOXULdSCWt_1Aw\",\"type\":\"STANCE\"}",
+    "signer_public_key": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b2263686172746572223a227368613235363a66333835366332626665626530326235343061393631343838643063366161333262353463626462373535663636346134663239623433623038656562363565222c2270726f706f73616c5f6964223a227368613235363a65316662633562623136316632663466326363393631386164643436383961663165653333653864313032316438616439346235656235303765363237643832222c22726561736f6e223a224f757220434920696d61676573206f6e6c792073686970206e706d2e222c227374616e6365223a226f707465645f6f7574227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d31305431303a30303a30305a222c22657870697265735f6174223a22323032372d31322d31355431303a30303a30305a222c226e6f6e6365223a2262617365363475726c3a47526b5a47526b5a47526b5a47526b5a47526b5a4751222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a225354414e4345227d",
+    "unsigned": {
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "body": {
+        "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+        "reason": "Our CI images only ship npm.",
+        "stance": "opted_out"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-10T10:00:00Z",
+      "expires_at": "2027-12-15T10:00:00Z",
+      "nonce": "base64url:GRkZGRkZGRkZGRkZGRkZGQ",
+      "schema": "peerharness.event/0.1",
+      "scope": "team/backend",
+      "type": "STANCE"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
   }
 ]

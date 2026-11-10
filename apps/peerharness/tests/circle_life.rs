@@ -625,3 +625,154 @@ fn the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted() {
         "a node that knows its device is revoked does not sign ballots with it"
     );
 }
+
+#[test]
+fn an_opt_out_can_be_put_on_the_circles_record() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol, fingerprint) = trio(root, "*");
+    let all = [&alice, &bob, &carol];
+    let (rule, skill) = propose(&alice, "Use pnpm, not npm, in this repository.");
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &all);
+    bob.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &all);
+    assert!(carol.has_skill(&skill), "binding: installed for carol too");
+
+    // Nothing is on record for a rule that is not in force, and nothing changes.
+    assert_eq!(
+        carol.fail(&[
+            "rule",
+            "opt-out",
+            "no-such-rule",
+            "--circle",
+            "team",
+            "--announce",
+            "--yes"
+        ]),
+        2
+    );
+    // A plain opt-out tells nobody.
+    carol.run(&["rule", "opt-out", &skill, "--circle", "team"]);
+    assert!(!carol.has_skill(&skill));
+    carry(root, &all);
+    assert_eq!(
+        alice.run(&["rule", "list"])["rules"][0]["on_record"],
+        serde_json::json!([])
+    );
+    carol.run(&["rule", "opt-in", &skill, "--circle", "team"]);
+    assert!(carol.has_skill(&skill));
+
+    // An agent can never speak for its user. The opt-out itself still happens: no
+    // prompt stands between an owner and their own machine.
+    assert_eq!(
+        carol.fail_as_agent(&[
+            "rule",
+            "opt-out",
+            &skill,
+            "--circle",
+            "team",
+            "--announce",
+            "--yes"
+        ]),
+        3
+    );
+    assert!(!carol.has_skill(&skill));
+    carry(root, &all);
+    assert_eq!(
+        alice.run(&["rule", "list"])["rules"][0]["on_record"],
+        serde_json::json!([])
+    );
+
+    // Carol puts it on the record, with her reason.
+    let announced = carol.run(&[
+        "rule",
+        "opt-out",
+        &skill,
+        "--circle",
+        "team",
+        "--announce",
+        "--reason",
+        "Our CI images only ship npm.",
+        "--yes",
+    ]);
+    assert_eq!(announced["announced"], true);
+    carry(root, &all);
+    for node in [&alice, &bob] {
+        let rules = node.run(&["rule", "list"]);
+        let record = &rules["rules"][0]["on_record"];
+        assert_eq!(record[0]["member"], "carol", "{}", node.name);
+        assert_eq!(record[0]["stance"], "opted_out");
+        assert_eq!(record[0]["reason"], "Our CI images only ship npm.");
+        // The rule is as much in force as before, and installed where it was.
+        assert_eq!(rules["rules"].as_array().unwrap().len(), 1);
+        assert!(node.has_skill(&skill), "{}", node.name);
+        let shown = node.run(&["proposal", "show", &rule]);
+        assert_eq!(shown["passed"], true);
+        assert_eq!(names(&shown["approvals"]), ["alice", "bob"]);
+    }
+
+    // A member admitted after the rule passed is bound by it and can record a stance
+    // too, although they were on no roll when it was voted.
+    let dave = Node::new(root, "dave");
+    let invited = alice.run(&[
+        "circle",
+        "invite",
+        &dave.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "dave",
+        "--yes",
+    ]);
+    let id = invited["proposal_id"].as_str().unwrap().to_owned();
+    carry(root, &all);
+    bob.run(&["proposal", "vote", &id, "approve", "--yes"]);
+    carry(root, &all);
+    let file = root.join("for-dave.jsonl");
+    let file = file.to_str().unwrap().to_owned();
+    alice.run(&["events", "export", "--circle", "team", "--out", &file]);
+    join(&dave, &file, &fingerprint);
+    assert!(dave.has_skill(&skill));
+    dave.run(&[
+        "rule",
+        "opt-out",
+        &skill,
+        "--circle",
+        "team",
+        "--announce",
+        "--yes",
+    ]);
+    let everyone = [&alice, &bob, &carol, &dave];
+    carry(root, &everyone);
+    let record = alice.run(&["rule", "list"])["rules"][0]["on_record"].clone();
+    let who: Vec<&str> = record
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["member"].as_str().unwrap())
+        .collect();
+    assert_eq!(who, ["carol", "dave"]);
+
+    // Carol follows the rule again and says so. Her latest stance is her current one.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    carol.run(&[
+        "rule",
+        "opt-in",
+        &skill,
+        "--circle",
+        "team",
+        "--announce",
+        "--yes",
+    ]);
+    assert!(carol.has_skill(&skill));
+    carry(root, &everyone);
+    let record = bob.run(&["rule", "list"])["rules"][0]["on_record"].clone();
+    let carols = record
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["member"] == "carol")
+        .unwrap();
+    assert_eq!(carols["stance"], "following");
+}

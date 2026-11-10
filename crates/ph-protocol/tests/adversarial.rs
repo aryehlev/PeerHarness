@@ -397,6 +397,9 @@ fn authorization_requirements() {
         (EventType::Charter, Authorization::CircleRoot),
         (EventType::Membership, Authorization::EmbeddedCredential),
         (EventType::Revocation, Authorization::CircleRoot),
+        // A stance is a record by a member of a roll, like a ballot, and counts for
+        // nothing.
+        (EventType::Stance, Authorization::Roll),
     ];
     assert_eq!(expected.len(), EventType::ALL.len());
     for (t, a) in expected {

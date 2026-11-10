@@ -2,6 +2,7 @@
 //! proposing a repeal (architecture sections 10.4, 10.7 and 10.9).
 
 use anyhow::Result;
+use ph_protocol::Stance;
 use ph_skills::InstallState;
 use ph_store::CircleRow;
 use serde_json::json;
@@ -9,7 +10,7 @@ use serde_json::json;
 use crate::cli::RuleCommand;
 use crate::commands::circle::find_circle;
 use crate::commands::Ctx;
-use crate::error::usage;
+use crate::error::{refused, usage};
 use crate::governance;
 use crate::node::Node;
 use crate::output::{safe, short_id, Report, Text};
@@ -27,13 +28,58 @@ pub fn run(ctx: &Ctx, command: RuleCommand) -> Result<Report> {
             repeal(ctx, &node, &circle, &name, reason.as_deref(), yes)
         }
         RuleCommand::List { circle } => list(&node, circle.as_deref()),
-        RuleCommand::OptOut { name, circle } => {
+        RuleCommand::OptOut {
+            name,
+            circle,
+            announce,
+            reason,
+            yes,
+        } => {
             let circle = find_circle(&node, Some(&circle))?;
-            opt(&node, &circle, &name, true)
+            if announce {
+                // Checked before anything changes, so a typo announces nothing.
+                rule_in_force(&node, &circle, &name)?;
+            }
+            let report = opt(&node, &circle, &name, true)?;
+            if announce {
+                let said = Stance::OptedOut;
+                return put_on_record(
+                    ctx,
+                    &node,
+                    &circle,
+                    &name,
+                    said,
+                    reason.as_deref(),
+                    yes,
+                    report,
+                );
+            }
+            Ok(report)
         }
-        RuleCommand::OptIn { name, circle } => {
+        RuleCommand::OptIn {
+            name,
+            circle,
+            announce,
+            yes,
+        } => {
             let circle = find_circle(&node, Some(&circle))?;
-            opt(&node, &circle, &name, false)
+            if announce {
+                rule_in_force(&node, &circle, &name)?;
+            }
+            let report = opt(&node, &circle, &name, false)?;
+            if announce {
+                return put_on_record(
+                    ctx,
+                    &node,
+                    &circle,
+                    &name,
+                    Stance::Following,
+                    None,
+                    yes,
+                    report,
+                );
+            }
+            Ok(report)
         }
     }
 }
@@ -90,6 +136,26 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 rule.scope(),
                 short_id(&rule.proposal_id())
             ));
+            let recorded = governance::stances(
+                &node.store,
+                &c.circle_id,
+                &rule.proposal_id(),
+                &node.device_key(),
+            )?;
+            let out_of_it: Vec<String> = recorded
+                .iter()
+                .filter(|s| s.stance == Stance::OptedOut)
+                .map(|s| match s.reason.as_deref().filter(|r| !r.is_empty()) {
+                    Some(r) => format!("{} ({})", s.member, safe(r)),
+                    None => s.member.clone(),
+                })
+                .collect();
+            if !out_of_it.is_empty() {
+                t.line(format!(
+                    "      on record as opted out: {}",
+                    out_of_it.join(", ")
+                ));
+            }
             rows.push(json!({
                 "circle": c.name,
                 "skill_name": rule.skill_name(),
@@ -99,6 +165,11 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 "opted_out": opted_out,
                 "binds_you": binds_me,
                 "state": here,
+                "on_record": recorded.iter().map(|s| json!({
+                    "member": s.member,
+                    "stance": s.stance.as_str(),
+                    "reason": s.reason,
+                })).collect::<Vec<_>>(),
             }));
         }
         for id in rules.missing_carried() {
@@ -136,7 +207,11 @@ pub fn opt(node: &Node, circle: &CircleRow, name: &str, out: bool) -> Result<Rep
         if settled.applied.removed.iter().any(|s| s == name) {
             t.line("  removed it from your agent's skills");
         }
-        t.line("  Your recorded dissent is your ballot: `peerharness proposal vote <id> reject`.");
+        t.line(format!(
+            "  Nobody else is told. To put it on the circle's record: \
+             `peerharness rule opt-out {name} --circle {} --announce`.",
+            circle.name
+        ));
     } else {
         t.line(format!("Following {name} again."));
         if settled.applied.installed.iter().any(|s| s == name) {
@@ -158,6 +233,99 @@ pub fn opt(node: &Node, circle: &CircleRow, name: &str, out: bool) -> Result<Rep
         }),
         t.finish(),
     ))
+}
+
+/// The rule named `name` in force in `circle`, which must bind this node's owner.
+fn rule_in_force(node: &Node, circle: &CircleRow, name: &str) -> Result<ph_governance::Rule> {
+    let (charter, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+    let rule = rules.get(name).ok_or_else(|| {
+        usage(format!(
+            "no rule named {name:?} is in force in {}, so there is nothing to put on record \
+             (without --announce, an opt-out also keeps a future rule of that name off this \
+             machine)",
+            circle.name
+        ))
+    })?;
+    let bound = charter
+        .content
+        .voter(
+            &node.device_key(),
+            &ph_protocol::Electorate::Scope(rule.scope()),
+        )
+        .is_some();
+    if !bound {
+        return Err(usage(format!(
+            "{name} does not bind you (you are not in its electorate), so there is no stance \
+             of yours to record"
+        )));
+    }
+    Ok(rule.clone())
+}
+
+/// After the change on this machine (`done`): asks the owner whether to tell the circle,
+/// and signs the STANCE if they confirm. The local change stands either way: an opt-out
+/// never depends on anyone's permission, including this prompt's.
+#[allow(clippy::too_many_arguments)]
+fn put_on_record(
+    ctx: &Ctx,
+    node: &Node,
+    circle: &CircleRow,
+    name: &str,
+    stance: Stance,
+    reason: Option<&str>,
+    yes: bool,
+    mut done: Report,
+) -> Result<Report> {
+    let rule = rule_in_force(node, circle, name)?;
+    let reason = reason
+        .map(|r| ph_core::redact(r.trim()).text)
+        .filter(|r| !r.is_empty());
+    if reason.as_ref().is_some_and(|r| r.chars().count() > 2000) {
+        return Err(usage("a reason is at most 2000 characters"));
+    }
+    let what = match stance {
+        Stance::OptedOut => "do not follow",
+        Stance::Following => "follow",
+    };
+    let mut preview = format!(
+        "This tells the members of {circle} (scope {scope}) that you {what} the rule {name}.\n\
+         Exactly this leaves your machine, signed with your device key:\n  \
+         rule: {name} (proposal {id})\n  stance: {stance}",
+        circle = safe(&circle.name),
+        scope = rule.scope(),
+        id = short_id(&rule.proposal_id()),
+        stance = stance.as_str(),
+    );
+    if let Some(r) = &reason {
+        preview.push_str(&format!("\n  reason: {}", safe(r)));
+    }
+    preview.push_str(
+        "\nIt is a permanent record with your name. It changes nothing about the rule: it \
+         stays in force for the circle, and what is on your machine is already your choice.",
+    );
+    if let Err(e) = crate::consent::confirm(&ctx.out, &preview, yes, "putting it on the record") {
+        return Err(refused(format!(
+            "{} Nothing was announced: {e}",
+            done.text.trim_end()
+        )));
+    }
+    let key = node.device()?.signing_key();
+    let env = governance::announce_stance(
+        &node.store,
+        key,
+        &circle.circle_id,
+        &rule,
+        stance,
+        reason,
+        node.now(),
+    )?;
+    done.json["announced"] = json!(true);
+    done.json["stance_id"] = json!(env.event_id);
+    done.text.push_str(&format!(
+        "On the circle's record: you {what} {name}. It reaches the others with your next \
+         `peerharness sync` or `events sync`.\n"
+    ));
+    Ok(done)
 }
 
 /// Puts the repeal of the rule named `name` to the vote of the electorate that adopted

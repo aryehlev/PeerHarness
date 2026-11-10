@@ -23,6 +23,7 @@
 //! | QUESTION, ANSWER | `oracle.authorize(circle, author, scope, cap, now)` with the type's capability |
 //! | PROPOSAL | the charter it names is in this circle's accepted chain; `author` is a device of a member in the proposal's electorate under that charter; the device is not revoked locally |
 //! | VOTE, RESULT | the proposal it names is stored, in the same circle and scope; `author` is a device of a member in **that proposal's** electorate, under the charter the proposal names; the device is not revoked locally |
+//! | STANCE | the `adopt` proposal it names is stored, in the same circle and scope; the charter **the stance names** is in this circle's accepted chain; `author` is a device of a member whose roll entry in that charter covers the scope; the device is not revoked locally. A stance is a record: nothing is counted from it |
 //! | MEMBERSHIP | embedded proof re-verified at `now`; `author == credential.subject_device_key`; `credential.circle_id == circle_id`; `circle_id == derive(credential.issuer_key)` (issuer is the circle root); scope rule below; subject not revoked locally (`oracle.is_revoked`) |
 //! | REVOCATION | `circle_id == derive(author)` (author is the circle root); revocation signature re-verified; issuer and circle bound to the envelope; the subject is not the root key itself. The oracle is **not** consulted (the root holds no credential). No time rule applies: a revocation only ever denies. |
 //! | CHARTER | `circle_id == derive(author)` (author is the circle root); charter structure and signature re-verified; same circle. This only establishes that the charter is authentic. Whether it becomes the current charter is decided by [`crate::check_successor`]. |
@@ -355,7 +356,8 @@ fn authorize_inner(
     })
 }
 
-/// Authorizes a PROPOSAL, VOTE or RESULT by the roll of the charter the proposal names.
+/// Authorizes a PROPOSAL, VOTE or RESULT by the roll of the charter the proposal names,
+/// and a STANCE by the roll of the charter the stance names.
 fn authorize_by_roll(
     env: &VerifiedEnvelope,
     oracle: &dyn MembershipOracle,
@@ -368,15 +370,29 @@ fn authorize_by_roll(
         EventBody::Proposal(_) => ProposalView::from_verified(env),
         EventBody::Vote(b) => referenced_proposal(env, records, &b.proposal_id)?,
         EventBody::Result(b) => referenced_proposal(env, records, &b.proposal_id)?,
+        EventBody::Stance(b) => referenced_proposal(env, records, &b.proposal_id)?,
         _ => return Err(Rejection::BadReference),
     }
     .map_err(|_| Rejection::BadReference)?;
+    // The charter whose roll decides: the one the proposal names, except for a STANCE,
+    // which is about a rule that may have been adopted before its author joined and so
+    // names the charter under which its author is a member.
+    let named = match &env.body {
+        EventBody::Stance(b) => {
+            // A stance is about a rule, and only an `adopt` proposal makes one.
+            if proposal.kind() != ProposalKind::Adopt {
+                return Err(Rejection::BadReference);
+            }
+            b.charter
+        }
+        _ => proposal.charter(),
+    };
     let charter = records
-        .charter(&circle, &proposal.charter())
+        .charter(&circle, &named)
         .ok_or(Rejection::UnknownCharter)?;
     // Never trust the lookup: the record must be this circle's charter with exactly the
-    // digest the proposal names.
-    if charter.circle_id != circle || charter.digest().ok() != Some(proposal.charter()) {
+    // digest that was named.
+    if charter.circle_id != circle || charter.digest().ok() != Some(named) {
         return Err(Rejection::UnknownCharter);
     }
     let entry = charter
@@ -392,7 +408,7 @@ fn authorize_by_roll(
     Ok(())
 }
 
-/// Looks up and checks the proposal a VOTE or RESULT names: it must be a stored
+/// Looks up and checks the proposal a VOTE, RESULT or STANCE names: it must be a stored
 /// PROPOSAL with exactly that id, in the same circle and the same scope.
 fn referenced_proposal(
     env: &VerifiedEnvelope,
@@ -427,6 +443,7 @@ pub fn check_body(env: &SignedEnvelope) -> Result<(), Rejection> {
     let own = env.event_id;
     let self_ref = match &env.body {
         EventBody::Vote(b) => b.proposal_id == own,
+        EventBody::Stance(b) => b.proposal_id == own,
         EventBody::Answer(b) => b.question_id == own,
         EventBody::Result(b) => b.proposal_id == own || b.approvals.contains(&own),
         EventBody::Proposal(b) => match &b.action {

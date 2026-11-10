@@ -246,7 +246,8 @@ pub fn ingest(
                 Reference::Invalid(_) => return Ok(Ingest::Rejected("bad_answer_reference")),
             }
         }
-        EventBody::Vote(_) => {}
+        // A ballot and a stance need nothing beyond the authorization above.
+        EventBody::Vote(_) | EventBody::Stance(_) => {}
     }
     Ok(stored(store.insert_event(&verified, origin_peer, now)?))
 }
@@ -552,6 +553,104 @@ pub fn cast_vote(
         &proposal.circle_id(),
         proposal.scope(),
         body,
+        now,
+    )
+}
+
+/// What a member put on the circle's record about a rule.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedStance {
+    /// The member's handle.
+    pub member: String,
+    /// Their current stance.
+    pub stance: ph_protocol::Stance,
+    /// The reason they gave, if any.
+    pub reason: Option<String>,
+    /// Whether this node's own device belongs to that member.
+    pub mine: bool,
+}
+
+/// The current recorded stance of every member of the current roll who made one about
+/// the rule `proposal_id` adopts, by member handle. A member's latest stance (by
+/// `created_at`, then event id) is the current one; stances of members who have left
+/// the roll, and of revoked devices, are not shown.
+///
+/// This is a record. Nothing is counted from it.
+pub fn stances(
+    store: &Store,
+    circle: &CircleId,
+    proposal_id: &EventId,
+    me: &DeviceKey,
+) -> Result<Vec<RecordedStance>> {
+    let current = current_charter(store, circle)?;
+    let mut latest: HashMap<String, ((i64, EventId), RecordedStance)> = HashMap::new();
+    for ev in store.stances_for_proposal(proposal_id)? {
+        let Ok(env) = ev.envelope() else { continue };
+        let EventBody::Stance(body) = &env.body else {
+            continue;
+        };
+        if store.is_revoked(circle, &env.author)? {
+            continue;
+        }
+        // The handle is the one on the roll the stance names; it must still be on the
+        // current roll.
+        let Some(member) = store
+            .charter_by_digest(circle, &body.charter)?
+            .and_then(|c| c.content.member_of(&env.author).map(|e| e.member.clone()))
+            .filter(|m| current.content.member(m).is_some())
+        else {
+            continue;
+        };
+        let order = (env.created_at.unix_seconds(), env.event_id);
+        if latest.get(&member).is_some_and(|(o, _)| *o >= order) {
+            continue;
+        }
+        let mine = current
+            .content
+            .member_of(me)
+            .is_some_and(|e| e.member == member);
+        latest.insert(
+            member.clone(),
+            (
+                order,
+                RecordedStance {
+                    member,
+                    stance: body.stance,
+                    reason: body.reason.clone(),
+                    mine,
+                },
+            ),
+        );
+    }
+    let mut out: Vec<RecordedStance> = latest.into_values().map(|(_, s)| s).collect();
+    out.sort_by(|a, b| a.member.cmp(&b.member));
+    Ok(out)
+}
+
+/// Puts this member's stance on the rule `rule` on the circle's record, under the
+/// current charter. The caller has shown the exact text and has the owner's
+/// confirmation.
+pub fn announce_stance(
+    store: &Store,
+    key: &SigningKey,
+    circle: &CircleId,
+    rule: &ph_governance::Rule,
+    stance: ph_protocol::Stance,
+    reason: Option<String>,
+    now: Timestamp,
+) -> Result<SignedEnvelope> {
+    let charter = current_charter(store, circle)?;
+    submit(
+        store,
+        key,
+        circle,
+        rule.scope(),
+        EventBody::Stance(ph_protocol::StanceBody {
+            proposal_id: rule.proposal_id(),
+            charter: charter.digest()?,
+            stance,
+            reason,
+        }),
         now,
     )
 }
@@ -1312,5 +1411,224 @@ mod tests {
         assert_eq!(ingest(&store, &mine, None, now).unwrap(), Ingest::Stored);
         let row = store.question(&id_of(&mine)).unwrap().unwrap();
         assert!(row.is_local && row.status == QuestionStatus::New);
+    }
+
+    fn adopt(store: &Store, circle: &CircleId, scope: &str, now: Timestamp) -> ProposalView {
+        propose(
+            store,
+            &key(1),
+            circle,
+            NewProposal {
+                scope: &Scope::new(scope).unwrap(),
+                title: "Use pnpm",
+                summary: "",
+                action: ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+                    skill_name: "pnpm".into(),
+                    description: "Use pnpm, not npm.".into(),
+                    bundle_digest: Digest::sha256(b"bundle"),
+                    bundle_size: 10,
+                    related_question: None,
+                    supersedes: None,
+                }),
+            },
+            now,
+        )
+        .unwrap()
+    }
+
+    fn stance(
+        seed: u8,
+        circle: &CircleId,
+        scope: &str,
+        proposal: EventId,
+        charter: Digest,
+        stance: ph_protocol::Stance,
+        at: Timestamp,
+    ) -> Vec<u8> {
+        EnvelopeBuilder::new(
+            *circle,
+            Scope::new(scope).unwrap(),
+            EventBody::Stance(ph_protocol::StanceBody {
+                proposal_id: proposal,
+                charter,
+                stance,
+                reason: Some("Our CI images only ship npm.".into()),
+            }),
+        )
+        .created_at(at)
+        .sign(&key(seed), at)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_stance_is_a_record_by_a_member_of_the_roll_and_counts_for_nothing() {
+        use ph_protocol::Stance::{Following, OptedOut};
+        let (store, circle, now) = node();
+        let charter = current_charter(&store, &circle).unwrap().digest().unwrap();
+        let wide = adopt(&store, &circle, "*", now);
+        let backend = adopt(&store, &circle, "team/backend", now);
+        cast_vote(&store, &key(1), &wide, VoteDecision::Approve, None, now).unwrap();
+        cast_vote(&store, &key(2), &wide, VoteDecision::Approve, None, now).unwrap();
+        let (_, before) = count(&store, &wide).unwrap();
+        assert!(before.passed());
+
+        // Bob, who approved, records that he does not follow the rule on his machine.
+        let out = stance(2, &circle, "*", wide.event_id(), charter, OptedOut, now);
+        assert_eq!(ingest(&store, &out, None, now).unwrap(), Ingest::Stored);
+        let recorded = stances(&store, &circle, &wide.event_id(), &device(1)).unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(
+            (recorded[0].member.as_str(), recorded[0].stance),
+            ("bob", OptedOut)
+        );
+        assert!(!recorded[0].mine);
+        // Nothing is counted from it: his approval stands and the rule is in force.
+        let (_, after) = count(&store, &wide).unwrap();
+        assert_eq!(after.approvals().len(), before.approvals().len());
+        assert!(after.passed());
+        assert!(rule_set(&store, &circle).unwrap().1.get("pnpm").is_some());
+        // His later stance replaces the earlier one.
+        let back = stance(
+            2,
+            &circle,
+            "*",
+            wide.event_id(),
+            charter,
+            Following,
+            now.plus_secs(60),
+        );
+        assert_eq!(
+            ingest(&store, &back, None, now.plus_secs(60)).unwrap(),
+            Ingest::Stored
+        );
+        let recorded = stances(&store, &circle, &wide.event_id(), &device(2)).unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].stance, Following);
+        assert!(recorded[0].mine);
+
+        // Not from a device that is on no roll, and not about a rule outside the scopes
+        // the roll gives the member. (A rule with scope `*` concerns every member.)
+        let forged = stance(9, &circle, "*", wide.event_id(), charter, OptedOut, now);
+        assert_eq!(
+            ingest(&store, &forged, None, now).unwrap(),
+            Ingest::Rejected("not_on_roll")
+        );
+        let finance = adopt(&store, &circle, "team/finance", now);
+        let outside = stance(
+            3,
+            &circle,
+            "team/finance",
+            finance.event_id(),
+            charter,
+            OptedOut,
+            now,
+        );
+        assert_eq!(
+            ingest(&store, &outside, None, now).unwrap(),
+            Ingest::Rejected("not_in_electorate")
+        );
+        let inside = stance(
+            3,
+            &circle,
+            "team/backend",
+            backend.event_id(),
+            charter,
+            OptedOut,
+            now,
+        );
+        assert_eq!(ingest(&store, &inside, None, now).unwrap(), Ingest::Stored);
+        let everyone = stance(3, &circle, "*", wide.event_id(), charter, OptedOut, now);
+        assert_eq!(
+            ingest(&store, &everyone, None, now).unwrap(),
+            Ingest::Stored
+        );
+        // Its scope is the rule's scope, it is about a rule, and it waits for the
+        // records it names.
+        let wrong_scope = stance(
+            2,
+            &circle,
+            "team/backend",
+            wide.event_id(),
+            charter,
+            OptedOut,
+            now,
+        );
+        assert_eq!(
+            ingest(&store, &wrong_scope, None, now).unwrap(),
+            Ingest::Rejected("bad_reference")
+        );
+        let (current, rules, _) = rule_set(&store, &circle).unwrap();
+        let next = ph_governance::remove_member(&current.content, &rules, "carol").unwrap();
+        let amendment = propose(
+            &store,
+            &key(1),
+            &circle,
+            NewProposal {
+                scope: &Scope::all(),
+                title: "Remove carol",
+                summary: "",
+                action: ph_protocol::ProposalAction::Amend { next },
+            },
+            now,
+        )
+        .unwrap();
+        let not_a_rule = stance(
+            2,
+            &circle,
+            "*",
+            amendment.event_id(),
+            charter,
+            OptedOut,
+            now,
+        );
+        assert_eq!(
+            ingest(&store, &not_a_rule, None, now).unwrap(),
+            Ingest::Rejected("bad_reference")
+        );
+        let unknown = EventId::from_digest(Digest::sha256(b"no such proposal"));
+        let early = stance(2, &circle, "*", unknown, charter, OptedOut, now);
+        assert_eq!(
+            ingest(&store, &early, None, now).unwrap(),
+            Ingest::Deferred("missing_proposal")
+        );
+        let other_charter = stance(
+            2,
+            &circle,
+            "*",
+            wide.event_id(),
+            Digest::sha256(b"c"),
+            OptedOut,
+            now,
+        );
+        assert_eq!(
+            ingest(&store, &other_charter, None, now).unwrap(),
+            Ingest::Deferred("unknown_charter")
+        );
+        // A revoked device's stance is refused, and what it recorded is no longer shown.
+        let authority = CircleAuthority::from_signing_key(key(100));
+        let revocation = authority.issue_revocation(device(2), "", now).unwrap();
+        store.insert_revocation(&revocation, now).unwrap();
+        let late = stance(
+            2,
+            &circle,
+            "*",
+            wide.event_id(),
+            charter,
+            OptedOut,
+            now.plus_secs(120),
+        );
+        assert_eq!(
+            ingest(&store, &late, None, now.plus_secs(120)).unwrap(),
+            Ingest::Rejected("revoked")
+        );
+        let left: Vec<String> = stances(&store, &circle, &wide.event_id(), &device(1))
+            .unwrap()
+            .into_iter()
+            .map(|s| s.member)
+            .collect();
+        assert_eq!(left, ["carol"]);
     }
 }

@@ -21,9 +21,9 @@ use ph_protocol::{
     verify_invite, verify_revocation, Acceptance, AdoptAction, AnswerBody, AnswerChoice, Charter,
     CharterBody, CharterContent, Electorate, EnvelopeBuilder, EventBody, Invite, JcsError,
     MembershipBody, MembershipCredential, ProposalAction, ProposalBody, QuestionBody, ResultBody,
-    Revocation, RevocationBody, RollEntry, SignedEnvelope, SigningKey, UnsignedAcceptance,
-    UnsignedCharter, UnsignedInvite, UnsignedMembershipCredential, UnsignedRevocation, VoteBody,
-    VoteDecision,
+    Revocation, RevocationBody, RollEntry, SignedEnvelope, SigningKey, Stance, StanceBody,
+    UnsignedAcceptance, UnsignedCharter, UnsignedInvite, UnsignedMembershipCredential,
+    UnsignedRevocation, VoteBody, VoteDecision,
 };
 use serde_json::{json, Value};
 
@@ -341,6 +341,21 @@ fn story() -> (Vec<EventVector>, Charter) {
         &root(),
     );
 
+    // Bob keeps the rule off his own machine and puts that on the record, under the
+    // charter that lists him.
+    let stance = sign(
+        EventBody::Stance(StanceBody {
+            proposal_id: adopt.event_id,
+            charter: c2.digest().unwrap(),
+            stance: Stance::OptedOut,
+            reason: Some("Our CI images only ship npm.".into()),
+        }),
+        scope(),
+        "2026-11-10T10:00:00Z",
+        0x19,
+        &peer(),
+    );
+
     let events = vec![
         ("QUESTION", question, pk(&device())),
         ("ANSWER", answer, pk(&peer())),
@@ -355,6 +370,7 @@ fn story() -> (Vec<EventVector>, Charter) {
         ("PROPOSAL/repeal", repeal, pk(&peer())),
         ("MEMBERSHIP", membership, pk(&device())),
         ("REVOCATION", revocation_event, pk(&root())),
+        ("STANCE", stance, pk(&peer())),
     ];
     (events, c2)
 }
@@ -691,7 +707,7 @@ fn vectors_verify_with_public_api() {
 
     let events = load("events.json");
     let events = events.as_array().unwrap();
-    assert_eq!(events.len(), 13);
+    assert_eq!(events.len(), 14);
     let names: Vec<&str> = events.iter().map(|v| v["name"].as_str().unwrap()).collect();
     for t in ph_protocol::EventType::ALL {
         assert!(
