@@ -410,17 +410,19 @@ fn every_other_decision_still_needs_the_terminal() {
     assert!(node.skill_file(SKILL).exists());
     assert!(node.home.join("peerharness.db").is_file());
 
-    // A text too long to be shown in full is not shown in part: the step is refused and
-    // no window opens, although this one would have said Proceed.
+    // A rule too long to be proposed at all is turned away before any window: there is
+    // nothing to ask about. (That a preview too tall for a window is refused and not
+    // shown in part is tested in `consent.rs` and `window.rs`.)
     let long = format!(
         "Run every one of the checks of this project before you say a task is done{}.",
         ", and then run them once more to be sure".repeat(9)
     );
     assert!(long.len() < 500);
     let long = node.note(&long);
-    let msg = node.refused(&["proposal", "create", &long, "--circle", "team", "--yes"]);
-    assert!(msg.contains("too long to show in full"), "{msg}");
-    assert!(msg.contains("your own terminal"), "{msg}");
+    let (code, _, printed) =
+        node.agent(&["proposal", "create", &long, "--circle", "team", "--yes"]);
+    assert_eq!(code, 2, "{printed}");
+    assert!(printed.contains("at most 200 characters"), "{printed}");
     assert!(node.shown().is_empty());
     assert_eq!(node.proposals().len(), 2);
 

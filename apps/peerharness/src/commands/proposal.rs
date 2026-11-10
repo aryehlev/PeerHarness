@@ -188,6 +188,17 @@ fn create(
     let draft = ph_skills::build_bundle(&md, Some(&name))
         .map_err(|e| usage(format!("this candidate cannot become a rule: {e}")))?;
     let title = crate::library::clean_statement(&cand.statement)?;
+    // The statement is the proposal's title, which is shorter than a note may be. Say so
+    // before anything is confirmed or saved, not when the event is signed.
+    let length = title.chars().count();
+    if length > ph_protocol::limits::text::TITLE {
+        return Err(usage(format!(
+            "a rule put to the vote is at most {} characters and this one has {length}. \
+             Shorten it first: `peerharness review {} --edit \"<the rule>\"`",
+            ph_protocol::limits::text::TITLE,
+            cand.id
+        )));
+    }
     let charter = governance::current_charter(&node.store, &circle.circle_id)?;
     let electorate = charter
         .content
