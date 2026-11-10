@@ -1,6 +1,6 @@
 //! `sync_cursors`, `notifications` and the owned-data export.
 
-use ph_core::{CircleId, Timestamp};
+use ph_core::{CircleId, EventId, Timestamp};
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -22,6 +22,23 @@ pub struct SyncCursor {
     pub circle_id: CircleId,
     /// When the last sync completed.
     pub last_sync_at: Timestamp,
+    /// The last event the peer served from its log (the `after` of the next fetch).
+    pub after_event_id: Option<EventId>,
+    /// The last event of this node's own log the peer has taken (where the next push
+    /// starts).
+    pub pushed_event_id: Option<EventId>,
+}
+
+const CURSOR_COLS: &str = "peer_id, circle_id, last_sync_at, after_event_id, pushed_event_id";
+
+fn cursor_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SyncCursor> {
+    Ok(SyncCursor {
+        peer_id: r.get(0)?,
+        circle_id: sql::parse(r, 1, "circle id")?,
+        last_sync_at: sql::ts(r, 2)?,
+        after_event_id: sql::parse_opt(r, 3, "event id")?,
+        pushed_event_id: sql::parse_opt(r, 4, "event id")?,
+    })
 }
 
 /// One shown notification.
@@ -49,18 +66,47 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT peer_id, circle_id, last_sync_at FROM sync_cursors
-                 WHERE peer_id = ?1 AND circle_id = ?2",
+                &format!(
+                    "SELECT {CURSOR_COLS} FROM sync_cursors
+                     WHERE peer_id = ?1 AND circle_id = ?2"
+                ),
                 params![peer_id, circle.to_string()],
-                |r| {
-                    Ok(SyncCursor {
-                        peer_id: r.get(0)?,
-                        circle_id: sql::parse(r, 1, "circle id")?,
-                        last_sync_at: sql::ts(r, 2)?,
-                    })
-                },
+                cursor_row,
             )
             .optional()?)
+    }
+
+    /// Records how far a sync with `peer_id` got in `circle` (upsert): `fetched` is the
+    /// last event the peer served, `pushed` the last of this node's events the peer
+    /// took. `None` leaves that cursor where it was.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::MissingReference`] if the peer or circle is not stored.
+    pub fn advance_sync_cursor(
+        &self,
+        peer_id: &str,
+        circle: &CircleId,
+        fetched: Option<&EventId>,
+        pushed: Option<&EventId>,
+        at: Timestamp,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_cursors (peer_id, circle_id, last_sync_at, after_event_id, pushed_event_id)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(peer_id, circle_id) DO UPDATE SET
+                 last_sync_at = excluded.last_sync_at,
+                 after_event_id = COALESCE(excluded.after_event_id, after_event_id),
+                 pushed_event_id = COALESCE(excluded.pushed_event_id, pushed_event_id)",
+            params![
+                peer_id,
+                circle.to_string(),
+                at.unix_seconds(),
+                fetched.map(ToString::to_string),
+                pushed.map(ToString::to_string)
+            ],
+        )?;
+        Ok(())
     }
 
     /// Records a completed sync (upsert).
@@ -79,17 +125,11 @@ impl Store {
 
     /// Every sync cursor (for export and `status`).
     pub fn sync_cursors(&self) -> Result<Vec<SyncCursor>> {
-        let mut st = self.conn.prepare(
-            "SELECT peer_id, circle_id, last_sync_at FROM sync_cursors ORDER BY peer_id, circle_id",
-        )?;
+        let mut st = self.conn.prepare(&format!(
+            "SELECT {CURSOR_COLS} FROM sync_cursors ORDER BY peer_id, circle_id"
+        ))?;
         let rows = st
-            .query_map([], |r| {
-                Ok(SyncCursor {
-                    peer_id: r.get(0)?,
-                    circle_id: sql::parse(r, 1, "circle id")?,
-                    last_sync_at: sql::ts(r, 2)?,
-                })
-            })?
+            .query_map([], cursor_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }

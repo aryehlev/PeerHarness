@@ -157,6 +157,10 @@ pub struct MissingQuery<'a> {
     /// event for the separating comma). At least one event is returned if any is
     /// eligible.
     pub max_bytes: usize,
+    /// Cursor: only events this node stored **after** the event with this id are
+    /// returned. `None`, or an id this node does not hold in that circle, starts from
+    /// the beginning.
+    pub after: Option<&'a EventId>,
 }
 
 impl<'a> MissingQuery<'a> {
@@ -168,7 +172,15 @@ impl<'a> MissingQuery<'a> {
             now,
             limit: MAX_FETCH_LIMIT as usize,
             max_bytes: DEFAULT_SYNC_MAX_BYTES,
+            after: None,
         }
+    }
+
+    /// Sets [`Self::after`] (the requester's `FetchEvents.after`, or this node's own
+    /// push cursor for the peer).
+    pub fn after(mut self, after: Option<&'a EventId>) -> Self {
+        self.after = after;
+        self
     }
 
     /// Sets [`Self::limit`] (for example the requester's `FetchEvents.limit`).
@@ -187,10 +199,14 @@ impl<'a> MissingQuery<'a> {
 /// Result of [`Store::missing_for_peer`].
 #[derive(Clone, Debug, Default)]
 pub struct MissingEvents {
-    /// Events to send, in `(created_at, event_id)` order.
+    /// Events to send, in the order this node stored them.
     pub events: Vec<StoredEvent>,
     /// Whether more eligible events exist beyond this batch.
     pub more: bool,
+    /// The last event this node looked at, whether or not it was returned (events the
+    /// requester already has or may not read are passed over). A caller that pages
+    /// with a cursor continues after this one; `None` when nothing was looked at.
+    pub last_seen: Option<EventId>,
 }
 
 const COLS: &str = "event_id, type, circle_id, scope, author, created_at, expires_at, \
@@ -462,7 +478,10 @@ impl Store {
     ///   the requester's credential (for example
     ///   `|s| oracle.authorize_read(&circle, &requester, s, now).is_ok()`).
     ///
-    /// Ordered by `(created_at, event_id)`; bounded by `q.limit` and `q.max_bytes`;
+    /// Ordered by when this node stored them (the row id, which only grows: nothing
+    /// deletes events), starting after `q.after`. That order is what makes a cursor
+    /// possible: an event that arrives late, however old its `created_at`, is always
+    /// after every cursor handed out before. Bounded by `q.limit` and `q.max_bytes`;
     /// `more` reports whether further eligible events remain.
     ///
     /// # Security precondition
@@ -480,24 +499,44 @@ impl Store {
         readable: impl Fn(&Scope) -> bool,
     ) -> Result<MissingEvents> {
         let limit = q.limit.min(MAX_FETCH_LIMIT as usize);
+        // The cursor names an event; its row id in this circle is where to continue.
+        // An id this node does not hold there is no cursor at all.
+        let after_row: i64 = match q.after {
+            Some(id) => self
+                .conn
+                .query_row(
+                    "SELECT rowid FROM events WHERE event_id = ?1 AND circle_id = ?2",
+                    params![id.to_string(), q.circle_id.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .unwrap_or(0),
+            None => 0,
+        };
         let mut st = self.conn.prepare(&format!(
-            "SELECT {COLS} FROM events WHERE circle_id = ?1 AND {}
-             ORDER BY created_at, event_id",
+            "SELECT {COLS} FROM events WHERE circle_id = ?1 AND {} AND rowid > ?3
+             ORDER BY rowid",
             not_expired_sql("?2")
         ))?;
-        let mut rows = st.query(params![q.circle_id.to_string(), q.now.unix_seconds()])?;
+        let mut rows = st.query(params![
+            q.circle_id.to_string(),
+            q.now.unix_seconds(),
+            after_row
+        ])?;
         let mut out = MissingEvents::default();
         let mut bytes = 0usize;
         while let Some(r) = rows.next()? {
             // Cheap pre-check on the id before decoding the whole row.
             let id: EventId = sql::parse(r, 0, "event id")?;
             if q.known.contains(&id) {
+                out.last_seen = Some(id);
                 continue;
             }
             let ev = row(r)?;
             let for_every_member = ev.event_type.is_control_plane()
                 || (ev.event_type.is_decision() && ev.scope.is_wildcard());
             if !(for_every_member || readable(&ev.scope)) {
+                out.last_seen = Some(id);
                 continue;
             }
             let size = ev.envelope_json.len() + 1;
@@ -508,6 +547,7 @@ impl Store {
                 break;
             }
             bytes = bytes.saturating_add(size);
+            out.last_seen = Some(id);
             out.events.push(ev);
         }
         tracing::debug!(

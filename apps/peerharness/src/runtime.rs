@@ -11,21 +11,25 @@
 //!   the node thread ([`peer::answer`]), after which the circles that received new events
 //!   are settled: results published, a passed amendment notarized on the founder's node,
 //!   the rules in force applied.
-//! * There is no gossip and no background dialing. A node sends and receives when its
-//!   owner runs `sync`, or when a peer syncs with its running `daemon`.
+//! * There is no gossip. A node sends and receives when its owner runs `sync`, when a
+//!   peer syncs with its running `daemon`, or when the owner started the daemon with a
+//!   sync interval; then it syncs with the peers it already knows and with nobody else.
+//! * Each side remembers how far it got with the other (a cursor per peer and circle),
+//!   so a sync transfers what is new and not the whole log.
 //!
 //! The transport authenticates device keys. What a key may have is decided per request
 //! from the roll (see `peer`).
 
-use std::collections::{BTreeSet, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use ph_core::{CircleId, DeviceKey, Digest, EventId};
+use ph_core::{CircleId, DeviceKey, Digest, EventId, MembershipOracle};
 use ph_network::{handler_fn, Multiaddr, NetworkConfig, NetworkHandle, PeerId, PeerInfo};
 use ph_protocol::limits::MAX_FETCH_LIMIT;
 use ph_protocol::wire::{ErrorCode, PushStatus, Request, Response, PROTOCOL_VERSION};
+use serde_json::{json, Value};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
@@ -39,8 +43,11 @@ use crate::peer;
 /// Most `fetch_events` rounds for one circle in one sync.
 const MAX_FETCH_ROUNDS: usize = 64;
 
-/// How long a sync waits for the peer to fetch the bundles of what was just pushed.
-const BUNDLE_PULL_WAIT: Duration = Duration::from_secs(10);
+/// How long an answer waits for this node's own fetch-back from the same peer.
+const PULL_WAIT: Duration = Duration::from_secs(15);
+
+/// Most events a sync keeps aside while the records they depend on have not arrived.
+const MAX_POOL_EVENTS: usize = 8192;
 
 type Job = Box<dyn FnOnce(&Node) + Send + 'static>;
 
@@ -107,8 +114,10 @@ impl Worker {
 /// State shared between the request handler and a running sync.
 #[derive(Default)]
 struct Shared {
-    /// Digests of bundles this node served during this run.
-    served: Mutex<HashSet<Digest>>,
+    /// For each peer, the task that fetches back the rule texts of what that peer just
+    /// pushed and then settles. The peer's next request waits for it, so what settling
+    /// produced here (a result, a new charter) is there when the peer fetches again.
+    pulls: tokio::sync::Mutex<HashMap<PeerId, JoinHandle<()>>>,
     /// The transport, once started (the handler needs it to fetch bundles back).
     net: OnceLock<NetworkHandle>,
 }
@@ -131,6 +140,14 @@ impl Changes {
         self.asking.extend(other.asking);
         self.charters_issued.extend(other.charters_issued);
         self.signed += other.signed;
+    }
+
+    /// Whether anything visible to the owner happened.
+    pub fn is_empty(&self) -> bool {
+        self.installed.is_empty()
+            && self.removed.is_empty()
+            && self.asking.is_empty()
+            && self.charters_issued.is_empty()
     }
 }
 
@@ -170,10 +187,14 @@ fn handler(worker: Worker, shared: Arc<Shared>) -> Arc<dyn ph_network::RequestHa
         async move {
             let device = info.device_key;
             let peer_id = info.peer_id;
-            let asked_bundle = match &request {
-                Request::FetchBundle { digest, .. } => Some(*digest),
-                _ => None,
-            };
+            // Everything but a greeting and the fetch-back itself waits for this node's
+            // fetch-back from the same peer to finish (see `Shared::pulls`).
+            if !matches!(request, Request::Hello { .. } | Request::FetchBundle { .. }) {
+                let pending = shared.pulls.lock().await.remove(&peer_id);
+                if let Some(task) = pending {
+                    let _ = tokio::time::timeout(PULL_WAIT, task).await;
+                }
+            }
             let answered = worker
                 .call(move |node| {
                     let bundles = crate::library::bundle_store(&node.home);
@@ -194,21 +215,15 @@ fn handler(worker: Worker, shared: Arc<Shared>) -> Arc<dyn ph_network::RequestHa
                 .await;
             match answered {
                 Ok(answer) => {
-                    if let (Some(digest), Response::Bundle { .. }) =
-                        (asked_bundle, &answer.response)
-                    {
-                        if let Ok(mut served) = shared.served.lock() {
-                            served.insert(digest);
-                        }
-                    }
                     if !answer.pulls.is_empty() {
-                        tokio::spawn(pull_then_settle(
+                        let task = tokio::spawn(pull_then_settle(
                             worker,
-                            shared,
+                            shared.clone(),
                             peer_id,
                             answer.pulls,
                             answer.touched,
                         ));
+                        shared.pulls.lock().await.insert(peer_id, task);
                     }
                     answer.response
                 }
@@ -280,17 +295,15 @@ pub struct Running {
     pub worker: Worker,
     pub net: NetworkHandle,
     pub device_key: DeviceKey,
-    shared: Arc<Shared>,
     join: JoinHandle<()>,
 }
 
 impl Running {
     /// Starts the node thread and the transport. Must be called inside a Tokio runtime.
     /// With no `listen` addresses the node only dials.
-    pub fn start(home: Home, listen: Vec<Multiaddr>) -> Result<Self> {
+    pub fn start(home: Home, config: NetworkConfig) -> Result<Self> {
         let (worker, seed, device_key) = Worker::spawn(home)?;
         let shared = Arc::new(Shared::default());
-        let config = NetworkConfig::listening_on(listen);
         let (net, join) = ph_network::start(seed, config, handler(worker.clone(), shared.clone()))
             .map_err(|e| anyhow!("cannot start the transport: {e}"))?;
         let _ = shared.net.set(net.clone());
@@ -298,7 +311,6 @@ impl Running {
             worker,
             net,
             device_key,
-            shared,
             join,
         })
     }
@@ -336,16 +348,17 @@ pub struct SyncReport {
     pub sent: usize,
     /// Events the peer refused.
     pub refused_by_peer: usize,
+    /// Circles this node learned it was voted off, by name.
+    pub removed_from: Vec<String>,
+    /// Circles this node holds with the peer on the roll in which the peer does not
+    /// recognize this node, and gave no verifiable reason.
+    pub not_recognized: Vec<String>,
     pub changes: Changes,
 }
 
-/// Connects to `addr` and checks who answered: returns the peer and the circles in
-/// which both it and this node are on the roll. Nothing circle-specific is sent to a
-/// peer that shares no circle with this node.
-pub async fn connect(
-    run: &Running,
-    addr: &Multiaddr,
-) -> Result<(PeerId, DeviceKey, Vec<CircleId>)> {
+/// Dials `addr` and exchanges greetings. Nothing else is sent to a peer that does not
+/// speak this node's protocol version.
+async fn greet(run: &Running, addr: &Multiaddr) -> Result<(PeerId, DeviceKey)> {
     let peer = run
         .net
         .dial(addr.clone())
@@ -354,8 +367,6 @@ pub async fn connect(
     let peer_key = ph_network::device_key_from_peer_id(&peer)
         .ok_or_else(|| anyhow!("the peer's identity is not a device key"))?;
     match run.net.request(peer, &Request::hello()).await {
-        // Stop unless the peer speaks our version: nothing else is sent to one that
-        // does not.
         Ok(Response::Hello { versions, .. }) if versions.iter().any(|v| v == PROTOCOL_VERSION) => {}
         Ok(Response::Hello { .. }) => {
             return Err(anyhow!(
@@ -365,41 +376,46 @@ pub async fn connect(
         Ok(_) => return Err(anyhow!("the peer did not answer hello")),
         Err(e) => return Err(anyhow!("the peer does not speak this protocol: {e}")),
     }
-    let me = run.device_key;
-    let circles = run
-        .worker
-        .call(move |node| Ok(peer::roll_oracle(&node.store)?.shared_circles(&me, &peer_key)))
-        .await?;
-    if circles.is_empty() {
-        return Err(refused(
-            "that peer and this node share no circle (each must be on the roll the other \
-             holds). Nothing was exchanged.",
-        ));
-    }
-    // Announce ourselves. A peer that does not see us on its roll says so here.
+    Ok((peer, peer_key))
+}
+
+/// Announces this node to `peer`. Returns the circles in which the peer has this
+/// node's device on the roll, or `None` when it has it on none.
+async fn announce(run: &Running, peer: PeerId) -> Result<Option<Vec<CircleId>>> {
     let listen: Vec<String> = run
         .net
         .current_listen_addrs()
         .iter()
         .map(|a| ph_network::with_p2p(a, run.net.local_peer_id()).to_string())
         .collect();
-    let announce = Request::Authenticate {
+    let request = Request::Authenticate {
         memberships: Vec::new(),
         listen_addrs: listen,
     };
-    match run.net.request(peer, &announce).await {
-        Ok(Response::Authenticated { .. }) => {}
+    match run.net.request(peer, &request).await {
+        Ok(Response::Authenticated { circles, .. }) => Ok(Some(circles)),
         Ok(Response::Error {
             code: ErrorCode::Unauthorized,
-        }) => {
-            return Err(refused(
-                "the peer does not recognize this node as a member of any circle it holds. \
-                 Nothing was exchanged.",
-            ))
-        }
-        Ok(_) | Err(_) => return Err(anyhow!("the peer did not complete the handshake")),
+        }) => Ok(None),
+        Ok(_) | Err(_) => Err(anyhow!("the peer did not complete the handshake")),
     }
-    let shared = circles.clone();
+}
+
+/// The circles this node holds in which both it and `peer_key` are on the roll.
+async fn circles_with(run: &Running, peer_key: DeviceKey) -> Result<Vec<CircleId>> {
+    let me = run.device_key;
+    run.worker
+        .call(move |node| Ok(peer::roll_oracle(&node.store)?.shared_circles(&me, &peer_key)))
+        .await
+}
+
+async fn remember(
+    run: &Running,
+    addr: &Multiaddr,
+    peer: PeerId,
+    peer_key: DeviceKey,
+    circles: Vec<CircleId>,
+) -> Result<()> {
     let dialed = ph_network::with_p2p(addr, peer).to_string();
     run.worker
         .call(move |node| {
@@ -408,12 +424,55 @@ pub async fn connect(
                 &peer.to_string(),
                 &peer_key,
                 &[dialed],
-                &shared,
+                &circles,
                 node.now(),
             )
         })
-        .await?;
-    Ok((peer, peer_key, circles))
+        .await
+}
+
+/// Connects to `addr` and checks who answered: returns the peer and the circles in
+/// which both it and this node are on the roll, each by its own records. Nothing
+/// circle-specific is sent to a peer that shares no circle with this node.
+pub async fn connect(
+    run: &Running,
+    addr: &Multiaddr,
+) -> Result<(PeerId, DeviceKey, Vec<CircleId>)> {
+    let (peer, peer_key) = greet(run, addr).await?;
+    let mine = circles_with(run, peer_key).await?;
+    if mine.is_empty() {
+        return Err(refused(
+            "that peer and this node share no circle (each must be on the roll the other \
+             holds). Nothing was exchanged.",
+        ));
+    }
+    let Some(theirs) = announce(run, peer).await? else {
+        return Err(refused(
+            "the peer does not recognize this node as a member of any circle it holds. \
+             Nothing was exchanged.",
+        ));
+    };
+    let shared = both(&mine, &theirs);
+    if shared.is_empty() {
+        return Err(refused(
+            "the peer does not recognize this node in any circle you hold with it. Nothing \
+             was exchanged.",
+        ));
+    }
+    remember(run, addr, peer, peer_key, shared.clone()).await?;
+    Ok((peer, peer_key, shared))
+}
+
+/// The circles of `mine` that the peer also named. A peer that names none (one that
+/// predates the list) is taken to mean all of them.
+fn both(mine: &[CircleId], theirs: &[CircleId]) -> Vec<CircleId> {
+    if theirs.is_empty() {
+        return mine.to_vec();
+    }
+    mine.iter()
+        .filter(|c| theirs.contains(c))
+        .copied()
+        .collect()
 }
 
 fn unauthorized(response: &Response) -> bool {
@@ -425,9 +484,28 @@ fn unauthorized(response: &Response) -> bool {
     )
 }
 
-/// Fetches what the peer has of `circle` that this node lacks. Returns events stored.
+/// Fetches what the peer stored of `circle` since the last sync with it. Returns the
+/// number of events stored here.
+///
+/// The peer serves its log in the order it stored it, from the cursor this node kept.
+/// An event that cannot be placed yet stays in a pool and is offered again with each
+/// later batch. The cursor is only moved forward when nothing is left in the pool, so
+/// an event is never skipped for good because of the order it arrived in.
 async fn fetch_events(run: &Running, peer: PeerId, circle: CircleId) -> Result<usize> {
+    let peer_s = peer.to_string();
+    let who = peer_s.clone();
+    let mut after = run
+        .worker
+        .call(move |node| {
+            Ok(node
+                .store
+                .sync_cursor(&who, &circle)?
+                .and_then(|c| c.after_event_id))
+        })
+        .await?;
+    let mut pool: Vec<Value> = Vec::new();
     let mut stored = 0;
+    let mut reached: Option<EventId> = None;
     for _ in 0..MAX_FETCH_ROUNDS {
         let known = run
             .worker
@@ -437,6 +515,7 @@ async fn fetch_events(run: &Running, peer: PeerId, circle: CircleId) -> Result<u
             circle_id: circle,
             known,
             limit: MAX_FETCH_LIMIT,
+            after,
         };
         let response = run
             .net
@@ -451,18 +530,50 @@ async fn fetch_events(run: &Running, peer: PeerId, circle: CircleId) -> Result<u
         let Response::Events { events, more } = response else {
             return Err(anyhow!("the peer answered a fetch with something else"));
         };
-        let origin = peer.to_string();
-        let ingested = run
+        let last: Option<EventId> = events.last().and_then(|v| peer::field(v, "event_id"));
+        let mut batch = std::mem::take(&mut pool);
+        batch.extend(events);
+        let origin = peer_s.clone();
+        let (ingested, kept) = run
             .worker
             .call(move |node| {
                 let only: HashSet<CircleId> = [circle].into();
-                peer::ingest_values(&node.store, &events, Some(&only), Some(&origin), node.now())
+                let ingested = peer::ingest_values(
+                    &node.store,
+                    &batch,
+                    Some(&only),
+                    Some(&origin),
+                    node.now(),
+                )?;
+                let kept: Vec<Value> = ingested
+                    .deferred
+                    .iter()
+                    .filter_map(|i| batch.get(*i).cloned())
+                    .collect();
+                Ok((ingested.stored, kept))
             })
             .await?;
-        stored += ingested.stored;
-        if ingested.stored == 0 || !more {
+        stored += ingested;
+        pool = kept;
+        let Some(last) = last else { break };
+        after = Some(last);
+        reached = Some(last);
+        if !more || pool.len() > MAX_POOL_EVENTS {
             break;
         }
+    }
+    if let (true, Some(cursor)) = (pool.is_empty(), reached) {
+        run.worker
+            .call(move |node| {
+                Ok(node.store.advance_sync_cursor(
+                    &peer_s,
+                    &circle,
+                    Some(&cursor),
+                    None,
+                    node.now(),
+                )?)
+            })
+            .await?;
     }
     Ok(stored)
 }
@@ -488,20 +599,35 @@ async fn fetch_bundles(run: &Running, peer: PeerId, circle: CircleId) -> Result<
     Ok(stored)
 }
 
-/// Pushes everything of `circle` the peer may read. Returns `(accepted, refused)` and
-/// the ids the peer accepted as new.
+/// Pushes what the peer may read of `circle` and has not taken yet. Returns
+/// `(accepted, refused)`.
+///
+/// The push cursor moves past everything up to the first event the peer refused: a
+/// refusal may only mean that the peer lacks a record the event depends on, so that
+/// event and what follows it are offered again next time.
 async fn push_events(
     run: &Running,
     peer: PeerId,
     peer_key: DeviceKey,
     circle: CircleId,
-) -> Result<(usize, usize, Vec<EventId>)> {
-    let batches = run
+) -> Result<(usize, usize)> {
+    let peer_s = peer.to_string();
+    let who = peer_s.clone();
+    let outgoing = run
         .worker
-        .call(move |node| peer::outgoing_batches(&node.store, &circle, &peer_key, node.now()))
+        .call(move |node| {
+            let after = node
+                .store
+                .sync_cursor(&who, &circle)?
+                .and_then(|c| c.pushed_event_id);
+            peer::outgoing_batches(&node.store, &circle, &peer_key, after.as_ref(), node.now())
+        })
         .await?;
-    let (mut accepted, mut rejected, mut new_ids) = (0, 0, Vec::new());
-    for events in batches {
+    let (mut accepted, mut rejected) = (0, 0);
+    let mut taken: Option<EventId> = None;
+    let mut blocked = false;
+    for events in outgoing.batches {
+        let ids: Vec<Option<EventId>> = events.iter().map(|v| peer::field(v, "event_id")).collect();
         let response = run
             .net
             .request(peer, &Request::PushEvents { events })
@@ -515,94 +641,352 @@ async fn push_events(
         let Response::PushResult { results } = response else {
             return Err(anyhow!("the peer answered a push with something else"));
         };
-        for r in results {
+        if results.len() != ids.len() {
+            return Err(anyhow!(
+                "the peer answered a push with the wrong number of results"
+            ));
+        }
+        for (id, r) in ids.into_iter().zip(results) {
             match r.status {
-                PushStatus::Accepted => {
-                    accepted += 1;
-                    new_ids.extend(r.event_id);
-                }
+                PushStatus::Accepted => accepted += 1,
                 PushStatus::Duplicate => {}
-                PushStatus::Rejected => rejected += 1,
+                PushStatus::Rejected => {
+                    rejected += 1;
+                    blocked = true;
+                }
+            }
+            if !blocked {
+                taken = id.or(taken);
             }
         }
     }
-    Ok((accepted, rejected, new_ids))
+    let cursor = if blocked { taken } else { outgoing.last_seen };
+    if let Some(cursor) = cursor {
+        run.worker
+            .call(move |node| {
+                Ok(node.store.advance_sync_cursor(
+                    &peer_s,
+                    &circle,
+                    None,
+                    Some(&cursor),
+                    node.now(),
+                )?)
+            })
+            .await?;
+    }
+    Ok((accepted, rejected))
 }
 
-/// Waits until the peer has fetched the bundles named by the proposals it just accepted
-/// from this node, or until [`BUNDLE_PULL_WAIT`] has passed.
-async fn wait_for_bundle_pulls(run: &Running, accepted: Vec<EventId>) -> Result<()> {
-    let expected: HashSet<Digest> = run
+/// The full exchange for one circle both sides recognize.
+async fn exchange(
+    run: &Running,
+    peer: PeerId,
+    peer_key: DeviceKey,
+    circle: CircleId,
+    report: &mut SyncReport,
+) -> Result<()> {
+    let only: BTreeSet<CircleId> = [circle].into();
+    report.received += fetch_events(run, peer, circle).await?;
+    report.bundles += fetch_bundles(run, peer, circle).await?;
+    let settle = only.clone();
+    let changes = run
         .worker
-        .call(move |node| {
-            let mut digests = HashSet::new();
-            for id in &accepted {
-                if let Some(d) = node.store.event(id)?.and_then(|ev| ev.bundle_digest) {
-                    digests.insert(d);
-                }
-            }
-            Ok(digests)
-        })
+        .call(move |node| settle_circles(node, &settle))
         .await?;
-    if expected.is_empty() {
-        return Ok(());
+    report.changes.absorb(changes);
+
+    let (accepted, rejected) = push_events(run, peer, peer_key, circle).await?;
+    report.sent += accepted;
+    report.refused_by_peer += rejected;
+
+    // What the exchange produced over there. The peer answers this only after it has
+    // fetched the rule texts of what was just pushed and settled (`Shared::pulls`).
+    report.received += fetch_events(run, peer, circle).await?;
+    report.bundles += fetch_bundles(run, peer, circle).await?;
+    let changes = run
+        .worker
+        .call(move |node| settle_circles(node, &only))
+        .await?;
+    let signed = changes.signed;
+    report.changes.absorb(changes);
+    if signed > 0 {
+        // This node just signed a result or a charter: the peer should have it too.
+        let (accepted, rejected) = push_events(run, peer, peer_key, circle).await?;
+        report.sent += accepted;
+        report.refused_by_peer += rejected;
     }
-    let deadline = tokio::time::Instant::now() + BUNDLE_PULL_WAIT;
-    loop {
-        let done = run
-            .shared
-            .served
-            .lock()
-            .map(|served| expected.is_subset(&served))
-            .unwrap_or(true);
-        if done || tokio::time::Instant::now() >= deadline {
-            return Ok(());
+    Ok(())
+}
+
+/// For a circle this node holds with the peer on the roll, in which the peer does not
+/// recognize this node: asks why. A peer that saw this node voted off answers with the
+/// records of that vote, which this node verifies like any others (`governance::ingest`:
+/// the charter must be signed by the root and justified by a passed amendment). Returns
+/// whether this node is off the roll afterwards, and what that took off this machine.
+async fn learn_of_removal(
+    run: &Running,
+    peer: PeerId,
+    circle: CircleId,
+) -> Result<(bool, Changes)> {
+    let origin = peer.to_string();
+    for _ in 0..MAX_FETCH_ROUNDS {
+        let known = run
+            .worker
+            .call(move |node| peer::known_ids(&node.store, &circle, node.now()))
+            .await?;
+        let request = Request::FetchEvents {
+            circle_id: circle,
+            known,
+            limit: MAX_FETCH_LIMIT,
+            after: None,
+        };
+        let Ok(Response::Events { events, more }) = run.net.request(peer, &request).await else {
+            break;
+        };
+        if events.is_empty() {
+            break;
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        let from = origin.clone();
+        let stored =
+            run.worker
+                .call(move |node| {
+                    let only: HashSet<CircleId> = [circle].into();
+                    Ok(peer::ingest_values(
+                        &node.store,
+                        &events,
+                        Some(&only),
+                        Some(&from),
+                        node.now(),
+                    )?
+                    .stored)
+                })
+                .await?;
+        if stored == 0 || !more {
+            break;
+        }
     }
+    let me = run.device_key;
+    run.worker
+        .call(move |node| {
+            let off = !peer::roll_oracle(&node.store)?.is_active_member(&circle, &me, node.now());
+            // Nothing of that circle binds this node any more.
+            let changes = if off {
+                settle_circles(node, &[circle].into())?
+            } else {
+                Changes::default()
+            };
+            Ok((off, changes))
+        })
+        .await
 }
 
 /// A two-way sync with the peer at `addr`: fetch what it has, send what it lacks, let it
 /// fetch the rule texts, settle, and fetch once more for what the exchange produced on
 /// its side (a result, a new charter).
 pub async fn sync(run: &Running, addr: &Multiaddr) -> Result<SyncReport> {
-    let (peer, peer_key, circles) = connect(run, addr).await?;
+    let (peer, peer_key) = greet(run, addr).await?;
+    let mine = circles_with(run, peer_key).await?;
+    if mine.is_empty() {
+        return Err(refused(
+            "that peer and this node share no circle (each must be on the roll the other \
+             holds). Nothing was exchanged. If you were just admitted to a circle that node \
+             holds: `peerharness circle join <its address> --expect-fingerprint <fingerprint>`.",
+        ));
+    }
+    let theirs = announce(run, peer).await?;
+    let shared = theirs
+        .as_deref()
+        .map(|t| both(&mine, t))
+        .unwrap_or_default();
     let mut report = SyncReport {
         peer_id: peer.to_string(),
-        circles: circles.len(),
+        circles: shared.len(),
         ..SyncReport::default()
     };
-    for circle in circles {
-        let only: BTreeSet<CircleId> = [circle].into();
-        report.received += fetch_events(run, peer, circle).await?;
-        report.bundles += fetch_bundles(run, peer, circle).await?;
-        let settle = only.clone();
-        let changes = run
+    if !shared.is_empty() {
+        remember(run, addr, peer, peer_key, shared.clone()).await?;
+    }
+    for circle in &shared {
+        exchange(run, peer, peer_key, *circle, &mut report).await?;
+    }
+    // Circles this node believes it shares with the peer, and the peer does not.
+    for circle in mine.iter().filter(|c| !shared.contains(c)) {
+        let circle = *circle;
+        let (off, changes) = learn_of_removal(run, peer, circle).await?;
+        let name = run
             .worker
-            .call(move |node| settle_circles(node, &settle))
+            .call(move |node| {
+                Ok(node
+                    .store
+                    .circle(&circle)?
+                    .map_or_else(|| circle.to_string(), |c| c.name))
+            })
             .await?;
         report.changes.absorb(changes);
-
-        let (accepted, rejected, new_ids) = push_events(run, peer, peer_key, circle).await?;
-        report.sent += accepted;
-        report.refused_by_peer += rejected;
-        wait_for_bundle_pulls(run, new_ids).await?;
-
-        // What the exchange produced over there.
-        report.received += fetch_events(run, peer, circle).await?;
-        report.bundles += fetch_bundles(run, peer, circle).await?;
-        let changes = run
-            .worker
-            .call(move |node| settle_circles(node, &only))
-            .await?;
-        let signed = changes.signed;
-        report.changes.absorb(changes);
-        if signed > 0 {
-            // This node just signed a result or a charter: the peer should have it too.
-            let (accepted, rejected, _) = push_events(run, peer, peer_key, circle).await?;
-            report.sent += accepted;
-            report.refused_by_peer += rejected;
+        if off {
+            report.removed_from.push(name);
+        } else {
+            report.not_recognized.push(name);
         }
     }
+    if shared.is_empty() && report.removed_from.is_empty() {
+        return Err(refused(
+            "the peer does not recognize this node as a member of any circle it holds. \
+             Nothing was exchanged.",
+        ));
+    }
     Ok(report)
+}
+
+/// A circle a peer offered to a device it has on that circle's roll, before the device
+/// holds the circle itself: everything needed to check the roll and join.
+pub struct Offered {
+    pub circle: CircleId,
+    /// One `{"event": …}` line per event, unverified, as `events export` writes them.
+    pub lines: Vec<String>,
+    /// The last event the peer served (the cursor for later syncs).
+    pub last: Option<EventId>,
+}
+
+/// Asks the peer at `addr` which circles it has this node's device on the roll of, and
+/// fetches the records of those this node does not hold yet. Nothing is stored: the
+/// caller shows the owner the charter and joins only on their confirmation.
+///
+/// Before that confirmation this node has sent a greeting, an announcement without
+/// addresses, and the circle ids the peer itself just named.
+pub async fn fetch_for_join(run: &Running, addr: &Multiaddr) -> Result<(PeerId, Vec<Offered>)> {
+    let (peer, _) = greet(run, addr).await?;
+    let request = Request::Authenticate {
+        memberships: Vec::new(),
+        listen_addrs: Vec::new(),
+    };
+    let circles = match run.net.request(peer, &request).await {
+        Ok(Response::Authenticated { circles, .. }) => circles,
+        Ok(Response::Error {
+            code: ErrorCode::Unauthorized,
+        }) => {
+            return Err(refused(
+                "that node does not have this device on the roll of any circle it holds. \
+                 Has your admission passed, and has that node received it? (It must hold \
+                 the charter that lists your device key.)",
+            ))
+        }
+        Ok(_) | Err(_) => return Err(anyhow!("the peer did not complete the handshake")),
+    };
+    let held: HashSet<CircleId> = run
+        .worker
+        .call(|node| {
+            Ok(node
+                .store
+                .circles()?
+                .into_iter()
+                .map(|c| c.circle_id)
+                .collect())
+        })
+        .await?;
+    let mut offered = Vec::new();
+    let mut bytes: u64 = 0;
+    for circle in circles.into_iter().filter(|c| !held.contains(c)) {
+        let mut lines = Vec::new();
+        let mut after = None;
+        for _ in 0..MAX_FETCH_ROUNDS * 4 {
+            let request = Request::FetchEvents {
+                circle_id: circle,
+                known: Vec::new(),
+                limit: MAX_FETCH_LIMIT,
+                after,
+            };
+            let response = run
+                .net
+                .request(peer, &request)
+                .await
+                .map_err(|e| anyhow!("cannot fetch the circle's records: {e}"))?;
+            let Response::Events { events, more } = response else {
+                break;
+            };
+            let Some(last) = events
+                .last()
+                .and_then(|v| peer::field::<EventId>(v, "event_id"))
+            else {
+                break;
+            };
+            for ev in events {
+                let line = json!({ "event": ev }).to_string();
+                bytes += line.len() as u64;
+                if bytes > crate::carrier::MAX_SOURCE_BYTES {
+                    return Err(anyhow!(
+                        "that circle's records are too large to join from here"
+                    ));
+                }
+                lines.push(line);
+            }
+            after = Some(last);
+            if !more {
+                break;
+            }
+        }
+        offered.push(Offered {
+            circle,
+            lines,
+            last: after,
+        });
+    }
+    Ok((peer, offered))
+}
+
+/// After a join from the network: remembers the peer and how far its log was read.
+pub async fn remember_join(
+    run: &Running,
+    addr: &Multiaddr,
+    peer: PeerId,
+    circle: CircleId,
+    last: Option<EventId>,
+) -> Result<()> {
+    let peer_key = ph_network::device_key_from_peer_id(&peer)
+        .ok_or_else(|| anyhow!("the peer's identity is not a device key"))?;
+    remember(run, addr, peer, peer_key, vec![circle]).await?;
+    if let Some(last) = last {
+        run.worker
+            .call(move |node| {
+                Ok(node.store.advance_sync_cursor(
+                    &peer.to_string(),
+                    &circle,
+                    Some(&last),
+                    None,
+                    node.now(),
+                )?)
+            })
+            .await?;
+    }
+    Ok(())
+}
+
+/// Syncs with every peer this node has an address for, one after the other. For each
+/// peer the stored addresses are tried in order until one answers. Returns one entry
+/// per peer: its id and what the sync did, or why it failed.
+pub async fn sync_known(run: &Running) -> Result<Vec<(String, Result<SyncReport>)>> {
+    let peers: Vec<(String, Vec<String>)> = run
+        .worker
+        .call(|node| {
+            Ok(node
+                .store
+                .peers()?
+                .into_iter()
+                .filter(|p| !p.blocked && !p.addrs.is_empty())
+                .map(|p| (p.peer_id, p.addrs))
+                .collect())
+        })
+        .await?;
+    let mut out = Vec::with_capacity(peers.len());
+    for (id, addrs) in peers {
+        let mut outcome = Err(anyhow!("no usable address is stored for that peer"));
+        for addr in addrs.iter().filter_map(|a| a.parse::<Multiaddr>().ok()) {
+            outcome = sync(run, &addr).await;
+            if outcome.is_ok() {
+                break;
+            }
+        }
+        out.push((id, outcome));
+    }
+    Ok(out)
 }

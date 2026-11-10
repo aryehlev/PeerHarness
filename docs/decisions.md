@@ -305,3 +305,46 @@ Also decided here, with the commands that complete the circle's life cycle:
 * `circle amend`, `circle device add|remove` and `circle remove` are amendments like an
   admission. `circle mode` is the owner's standing choice (10.9); switching to `follow`
   is consent and needs the owner, switching to `ask` does not.
+
+## ADR-028: Joining and learning of a removal over the network; a cursor for sync
+ADR-026 listed two costs of authorizing the transport by the roll: a new member could
+not join over the network, and a removed member's node was not told. Both are closed
+here without answering anyone who is not, or was not, on a roll this node itself holds.
+
+* **Joining.** `authenticated` now names the circles in which the requester's device is
+  an active member (`circles`, at most 64). A device that was admitted by vote is on the
+  responder's roll, so it was already entitled to that circle's records; what it lacked
+  was the circle id. `circle join <address>` greets, announces without addresses, fetches
+  the records of the circles named, and then does exactly what a join from a file does:
+  it finds the newest charter that lists the device, shows it with the root fingerprint,
+  and stores nothing before the owner confirms. A device on no roll still gets
+  `unauthorized` and learns nothing.
+* **Removal.** A `fetch_events` from a device that is not an active member, is not
+  revoked, and is on the roll of an **earlier** charter this node holds, is answered with
+  the CHARTER events up to the first charter without it, each with the amendment, the
+  ballots and the result that justify it, and nothing else (`peer::farewell`). The device
+  was entitled to every one of those records as a member, and the removing charter is
+  word for word the amendment it could vote on, so nothing it could not already have
+  read is disclosed: no later charter, no later roll, no rule. Its node verifies the
+  records like any others and only then considers itself removed. Every other request
+  from it is refused as before. This is a deliberate, narrow exception to "a peer is
+  answered because it is on the current roll", made because the alternative is a node
+  that keeps following a circle that voted it out and cannot find out why it is refused.
+* **Cursor.** `fetch_events` served a circle's events by `created_at` and could only
+  exclude what the requester listed in `known` (at most 4096 ids), so a node holding more
+  than that was sent events it already had until a page held nothing new, and stopped.
+  Events are now served in the order the responder stored them, and the request carries
+  `after`, the last event of an earlier answer from that responder. Stored order rather
+  than `created_at`, because an event may arrive long after it was created and would
+  fall behind a time-based cursor. The syncing node keeps one cursor per peer and circle
+  for what it fetched and one for what the peer has taken (`sync_cursors`), keeps events
+  it cannot place yet in a pool that is offered again with every later batch, and moves
+  the fetch cursor only when that pool is empty. `known` stays as a cheap way to skip
+  recent events both sides have.
+* **No timer.** A sync used to wait up to ten seconds for the peer to fetch the rule
+  texts of what it had pushed. The responder now makes the requester's next request wait
+  for its own fetch-back and settling, so the result or charter that settling produces
+  is there to be fetched, and the wait is exactly as long as the work.
+* `sync` without an argument syncs with every peer whose address is stored, and
+  `daemon --sync-every <seconds>` does the same on a timer. Neither dials anyone the
+  owner has not synced with before.

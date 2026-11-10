@@ -3,8 +3,9 @@
 //!
 //! Covered here: a rule proposed on one node, voted on another and installed on both;
 //! an admission and a removal decided by ballots that arrive over the network, with the
-//! founder's daemon issuing the charters; and the three ways a node that is not on the
-//! roll is turned away.
+//! founder's daemon issuing the charters; a new member who gets the circle from a
+//! member's node; a removed member whose node is shown the vote that removed it; and
+//! the ways a node that is not on the roll is turned away.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -305,12 +306,58 @@ fn members_vote_over_quic_and_strangers_are_turned_away() {
     assert_eq!(bob.charter_seq(), 3);
     assert_eq!(bob.roll(), ["alice", "bob", "carol"]);
 
-    // Carol joins from a file (a new member is not on any roll she holds yet), then
-    // syncs like everyone else. The rule from before her time is installed for her.
-    carol.join(&alice, root, &fingerprint);
+    // Carol joins from Alice's node. It answers her because the admission that passed
+    // put her device on its roll; before that it told her nothing.
+    let join = |fingerprint: &str| {
+        vec![
+            "circle".to_owned(),
+            "join".to_owned(),
+            daemon.addr.clone(),
+            "--expect-fingerprint".to_owned(),
+            fingerprint.to_owned(),
+            "--yes".to_owned(),
+            "--name".to_owned(),
+            "team".to_owned(),
+        ]
+    };
+    let args = join("0000-0000-0000-0000-0000");
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, msg) = carol.fail(&args);
+    assert_eq!(code, 3, "the wrong root fingerprint: {msg}");
+    assert_eq!(
+        carol.run(&["status"])["circles"],
+        serde_json::json!([]),
+        "nothing was stored by the refused join"
+    );
+    let args = join(&fingerprint);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let joined = carol.run(&args);
+    assert_eq!(joined["member"], "carol");
+    assert_eq!(joined["charter_seq"], 3);
+    assert_eq!(carol.roll(), ["alice", "bob", "carol"]);
+    // The rule from before her time is installed for her, with its text.
     assert!(carol.has_skill());
-    let synced = carol.run(&["sync", &daemon.addr]);
-    assert_eq!(synced["refused_by_peer"], 0);
+    // A device that is on no roll is offered nothing to join.
+    let (code, msg) = nobody.fail(&args);
+    assert_eq!(code, 3, "{msg}");
+    assert!(
+        msg.contains("does not have this device on the roll"),
+        "{msg}"
+    );
+    assert_eq!(nobody.run(&["status"])["circles"], serde_json::json!([]));
+    // There is nothing left for her to join there, and a plain sync has nothing to move.
+    assert_eq!(carol.fail(&args).0, 3);
+    let synced = carol.run(&["sync"]);
+    assert_eq!(synced["failed"], serde_json::json!([]));
+    assert_eq!(synced["synced"][0]["peer_id"], daemon.peer_id.as_str());
+    assert_eq!(
+        (
+            synced["synced"][0]["received"].as_u64(),
+            synced["synced"][0]["sent"].as_u64(),
+            synced["synced"][0]["refused_by_peer"].as_u64()
+        ),
+        (Some(0), Some(0), Some(0))
+    );
 
     // --- The daemon is restarted on another port. Nothing is lost or repeated.
     drop(daemon);
@@ -379,8 +426,33 @@ fn members_vote_over_quic_and_strangers_are_turned_away() {
     // (The address Bob remembered is the one from before the restart: a dead port is a
     // plain failure, not a refusal.)
     assert_eq!(bob.fail(&["sync", &daemon.peer_id]).0, 1);
+    // Bob's node still believes he is a member. Alice's daemon no longer answers him as
+    // one, but it shows him the vote that removed him, and his node checks it itself.
+    assert!(bob.has_skill());
+    let told = bob.run(&["sync", &daemon.addr]);
+    assert_eq!(told["removed_from"], serde_json::json!(["team"]));
+    assert_eq!(told["circles"], 0, "nothing else was exchanged");
+    assert_eq!(told["sent"], 0);
+    assert_eq!(bob.charter_seq(), 4);
+    assert_eq!(bob.roll(), ["alice", "carol"]);
+    assert!(!bob.has_skill(), "the circle's rule no longer binds him");
+    assert_eq!(told["removed"], serde_json::json!([SKILL]));
+    assert_eq!(
+        bob.run(&["status"])["circles"][0]["standing"],
+        "you are not on the roll"
+    );
+    // From then on his node has nothing in common with hers and sends nothing.
     let (code, msg) = bob.fail(&["sync", &daemon.addr]);
     assert_eq!(code, 3, "{msg}");
-    assert!(msg.contains("does not recognize this node"), "{msg}");
-    assert_eq!(bob.charter_seq(), 3, "he was told nothing more");
+    assert!(msg.contains("share no circle"), "{msg}");
+    // He cannot get back in by asking to join, either.
+    let (code, msg) = bob.fail(&[
+        "circle",
+        "join",
+        &daemon.addr,
+        "--expect-fingerprint",
+        &fingerprint,
+        "--yes",
+    ]);
+    assert_eq!(code, 3, "{msg}");
 }

@@ -92,6 +92,8 @@ pub const MAX_KNOWN_IDS: usize = 4096;
 pub const MAX_FETCH_LIMIT: u32 = 256;
 /// Maximum memberships in `Authenticate` / `Authenticated`.
 pub const MAX_AUTH_MEMBERSHIPS: usize = 16;
+/// Maximum circle ids in an `authenticated` response.
+pub const MAX_SHARED_CIRCLES: usize = 64;
 /// Maximum entries in `versions` / `capabilities` lists.
 pub const MAX_VERSION_ENTRIES: usize = 8;
 /// Maximum length of one version or capability string, in bytes.

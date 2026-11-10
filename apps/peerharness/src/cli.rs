@@ -92,11 +92,12 @@ pub enum Command {
         #[command(subcommand)]
         command: ProposalCommand,
     },
-    /// Exchange with one peer what each of you lacks, directly over QUIC.
+    /// Exchange with a peer what each of you lacks, directly over QUIC.
     ///
     /// The peer must be running `peerharness daemon`, and each of you must be on the
     /// roll of a circle the other holds. Give its address, or its peer id once an
-    /// address is stored.
+    /// address is stored. With no argument, syncs with every peer whose address this
+    /// node has stored.
     Sync(SyncArgs),
     /// Exchange a circle's signed events with other members as a file.
     Events {
@@ -145,6 +146,9 @@ pub struct DaemonArgs {
     /// QUIC listen multiaddr (repeatable; default from config).
     #[arg(long, value_name = "MULTIADDR")]
     pub listen: Vec<String>,
+    /// Also sync with the peers this node already knows, every this many seconds.
+    #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u32).range(30..=86_400))]
+    pub sync_every: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -337,7 +341,8 @@ pub enum CircleCommand {
     },
     /// Propose admitting a new member. Admission is decided by vote of the current members.
     Invite(CircleInviteArgs),
-    /// Join a circle from an events file a member gave you.
+    /// Join a circle you were admitted to: from a member's node, or from a file or
+    /// directory a member gave you.
     Join(CircleJoinArgs),
     /// Show the charter: the rules of the vote and the roll of members.
     Members {
@@ -489,7 +494,10 @@ pub enum RoleArg {
 
 #[derive(Debug, Args)]
 pub struct CircleJoinArgs {
-    /// Events file or shared directory a member wrote after your admission passed.
+    /// Where to get the circle from, once your admission has passed: the address of a
+    /// member's running daemon (a multiaddr), or an events file or shared directory a
+    /// member wrote.
+    #[arg(value_name = "ADDRESS_OR_FILE")]
     pub invite_file: PathBuf,
     /// Skip the prompt; requires --expect-fingerprint.
     #[arg(long)]
@@ -688,8 +696,9 @@ pub enum RuleCommand {
 #[derive(Debug, Args)]
 pub struct SyncArgs {
     /// The peer's multiaddr (as its daemon prints it), or its peer id after a first sync.
+    /// Omit it to sync with every peer this node knows.
     #[arg(value_name = "ADDRESS_OR_PEER_ID")]
-    pub peer_id: String,
+    pub peer_id: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -872,6 +881,21 @@ mod tests {
             ],
             vec!["peerharness", "question", "dismiss", "abcd1234"],
             vec!["peerharness", "demo"],
+            vec!["peerharness", "sync"],
+            vec![
+                "peerharness",
+                "sync",
+                "/ip4/192.0.2.7/udp/4001/quic-v1/p2p/12D3KooWx",
+            ],
+            vec!["peerharness", "daemon", "--sync-every", "60"],
+            vec![
+                "peerharness",
+                "circle",
+                "join",
+                "/ip4/192.0.2.7/udp/4001/quic-v1",
+                "--expect-fingerprint",
+                "abcd",
+            ],
             vec!["peerharness", "proposal", "vote", "abcd1234", "approve"],
             vec!["peerharness", "reset", "--confirm"],
             vec!["peerharness", "export", "--local"],
@@ -890,6 +914,7 @@ mod tests {
         assert!(
             Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
+        assert!(Cli::try_parse_from(["peerharness", "daemon", "--sync-every", "5"]).is_err());
         assert!(Cli::try_parse_from([
             "peerharness",
             "circle",

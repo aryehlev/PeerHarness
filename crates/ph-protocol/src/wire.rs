@@ -7,7 +7,7 @@
 //!
 //! ```json
 //! {"type":"hello","versions":["0.1"]}
-//! {"type":"fetch_events","circle_id":"sha256:…","known":["sha256:…"],"limit":100}
+//! {"type":"fetch_events","circle_id":"sha256:…","known":["sha256:…"],"limit":100,"after":"sha256:…"}
 //! {"type":"error","code":"unauthorized"}
 //! ```
 //!
@@ -36,7 +36,7 @@ use crate::error::ProtocolError;
 use crate::jcs::{self, ParseLimits};
 use crate::limits::{
     MAX_AUTH_MEMBERSHIPS, MAX_BUNDLE_FILES, MAX_BUNDLE_PATH_BYTES, MAX_FETCH_LIMIT, MAX_KNOWN_IDS,
-    MAX_PUSH_EVENTS, MAX_VERSION_BYTES, MAX_VERSION_ENTRIES,
+    MAX_PUSH_EVENTS, MAX_SHARED_CIRCLES, MAX_VERSION_BYTES, MAX_VERSION_ENTRIES,
 };
 pub use crate::limits::{MAX_BUNDLE_BYTES, MAX_EVENT_BYTES, MAX_FRAME_BYTES, MAX_FRAME_DEPTH};
 
@@ -78,6 +78,17 @@ pub enum Request {
         known: Vec<EventId>,
         /// Maximum events to return (at most 256).
         limit: u32,
+        /// Cursor: the last event of an earlier `events` answer **from this responder**
+        /// for this circle. The responder serves events in the order it stored them and
+        /// continues after this one. Absent, or naming an event the responder does not
+        /// hold, means from the beginning. It selects where to start and nothing else:
+        /// what the requester may read is decided as for any other request.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "some"
+        )]
+        after: Option<EventId>,
     },
     /// Ask for a bundle by digest.
     FetchBundle {
@@ -198,11 +209,17 @@ pub enum Response {
         /// Generic capabilities, e.g. `["events","bundles"]` (at most 8).
         capabilities: Vec<String>,
     },
-    /// Answer to `authenticate`: only memberships for circles in which the requester
-    /// proved membership.
+    /// Answer to `authenticate`, given only to a requester whose device is an active
+    /// member of at least one circle the responder holds.
     Authenticated {
-        /// The responder's credentials with acceptances (at most 16).
+        /// The responder's credentials with acceptances (at most 16; the reference
+        /// implementation sends none, since membership is the roll).
         memberships: Vec<MembershipProof>,
+        /// The circles the responder holds in which the requester's device is an active
+        /// member (at most 64). A device that has just been admitted learns here which
+        /// circle to fetch; it is told about no other circle.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        circles: Vec<CircleId>,
     },
     /// Answer to `push_events`.
     PushResult {
@@ -366,8 +383,12 @@ impl Response {
                 check_short_strings("versions", versions)?;
                 check_short_strings("capabilities", capabilities)
             }
-            Response::Authenticated { memberships } => {
-                bound("memberships", memberships.len(), MAX_AUTH_MEMBERSHIPS)
+            Response::Authenticated {
+                memberships,
+                circles,
+            } => {
+                bound("memberships", memberships.len(), MAX_AUTH_MEMBERSHIPS)?;
+                bound("circles", circles.len(), MAX_SHARED_CIRCLES)
             }
             Response::PushResult { results } => bound("results", results.len(), MAX_PUSH_EVENTS),
             Response::Events { events, .. } => {
@@ -433,10 +454,46 @@ mod tests {
             circle_id: CircleId::from_digest(digest()),
             known: vec![EventId::from_digest(digest())],
             limit: 10,
+            after: None,
         };
         let s = String::from_utf8(r.to_bytes().unwrap()).unwrap();
         assert!(s.contains(r#""type":"fetch_events""#));
+        // No cursor is no member, so a request without one is what it always was.
+        assert!(!s.contains("after"));
         assert_eq!(Request::from_bytes(s.as_bytes()).unwrap(), r);
+        let with_cursor = Request::FetchEvents {
+            circle_id: CircleId::from_digest(digest()),
+            known: vec![],
+            limit: 10,
+            after: Some(EventId::from_digest(digest())),
+        };
+        let s = String::from_utf8(with_cursor.to_bytes().unwrap()).unwrap();
+        assert!(s.starts_with(r#"{"after":"sha256:"#));
+        assert_eq!(Request::from_bytes(s.as_bytes()).unwrap(), with_cursor);
+        // An explicit null is not "no cursor".
+        let null = s.replace(&format!("\"{}\"", EventId::from_digest(digest())), "null");
+        assert!(null.contains(r#""after":null"#));
+        assert!(Request::from_bytes(null.as_bytes()).is_err());
+
+        let plain = Response::Authenticated {
+            memberships: vec![],
+            circles: vec![],
+        };
+        assert_eq!(
+            String::from_utf8(plain.to_bytes().unwrap()).unwrap(),
+            r#"{"memberships":[],"type":"authenticated"}"#
+        );
+        let shared = Response::Authenticated {
+            memberships: vec![],
+            circles: vec![CircleId::from_digest(digest())],
+        };
+        let s = shared.to_bytes().unwrap();
+        assert_eq!(Response::from_bytes(&s).unwrap(), shared);
+        let too_many = Response::Authenticated {
+            memberships: vec![],
+            circles: vec![CircleId::from_digest(digest()); MAX_SHARED_CIRCLES + 1],
+        };
+        assert!(too_many.validate().is_err());
     }
 
     #[test]
@@ -463,6 +520,7 @@ mod tests {
             Response::hello(),
             Response::Authenticated {
                 memberships: vec![],
+                circles: vec![CircleId::from_digest(digest())],
             },
             Response::PushResult {
                 results: vec![
@@ -535,12 +593,13 @@ mod tests {
         assert_eq!(back, req);
         let resp = Response::Authenticated {
             memberships: vec![proof],
+            circles: vec![],
         };
         let back = Response::from_bytes(&resp.to_bytes().unwrap()).unwrap();
         assert_eq!(back, resp);
         crate::credentials::verify_membership_proof(
             match &back {
-                Response::Authenticated { memberships } => &memberships[0],
+                Response::Authenticated { memberships, .. } => &memberships[0],
                 _ => unreachable!(),
             },
             t,
@@ -571,12 +630,14 @@ mod tests {
             circle_id: c,
             known: vec![EventId::from_digest(digest()); MAX_KNOWN_IDS + 1],
             limit: 1,
+            after: None,
         };
         assert!(too_many.validate().is_err());
         let limit = Request::FetchEvents {
             circle_id: c,
             known: vec![],
             limit: MAX_FETCH_LIMIT + 1,
+            after: None,
         };
         assert!(limit.validate().is_err());
         let push = Request::PushEvents {

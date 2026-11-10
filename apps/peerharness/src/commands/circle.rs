@@ -343,6 +343,20 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             t.line(
                 "They run: `peerharness circle join <file> --expect-fingerprint <fingerprint>`.",
             );
+            // A running daemon here already has them on its roll: no file is needed.
+            if let Some(addr) = crate::daemon_info::DaemonInfo::running(&node.home)
+                .and_then(|d| d.listen_addrs.into_iter().next())
+            {
+                t.line(format!(
+                    "Or, if they can reach your daemon: `peerharness circle join {addr} \
+                     --expect-fingerprint {}`.",
+                    circle.root_key.fingerprint()
+                ));
+            } else {
+                t.line(
+                    "Or run `peerharness daemon` and give them its address instead of the file.",
+                );
+            }
             written = Some(path.display().to_string());
         }
         None if tally.passed() => {
@@ -964,19 +978,21 @@ fn charter_for(lines: &[&str], device: &DeviceKey, now: ph_core::Timestamp) -> O
     best
 }
 
-fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
-    let node = ctx.open_node()?;
-    let now = node.now();
-    let me = node.device_key();
-    let source = crate::carrier::read_source(&args.invite_file)?;
-    let lines: Vec<&str> = source.lines.iter().map(String::as_str).collect();
-    let charter = charter_for(&lines, &me, now).ok_or_else(|| {
-        refused(
-            "that file holds no charter with this device on its roll. Ask a member to run \
-             `peerharness circle invite` with your device key (see `peerharness status`) \
-             and to export again once the admission has passed.",
-        )
-    })?;
+/// A join the owner has confirmed: the charter that becomes this node's trust anchor.
+struct JoinPlan {
+    charter: Charter,
+    name: String,
+    member: String,
+}
+
+/// Shows the owner the circle `charter` belongs to and asks for the join. Refuses when
+/// the root fingerprint is not the one the owner expected.
+fn plan_join(
+    ctx: &Ctx,
+    charter: Charter,
+    me: &DeviceKey,
+    args: &CircleJoinArgs,
+) -> Result<JoinPlan> {
     let fingerprint = charter.issuer_key.fingerprint();
     if let Some(expected) = &args.expect_fingerprint {
         if expected.trim() != fingerprint {
@@ -989,42 +1005,56 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
     }
     let name = args
         .name
+        .clone()
         .unwrap_or_else(|| format!("circle-{}", &fingerprint[..fingerprint.len().min(9)]));
-    if node.store.circle(&charter.circle_id)?.is_some() {
-        return Err(usage(
-            "this node is already in that circle: use `peerharness events import`",
-        ));
-    }
-    let my_entry = charter
+    let member = charter
         .content
-        .member_of(&me)
-        .ok_or_else(|| anyhow!("this device is not on the roll"))?;
+        .member_of(me)
+        .ok_or_else(|| anyhow!("this device is not on the roll"))?
+        .member
+        .clone();
     let preview = format!(
         "You are about to join a circle as {member}.\n  root fingerprint {fingerprint}\n\
          Check that fingerprint with the founder through another channel before you continue.\n\n{charter}\n\
          Joining means accepting this charter and the way it is amended.{binding}",
-        member = my_entry.member,
-        charter = describe_charter(&charter, Some(&me)).trim_end(),
+        charter = describe_charter(&charter, Some(me)).trim_end(),
         binding = if charter.content.rules.binding {
             "\nRules that pass will be installed for your agent without asking each time; \
-             you can opt out of any rule, or switch to asking, at any time."
+             you can opt out of any rule, or switch to asking, at any time \
+             (`peerharness circle mode ask`)."
         } else {
             ""
         },
     );
     confirm(&ctx.out, &preview, args.yes, "joining the circle")?;
+    Ok(JoinPlan {
+        charter,
+        name,
+        member,
+    })
+}
 
-    governance::join_circle(&node.store, &name, &charter, &me, now)?;
+/// Joins on the owner's confirmation: stores the circle with the charter as its anchor,
+/// takes in the records that came with it, and settles.
+fn finish_join(node: &Node, plan: &JoinPlan, lines: &[&str]) -> Result<(Value, Text)> {
+    let now = node.now();
+    let charter = &plan.charter;
+    if node.store.circle(&charter.circle_id)?.is_some() {
+        return Err(usage(
+            "this node is already in that circle: use `peerharness sync` or `peerharness events import`",
+        ));
+    }
+    governance::join_circle(&node.store, &plan.name, charter, &node.device_key(), now)?;
     let bundles = crate::library::bundle_store(&node.home);
     let summary = governance::import_lines(&node.store, &bundles, lines.iter().copied(), now)?;
     let circle = node
         .store
         .circle(&charter.circle_id)?
         .ok_or_else(|| anyhow!("the circle was not stored"))?;
-    let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
+    let settled = governance::settle(node, &circle, &governance::user_installer()?, &[])?;
 
     let mut t = Text::new();
-    t.line(format!("Joined {} as {}.", safe(&name), my_entry.member));
+    t.line(format!("Joined {} as {}.", safe(&plan.name), plan.member));
     t.kv("charter", charter.seq);
     t.kv("events imported", summary.stored);
     t.kv("your mode", &circle.adoption_mode);
@@ -1036,15 +1066,142 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
             "  rule {skill} waits for your confirmation ({why})"
         ));
     }
-    Ok(Report::new(
+    Ok((
         json!({
-            "circle": name,
+            "circle": plan.name,
             "circle_id": charter.circle_id,
-            "member": my_entry.member,
+            "member": plan.member,
             "charter_seq": charter.seq,
             "events_imported": summary.stored,
             "installed": settled.applied.installed,
         }),
-        t.finish(),
+        t,
     ))
+}
+
+fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
+    // A path that exists is a file or a directory. Anything else that reads as a
+    // multiaddr is a member's node.
+    if !args.invite_file.exists() {
+        if let Ok(addr) = args
+            .invite_file
+            .to_string_lossy()
+            .trim()
+            .parse::<ph_network::Multiaddr>()
+        {
+            return join_from_peer(ctx, args, addr);
+        }
+    }
+    let node = ctx.open_node()?;
+    let now = node.now();
+    let me = node.device_key();
+    let source = crate::carrier::read_source(&args.invite_file)?;
+    let lines: Vec<&str> = source.lines.iter().map(String::as_str).collect();
+    let charter = charter_for(&lines, &me, now).ok_or_else(|| {
+        refused(
+            "that file holds no charter with this device on its roll. Ask a member to run \
+             `peerharness circle invite` with your device key (see `peerharness status`) \
+             and to export again once the admission has passed.",
+        )
+    })?;
+    if node.store.circle(&charter.circle_id)?.is_some() {
+        return Err(usage(
+            "this node is already in that circle: use `peerharness events import`",
+        ));
+    }
+    let plan = plan_join(ctx, charter, &me, &args)?;
+    let (json, t) = finish_join(&node, &plan, &lines)?;
+    Ok(Report::new(json, t.finish()))
+}
+
+/// `circle join <address>`: gets the circle from a member's running daemon. That node
+/// answers because the admission that passed put this device on its roll; what it sends
+/// is verified here exactly like a file (the charter must carry the root signature and
+/// the fingerprint the owner expects, and every record is checked on import).
+fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, addr: ph_network::Multiaddr) -> Result<Report> {
+    use crate::commands::net::{dial_only, tokio_runtime};
+    use crate::runtime::{self, Running};
+
+    let home = ctx.home.clone();
+    tokio_runtime()?.block_on(async {
+        let run = Running::start(home, dial_only())?;
+        let joined = async {
+            let me = run.device_key;
+            let now = ph_core::Timestamp::now();
+            let (peer, offered) = runtime::fetch_for_join(&run, &addr).await?;
+            // The circles on offer whose records hold a charter that lists this device
+            // and is signed by the key the circle id is derived from.
+            let mut choices = Vec::new();
+            for o in offered {
+                let lines: Vec<&str> = o.lines.iter().map(String::as_str).collect();
+                let Some(charter) = charter_for(&lines, &me, now) else {
+                    continue;
+                };
+                if charter.circle_id == o.circle && o.circle.is_derived_from(&charter.issuer_key) {
+                    choices.push((o, charter));
+                }
+            }
+            if choices.is_empty() {
+                return Err(refused(
+                    "that node offered no circle that this node does not hold already and \
+                     whose charter lists this device. If you are a member already, use \
+                     `peerharness sync`.",
+                ));
+            }
+            if let Some(expected) = &args.expect_fingerprint {
+                choices.retain(|(_, c)| c.issuer_key.fingerprint() == expected.trim());
+                if choices.is_empty() {
+                    return Err(refused(
+                        "no circle that node offered has the root fingerprint you expected. \
+                         Do not join.",
+                    ));
+                }
+            }
+            if choices.len() > 1 {
+                return Err(usage(
+                    "that node has this device on the roll of several circles: pass \
+                     --expect-fingerprint to say which one you mean",
+                ));
+            }
+            let (offer, charter) = choices.remove(0);
+            let plan = plan_join(ctx, charter, &me, &args)?;
+            let circle = offer.circle;
+            let last = offer.last;
+            let lines = offer.lines;
+            let (mut json, mut t) = run
+                .worker
+                .call(move |node| {
+                    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+                    finish_join(node, &plan, &lines)
+                })
+                .await?;
+            runtime::remember_join(&run, &addr, peer, circle, last).await?;
+            // The rule texts, and whatever is newer than what was just read.
+            match runtime::sync(&run, &addr).await {
+                Ok(r) => {
+                    for skill in &r.changes.installed {
+                        t.line(format!("  installed rule {skill}"));
+                    }
+                    for skill in &r.changes.asking {
+                        t.line(format!("  rule {skill} waits for your confirmation"));
+                    }
+                    let mut installed: Vec<Value> =
+                        json["installed"].as_array().cloned().unwrap_or_default();
+                    installed.extend(r.changes.installed.iter().map(|s| json!(s)));
+                    json["installed"] = json!(installed);
+                    json["peer_id"] = json!(r.peer_id);
+                    t.line("That node's address is stored: `peerharness sync` syncs with it.");
+                }
+                Err(e) => {
+                    t.line(format!(
+                        "Joined, but the first sync did not finish ({e}). Run `peerharness sync`."
+                    ));
+                }
+            }
+            Ok(Report::new(json, t.finish()))
+        }
+        .await;
+        run.stop().await;
+        joined
+    })
 }
