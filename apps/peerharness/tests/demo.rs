@@ -35,9 +35,12 @@ fn demo_runs_the_whole_vote_and_explains_it() {
         ))
         .stdout(predicate::str::contains("She is not on the roll: refused."))
         .stdout(predicate::str::contains("a notary, not a ruler"))
-        // Honest about what the demo does not show.
+        // Honest about what the demo does not show, and where the real thing is.
         .stdout(predicate::str::contains(
-            "The QUIC transport is not wired into the CLI yet.",
+            "the signed events travelled between the nodes as files",
+        ))
+        .stdout(predicate::str::contains(
+            "QUIC: see `peerharness sync --help`.",
         ));
 }
 
@@ -56,6 +59,7 @@ fn demo_json_report_is_a_single_document_on_stdout() {
     assert_eq!(v["installed"]["alice"], true);
     assert_eq!(v["installed"]["bob"], true);
     assert_eq!(v["installed"]["carol"], false);
+    assert_eq!(v["transport"], "files (in-process)");
     // The narrative went to stderr, so stdout stayed machine-readable.
     let stderr = String::from_utf8(out.get_output().stderr.clone()).unwrap();
     assert!(stderr.contains("Three independent nodes decided one shared rule"));

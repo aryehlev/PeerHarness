@@ -7,7 +7,7 @@
 //! `ingest` gives a real peer, so each node verifies everything itself.
 //!
 //! Honest limits, printed at the end: the nodes run in one process, and the events
-//! travel as files, not over the QUIC transport (which is not wired into the CLI yet).
+//! travel as files, not over the QUIC transport that `sync` and `daemon` use.
 //! Skills are installed into temporary directories, never into `~/.claude`.
 //!
 //! The demo doubles as an end-to-end check: any step that does not behave as the
@@ -467,7 +467,8 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
 
     out.note("\nThree independent nodes decided one shared rule by majority vote. No server was involved.");
     out.note("In this demo the signed events travelled between the nodes as files, and the skills");
-    out.note("went into temporary directories. The QUIC transport is not wired into the CLI yet.");
+    out.note("went into temporary directories. Between real machines the same events travel over");
+    out.note("QUIC: see `peerharness sync --help`.");
 
     Ok(Report::new(
         json!({
@@ -478,7 +479,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
             "skill_name": draft.name,
             "tally": tallies[0],
             "installed": {"alice": alice.installed(&draft.name), "bob": bob.installed(&draft.name), "carol": carol.installed(&draft.name)},
-            "transport": "files (in-process); QUIC not wired yet",
+            "transport": "files (in-process)",
         }),
         "",
     ))
