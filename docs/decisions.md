@@ -186,3 +186,40 @@ with the circle root fingerprint, and requires the human to confirm (or to pass
 must pass succession. Earlier decision events, which name charters the node does not
 hold, are not stored. The credential-based `Invite` object stays in the protocol for
 the network transport.
+
+## ADR-021: Rules can be written down, and the agent may report a correction
+The deterministic detector only recognizes a few "use X, not Y" shapes and found about
+one in five corrections in a hand-made sample. Rather than grow the patterns, a rule can
+be stated directly: `peerharness note "<one sentence>"` creates a candidate whose skill
+draft is that sentence. The coding agent, which is the one party that reliably knows it
+was just corrected, may run the same command with `--from-agent`; `watch claude
+--install` installs a small fixed skill that asks it to. This deviates from the
+crate's earlier rule that drafts contain only fixed text plus extracted tokens: a note
+draft contains the statement. It is redacted on the way in and shown in full before it
+is saved, installed or shared. An agent's report is advisory and creates a `Detected`
+candidate, nothing more, so the spec's "never infer consent from an agent's output"
+holds. The detector stays as a third source.
+
+## ADR-022: Consent steps refuse inside a coding agent's session
+Giving the agent a command to run made it likely that a helpful agent would also run the
+next one (`review --approve`, `proposal vote --yes`). Every consent step therefore
+refuses when `CLAUDECODE` or `PEERHARNESS_AGENT_SESSION` is set, with or without
+`--yes`, and the installed skill tells the agent that its part ends with the note. This
+is deliberately described as a guard against accidents: it reads environment variables,
+so an agent that clears them is not stopped, and an agent with shell access to the
+owner's account has other ways to change local files. Cost: a person who types a
+PeerHarness command through the agent's own shell escape is refused as well and must
+use their own terminal. No override is offered, because an override an agent can set
+would make the guard meaningless.
+
+## ADR-023: A rule binds its electorate, and a vote removes only what a vote installed
+Two questions the first version of section 10.9 left open. (1) Who gets a passed rule
+installed: the members of its electorate (on the roll, with a scope covering the
+rule's), not every node holding the circle's events. A member of another team is not
+bound by a vote they could not take part in, and a removed member's node removes what
+the circle had installed. (2) What a repeal removes: installs made because a rule
+passed are recorded in the new table `rule_installs` (schema version 3), and only those
+are removed when the rule leaves force. Without the record a repeal would have deleted
+a skill the owner had installed for themselves under the same name and digest.
+Consequence: on the machine of a proposer who installed their own rule personally
+before proposing it, a later repeal leaves that personal copy in place.

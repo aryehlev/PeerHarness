@@ -121,6 +121,11 @@ fn settled_lines(t: &mut Text, s: &Settled) {
             "  rule {skill} was not installed: a skill of that name that PeerHarness does not manage is in the way"
         ));
     }
+    for skill in &s.applied.not_bound {
+        t.line(format!(
+            "  rule {skill} is in force and does not bind you (you are not in its electorate)"
+        ));
+    }
     for skill in &s.applied.waiting_for_bundle {
         t.line(format!(
             "  rule {skill} is in force; its content has not arrived yet"
@@ -146,8 +151,10 @@ fn create(
         None => Scope::all(),
     };
     let now = node.now();
-    // Draft the skill and store its bundle locally. Nothing has left the machine yet.
-    let (_, bundle, _) = crate::library::create_local_skill(&node.home, &node.store, &cand, now)?;
+    // Draft the skill for the preview. Nothing is saved until the owner has confirmed.
+    let (name, md) = crate::library::render_candidate_skill(&cand)?;
+    let draft = ph_skills::build_bundle(&md, Some(&name))
+        .map_err(|e| usage(format!("this candidate cannot become a rule: {e}")))?;
     let title = crate::library::clean_statement(&cand.statement)?;
     let charter = governance::current_charter(&node.store, &circle.circle_id)?;
     let electorate = charter
@@ -161,10 +168,18 @@ fn create(
          It passes with {need} of {electorate} member approval(s). Creating it is not a vote:\n\
          cast yours with `peerharness proposal vote`.",
         circle = safe(&circle.name),
-        skill = safe(bundle.skill_md()),
+        skill = safe(draft.skill_md()),
         need = charter.content.rules.pass.need(electorate),
     );
     confirm(&ctx.out, &preview, yes, "sharing the proposal")?;
+
+    // Confirmed: save exactly the previewed text to the library.
+    let (_, bundle, _) = crate::library::create_local_skill(&node.home, &node.store, &cand, now)?;
+    if bundle.digest() != draft.digest() {
+        return Err(anyhow!(
+            "the rule's text changed while it was being confirmed: nothing was shared"
+        ));
+    }
 
     // The human confirmed the exact text: walk the candidate to `Proposed`.
     let mut status = cand.status;

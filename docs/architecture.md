@@ -73,7 +73,7 @@ through types and traits defined in `ph-core` and `ph-protocol`.
 | ph-store | SQLite migrations and typed repositories for every table in section 8 |
 | ph-network | libp2p QUIC swarm with request/response, length-prefixed bounded codec, per-peer rate limits, async `NetworkHandle` API plus an inbound `RequestHandler` trait; it knows wire types but nothing about circles |
 | ph-observer | Claude Code hook payload parsing and normalization, idempotent settings.json install/remove with backups, spool, notification throttle |
-| ph-learning | `CandidateDetector` trait, deterministic correction detector, candidate dedup keys, skill-draft text, optional advisory agent providers (Claude Code CLI, Codex CLI, Ollama-compatible local endpoint) |
+| ph-learning | `CandidateDetector` trait, deterministic correction detector, free-text notes (section 12.1), candidate dedup keys, skill-draft text, optional advisory agent providers (Claude Code CLI, Codex CLI, Ollama-compatible local endpoint) |
 | ph-governance | incoming-event authorization (by credential, by roll, by root key), read rules, counting a vote (`tally`), result certificates, the rules in force, charter succession and amendment drafting, the local adoption gate and `LocalPolicy`, conflict and supersede handling, question anti-spam (quotas, dedup, mute, block) |
 | ph-skills | strict SKILL.md frontmatter parser and validator (Agent Skills spec), the instruction-only rule for bundles, content risk scanner, bundle build and hostile-bundle validation, diff, atomic install, uninstall and rollback |
 
@@ -324,6 +324,11 @@ columns listed are the minimum):
   check that a vote justifies a successor: the caller runs `check_successor` first.
 * `rule_optouts(circle_id, skill_name, opted_out_at, PRIMARY KEY(circle_id, skill_name))`:
   rules the owner opted out of on this machine.
+* `rule_installs(circle_id, skill_name, bundle_digest, installed_at, PRIMARY KEY(circle_id, skill_name))`:
+  skills that were installed on this machine because a rule passed in that circle. A
+  repeal, a superseding rule or an opt-out removes only what is recorded here with the
+  digest still in place, so a skill the owner installed personally is never removed by
+  a vote.
 * `memberships(credential_digest PK, circle_id, subject_key, roles_json, scopes_json, issued_at, expires_at, credential_json, acceptance_json NULL, is_self, received_at)`.
 * `issued_invites(credential_digest PK, circle_id, invitee_key, created_at, invite_expires_at)`.
 * `revocations(id PK, circle_id, subject_key, revoked_at, revocation_json, received_at)` with `UNIQUE(circle_id, subject_key)` and a per-circle epoch.
@@ -364,6 +369,15 @@ Nothing that comes from an LLM or a peer counts as human.
 `Eligible` means the candidate's proposal **has passed** as defined in section 10.6.
 `Adopted`, `Rejected` and `Superseded` are terminal.
 
+Three things create a candidate, all as `Detected` and all as `Actor::System`: the
+pattern detector, `peerharness note` (a rule written down as one sentence) and the
+owner's coding agent reporting a correction (`note --from-agent`, section 12.1). Which
+of them it was is a display label, never an authorization. `review --approve` is the
+human step into `LocalApproved` and saves the drafted skill to the local library;
+nothing is installed or shared by it. Installing that skill personally (`skills
+install`) does not move the candidate to `Adopted`: the CLI leaves it at
+`LocalApproved`, so the same rule can still be proposed to a circle.
+
 ## 10. Governance: majority rule under a charter (ph-protocol, ph-governance)
 
 Status: the objects, counting, result verification, rule set, charter succession,
@@ -374,7 +388,7 @@ through one `ingest` path; `settle` publishes results, notarizes passed amendmen
 the founder's node and applies the rule set to the agent's skills directory). It is
 exercised end to end by `peerharness demo` and by `apps/peerharness/tests`. Events
 travel as files; the network daemon is not wired yet. Decisions behind this
-section: ADR-012 to ADR-018.
+section: ADR-012 to ADR-018 and ADR-023.
 
 ### 10.1 What "democratic" means here
 
@@ -649,10 +663,23 @@ what one rule in force means on this machine, in this order:
   rules that member X approved") can hold a rule back for local confirmation. It never
   changes whether the rule passed. It is not met by a carried rule, whose ballots are
   not re-counted, so the owner is asked.
-* The CLI flows around this are not written yet: showing the charter on `circle create`
-  and `circle join` and recording the choice, `rule opt-out`, installing and removing
-  managed skills as rules enter and leave force, and asking once before switching to
-  `follow` when an amendment turns `binding` from false to true.
+* **Who a rule binds.** A rule in force binds the members of its electorate: those on
+  the current roll whose scopes cover the rule's scope. A node outside it (a member of
+  another team, or a member who was removed) installs nothing for that rule
+  (`Applied::not_bound`). Nobody is bound by a vote they were not entitled to take
+  part in.
+* **What a vote installed, a vote removes.** Every install made because a rule passed
+  is recorded in `rule_installs`. When the rule leaves force (repealed, superseded, or
+  not carried by an amendment), stops binding the node, or the owner opts out, exactly
+  the recorded skill is removed, and only while the installed text still has the digest
+  that was voted on. A skill the owner installed personally with `skills install` has
+  no such record and is never removed by a vote (ADR-023).
+* **CLI.** `circle create` and `circle join` show the charter and record the adoption
+  mode. `rule list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in
+  force; `proposal adopt` confirms a rule that is waiting for the owner; `circle invite`
+  and `circle remove` propose amendments to the roll. Not written yet: changing the
+  thresholds or `binding` from the CLI, asking once before switching to `follow` when
+  an amendment turns `binding` from false to true, and a `circle leave` command.
 
 ### 10.10 Rights no vote can override
 
@@ -674,8 +701,10 @@ switch them off.
    (section 7). Nothing in `ph_governance::read` looks at a ballot.
 4. **High-risk content always asks.** A rule with a high-risk scanner finding is never
    installed without the owner's explicit confirmation, in any mode.
-5. **You can refuse and you can leave.** Opt-out and uninstall always work. (Removing a
-   circle's managed skills on leaving is part of the unwritten CLI.)
+5. **You can refuse.** Opt-out always works and only changes your machine. A node that
+   is no longer on the roll removes what the circle's votes installed (section 10.9).
+   Leaving on your own is not written yet: today a member leaves the roll by a vote
+   (`circle remove`), like any other change to it.
 6. **Verify before acting.** A node acts on a result or a charter only after verifying
    it itself. A `RESULT` and a root-signed `CHARTER` have no authority of their own.
 
@@ -783,6 +812,37 @@ The golden vectors tell a similar story end to end, including a charter change:
   shown to the human. It never drives an authorization, state transition or install.
   Tests use a fake binary via `PEERHARNESS_CLAUDE_BIN`.
 
+### 12.1 Notes, and corrections reported by the agent
+
+The pattern detector recognizes a few shapes of "use X, not Y" in prompts. Most real
+corrections are sentences, so a rule can also be written down directly.
+
+* `peerharness note "<one sentence>"` creates a candidate from free text
+  (`ph_learning::note`): `concept_key = "note:" + ` the first 16 hex characters of
+  `SHA-256("peerharness-note-v0" || 0x00 || normalized statement)`, no evidence
+  observations, `Confidence::Low`, and topic `note` or `agent-note`. The statement is
+  redacted (`ph_core::redact`) and must be one line of 1-500 characters. Text that
+  could not become an instruction-only skill is refused at once.
+* Its skill draft is the statement: the description is the statement, and the body is
+  the fixed heading `# Rule`, the statement, and one fixed sentence saying that what the
+  user asks for in the current session wins over the rule. The skill name comes from the
+  first meaningful ASCII words of the statement (or is `rule-<8 hex>` when there are
+  none), or is given with `--name`.
+* `watch claude --install` also installs `peerharness-notes`, a fixed skill that asks
+  the agent to run `note --from-agent` when the user corrects it
+  (`apps/peerharness/src/agent_notes.rs`). `--no-agent-notes` skips it and `--remove`
+  removes it. It is installed and marked like any managed skill, never replaces a skill
+  the owner wrote or edited, and never leaves the machine.
+* An agent's note is advisory text from `Actor::System`. At most 20 unreviewed
+  agent-reported notes are kept; further ones are refused until the owner reviews some.
+* **Consent is human-only.** Every step that goes through `consent::confirm` or
+  `consent::human_only` (reviewing, sharing, proposing, voting, installing, changing
+  hooks) refuses with exit code 3 when the process runs inside a coding agent's session,
+  with or without `--yes`. A session is recognized by `CLAUDECODE` (which Claude Code
+  sets in every command it runs) or `PEERHARNESS_AGENT_SESSION` being set to anything
+  but empty or `0`. This stops an agent that is trying to help. It is not a security
+  boundary: a process that clears the variable is not stopped by it (ADR-022).
+
 ## 13. Privacy invariants (all crates)
 
 * Observation text, prompts, transcripts and tool output never appear in tracing logs,
@@ -792,4 +852,6 @@ The golden vectors tell a similar story end to end, including a charter change:
   placed in QUESTION, ANSWER or PROPOSAL bodies or bundles. `ph_core::redact` runs on
   every outgoing human-approved text before the preview, so the preview shows the
   redacted text.
+* A note is stored locally after redaction. It reaches a bundle or a PROPOSAL only
+  through the same exact preview and confirmation as any other text.
 * Joining a circle never uploads existing local candidates, observations or skills.

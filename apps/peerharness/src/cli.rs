@@ -62,9 +62,15 @@ pub enum Command {
         #[command(subcommand)]
         agent: WatchAgent,
     },
+    /// Write down a rule for your agent, in one sentence.
+    ///
+    /// The rule becomes a candidate in your inbox. Nothing is installed or shared until
+    /// you review it. A coding agent may run this command to report a correction you
+    /// gave it; it cannot approve what it reported.
+    Note(NoteArgs),
     /// Bounded summary of what needs your attention.
     Inbox(InboxArgs),
-    /// Review a detected candidate convention.
+    /// Review a candidate rule: save it to your library, edit it or ignore it.
     Review(ReviewArgs),
     /// Local skill library and installation.
     Skills {
@@ -169,12 +175,16 @@ pub enum WatchAgent {
 #[derive(Debug, Args)]
 #[command(group(ArgGroup::new("action").args(["install", "remove", "status"])))]
 pub struct WatchClaudeArgs {
-    /// Add the PeerHarness hooks to Claude Code settings (with a backup).
+    /// Add the PeerHarness hooks to Claude Code settings (with a backup), and the
+    /// skill that asks your agent to report corrections.
     #[arg(long)]
     pub install: bool,
-    /// Remove this home's PeerHarness hooks (with a backup).
+    /// Remove this home's PeerHarness hooks (with a backup) and the reporting skill.
     #[arg(long)]
     pub remove: bool,
+    /// With --install: do not install the skill that asks the agent to report corrections.
+    #[arg(long, requires = "install")]
+    pub no_agent_notes: bool,
     /// Show whether the hooks are installed (default).
     #[arg(long)]
     pub status: bool,
@@ -184,6 +194,18 @@ pub struct WatchClaudeArgs {
     /// Skip the confirmation prompt (after reviewing the preview).
     #[arg(long)]
     pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct NoteArgs {
+    /// The rule, as one sentence (at most 500 characters). Secrets are redacted.
+    pub text: String,
+    /// Skill name for the rule (a-z, 0-9 and hyphens; default: from its first words).
+    #[arg(long, value_name = "NAME")]
+    pub name: Option<String>,
+    /// Mark the note as reported by a coding agent (a label shown in the inbox).
+    #[arg(long)]
+    pub from_agent: bool,
 }
 
 #[derive(Debug, Args)]
@@ -220,8 +242,6 @@ pub enum ScopeArg {
     Project,
 }
 
-// Used by `skills install`, which is not implemented in this build yet.
-#[allow(dead_code)]
 impl ScopeArg {
     pub fn skill_scope(self) -> ph_skills::SkillScope {
         match self {
@@ -320,8 +340,21 @@ pub enum CircleCommand {
         #[arg(long, value_name = "NAME")]
         circle: Option<String>,
     },
+    /// Propose removing a member. Removal is decided by vote of the current members.
+    Remove(CircleRemoveArgs),
     /// Revoke a member (founder only).
     Revoke(CircleRevokeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CircleRemoveArgs {
+    /// The member's handle on the roll.
+    pub member: String,
+    #[arg(long, value_name = "NAME")]
+    pub circle: String,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -511,6 +544,19 @@ pub enum RuleCommand {
         #[arg(long, value_name = "NAME")]
         circle: String,
     },
+    /// Propose repealing a rule in force. The members who adopted it vote on it.
+    Repeal {
+        /// The rule's skill name.
+        name: String,
+        #[arg(long, value_name = "NAME")]
+        circle: String,
+        /// Why, in one line (shared with the members, after redaction).
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+        /// Skip the confirmation prompt (after reviewing the preview).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -552,6 +598,22 @@ mod tests {
             vec!["peerharness", "--json", "status"],
             vec!["peerharness", "observe", "demo"],
             vec!["peerharness", "observe", "import", "x.jsonl"],
+            vec!["peerharness", "note", "Run the tests before you say done."],
+            vec![
+                "peerharness",
+                "note",
+                "--from-agent",
+                "Use pnpm.",
+                "--name",
+                "pnpm",
+            ],
+            vec![
+                "peerharness",
+                "watch",
+                "claude",
+                "--install",
+                "--no-agent-notes",
+            ],
             vec!["peerharness", "watch", "claude", "--install"],
             vec![
                 "peerharness",
@@ -593,6 +655,17 @@ mod tests {
             vec!["peerharness", "events", "export", "--circle", "team"],
             vec!["peerharness", "events", "import", "team.jsonl"],
             vec!["peerharness", "rule", "opt-out", "pnpm", "--circle", "team"],
+            vec![
+                "peerharness",
+                "rule",
+                "repeal",
+                "pnpm",
+                "--circle",
+                "team",
+                "--reason",
+                "CI only ships npm",
+            ],
+            vec!["peerharness", "circle", "remove", "bob", "--circle", "team"],
             vec!["peerharness", "demo"],
             vec!["peerharness", "proposal", "vote", "abcd1234", "approve"],
             vec!["peerharness", "reset", "--confirm"],
@@ -608,6 +681,9 @@ mod tests {
         assert!(
             Cli::try_parse_from(["peerharness", "watch", "claude", "--install", "--remove"])
                 .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
     }
 }

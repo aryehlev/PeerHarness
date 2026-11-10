@@ -56,9 +56,39 @@ pub fn clean_statement(s: &str) -> Result<String> {
     Ok(ph_core::redact(s).text)
 }
 
-/// Renders the SKILL.md for a candidate: the ph-learning draft (built only from the
-/// validated preferred/avoided tokens), plus the statement when a human edited it.
+/// Whether the candidate is a note: a rule written down as free text by the person or
+/// reported by their agent, rather than found by the pattern detector.
+pub fn is_note(c: &CandidateRow) -> bool {
+    ph_learning::is_note_key(&c.concept_key)
+}
+
+/// The display label of a note origin.
+pub fn origin_label_of(origin: ph_learning::NoteOrigin) -> &'static str {
+    match origin {
+        ph_learning::NoteOrigin::Written => "written down",
+        ph_learning::NoteOrigin::AgentReported => "reported by your agent",
+    }
+}
+
+/// How a candidate came to be, for display.
+pub fn origin_label(c: &CandidateRow) -> &'static str {
+    ph_learning::note_origin(&c.concept_key, &c.topic).map_or("detected", origin_label_of)
+}
+
+/// Renders the SKILL.md for a candidate.
+///
+/// * A note: the statement itself, redacted, under a title (`ph_learning::draft_note_skill`).
+/// * A detected candidate: the ph-learning template built only from the validated
+///   preferred/avoided tokens, plus the statement when a human edited it.
 pub fn render_candidate_skill(c: &CandidateRow) -> Result<(String, String)> {
+    if is_note(c) {
+        let mut cand = as_skill_candidate(c);
+        cand.statement = clean_statement(&c.statement)?;
+        let draft = ph_learning::draft_note_skill(&cand);
+        let md = ph_skills::render_skill_md(&draft.name, &draft.description, &draft.body, None)
+            .map_err(|e| anyhow::anyhow!("cannot render the skill: {e}"))?;
+        return Ok((draft.name, md));
+    }
     let draft = ph_learning::draft_skill(&as_skill_candidate(c));
     let mut body = draft.body.clone();
     if statement_was_edited(c) {

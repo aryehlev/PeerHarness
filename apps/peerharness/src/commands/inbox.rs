@@ -123,12 +123,19 @@ pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
             "Candidate conventions to review ({total_candidates}):"
         ));
         for c in &shown {
+            let how = if crate::library::is_note(c) {
+                crate::library::origin_label(c).to_owned()
+            } else {
+                format!(
+                    "{} confidence, {} observation(s)",
+                    c.confidence.as_str(),
+                    c.evidence.len()
+                )
+            };
             t.line(format!(
-                "  {}  \"{}\"  ({} confidence, {} observation(s), repo {})",
+                "  {}  \"{}\"  ({how}, repo {})",
                 c.id,
                 safe(&c.statement),
-                c.confidence.as_str(),
-                c.evidence.len(),
                 safe(&c.repo_key)
             ));
         }
@@ -173,6 +180,7 @@ pub fn candidate_json(c: &CandidateRow) -> Value {
         "statement": c.statement,
         "preferred": c.preferred,
         "avoided": c.avoided,
+        "origin": crate::library::origin_label(c),
         "confidence": c.confidence.as_str(),
         "evidence_count": c.evidence.len(),
         "repo": c.repo_key,

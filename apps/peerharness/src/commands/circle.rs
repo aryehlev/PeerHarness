@@ -8,7 +8,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use ph_core::{DeviceKey, Scope};
-use ph_governance::admit_member;
+use ph_governance::{admit_member, remove_member};
 use ph_identity::{accept_credential, CircleAuthority};
 use ph_protocol::{
     is_valid_member_name, validate_stateless, Charter, EventBody, ProposalAction, RollEntry,
@@ -17,7 +17,7 @@ use ph_protocol::{
 use ph_store::CircleRow;
 use serde_json::{json, Value};
 
-use crate::cli::{CircleCommand, CircleInviteArgs, CircleJoinArgs};
+use crate::cli::{CircleCommand, CircleInviteArgs, CircleJoinArgs, CircleRemoveArgs};
 use crate::commands::Ctx;
 use crate::consent::confirm;
 use crate::error::{not_implemented, refused, usage};
@@ -31,6 +31,7 @@ pub fn run(ctx: &Ctx, command: CircleCommand) -> Result<Report> {
         CircleCommand::Members { circle } => members(ctx, circle.as_deref()),
         CircleCommand::Invite(args) => invite(ctx, args),
         CircleCommand::Join(args) => join(ctx, args),
+        CircleCommand::Remove(args) => remove(ctx, args),
         CircleCommand::Revoke(_) => Err(not_implemented("circle revoke")),
     }
 }
@@ -353,6 +354,103 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             "need": tally.need(),
             "charter_seq": settled.charter_notarized,
             "events_file": written,
+        }),
+        t.finish(),
+    ))
+}
+
+/// Puts the removal of a member to the vote and casts the proposer's approval. Like an
+/// admission it is an amendment: nobody is removed until a majority of the roll approves
+/// and the founder's node has notarized the charter that was voted on.
+fn remove(ctx: &Ctx, args: CircleRemoveArgs) -> Result<Report> {
+    let node = ctx.open_node()?;
+    let circle = find_circle(&node, Some(&args.circle))?;
+    let id = circle.circle_id;
+    let now = node.now();
+    let (current, rules, _) = governance::rule_set(&node.store, &id)?;
+    let next = remove_member(&current.content, &rules, &args.member)
+        .map_err(|e| usage(format!("cannot propose that removal: {e}")))?;
+    let n = current.content.roll.len();
+    let need = current.content.rules.pass.need(n);
+    let preview = format!(
+        "This puts an amendment of {circle} to the vote and casts your approval:\n  \
+         remove {member} from the roll of charter {seq}\n  \
+         it passes with {need} of {n} member approval(s); yours is one\n\
+         An approval cannot be withdrawn.",
+        circle = safe(&circle.name),
+        member = args.member,
+        seq = current.seq,
+    );
+    confirm(&ctx.out, &preview, args.yes, "the removal proposal")?;
+
+    let key = node.device()?.signing_key();
+    let title = format!("Remove {}", args.member);
+    let proposal = governance::propose(
+        &node.store,
+        key,
+        &id,
+        NewProposal {
+            scope: &Scope::all(),
+            title: &title,
+            summary: "",
+            action: ProposalAction::Amend { next },
+        },
+        now,
+    )?;
+    governance::cast_vote(
+        &node.store,
+        key,
+        &proposal,
+        VoteDecision::Approve,
+        None,
+        now,
+    )?;
+    let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
+    let (_, tally) = governance::count(&node.store, &proposal)?;
+
+    let mut t = Text::new();
+    t.line(format!(
+        "Proposed removing {} (proposal {}).",
+        args.member,
+        short_id(&proposal.event_id())
+    ));
+    t.line(format!("  {tally}"));
+    match settled.charter_notarized {
+        Some(seq) => {
+            t.line(format!(
+                "  The removal passed. Charter {seq} is now in force."
+            ));
+            t.line(format!(
+                "  Send the others your events: `peerharness events export --circle {}`.",
+                circle.name
+            ));
+        }
+        None if tally.passed() => {
+            t.line("  It passed. The node that founded the circle will issue the next charter");
+            t.line("  once it has these events: `peerharness events export` and send it the file.");
+        }
+        None => {
+            t.line(format!(
+                "  {} more approval(s) needed. Send the other members your events",
+                tally.missing()
+            ));
+            t.line(format!(
+                "  (`peerharness events export --circle {}`); they vote with",
+                circle.name
+            ));
+            t.line(format!(
+                "  `peerharness proposal vote {} approve`.",
+                short_id(&proposal.event_id())
+            ));
+        }
+    }
+    Ok(Report::new(
+        json!({
+            "proposal_id": proposal.event_id(),
+            "passed": tally.passed(),
+            "approvals": tally.approvals().len(),
+            "need": tally.need(),
+            "charter_seq": settled.charter_notarized,
         }),
         t.finish(),
     ))

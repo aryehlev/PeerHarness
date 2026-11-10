@@ -37,6 +37,10 @@ impl Node {
         let mut cmd = Command::cargo_bin("peerharness").unwrap();
         cmd.env("PEERHARNESS_HOME", &self.home)
             .env("PEERHARNESS_CLAUDE_SKILLS_DIR", &self.skills)
+            // These tests play the people. Consent steps refuse inside an agent session,
+            // and the test suite itself may be run by a coding agent.
+            .env_remove("CLAUDECODE")
+            .env_remove("PEERHARNESS_AGENT_SESSION")
             .env("USER", self.name)
             .arg("--json")
             .args(args);
@@ -310,6 +314,59 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     // And she can change her mind.
     carol.run(&["rule", "opt-in", SKILL, "--circle", "team"]);
     assert!(carol.has_skill());
+
+    // --- Removing a member takes a vote too. The founder cannot do it alone.
+    let removal = alice.run(&["circle", "remove", "carol", "--circle", "team", "--yes"]);
+    assert_eq!(removal["passed"], false);
+    assert_eq!(removal["need"], 2);
+    assert_eq!(removal["charter_seq"], Value::Null);
+    let removal_id = removal["proposal_id"].as_str().unwrap().to_owned();
+    assert_eq!(alice.run(&["circle", "members"])["charter"]["seq"], 3);
+    // Nobody is removed without a member of that name, either.
+    assert_eq!(
+        alice.fail(&["circle", "remove", "dave", "--circle", "team", "--yes"]),
+        2
+    );
+
+    bob.run(&["events", "import", &alice.export(root, "4")]);
+    let voted = bob.run(&["proposal", "vote", &removal_id, "approve", "--yes"]);
+    assert_eq!(voted["passed"], true);
+    let imported = alice.run(&["events", "import", &bob.export(root, "3")]);
+    assert_eq!(imported["charters_issued"], serde_json::json!([4]));
+    let after = alice.export(root, "5");
+    bob.run(&["events", "import", &after]);
+    for node in [&alice, &bob] {
+        let roll = node.run(&["circle", "members"]);
+        assert_eq!(roll["charter"]["seq"], 4, "{}", node.name);
+        let members: Vec<&str> = roll["charter"]["roll"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["member"].as_str().unwrap())
+            .collect();
+        assert_eq!(members, ["alice", "bob"], "{}", node.name);
+        // The amendment carried the rule: it stays in force for those who remain.
+        assert!(node.has_skill(), "{}", node.name);
+        assert_eq!(
+            node.run(&["rule", "list"])["rules"][0]["skill_name"],
+            SKILL,
+            "{}",
+            node.name
+        );
+    }
+
+    // Carol's node learns of it. The circle's rule no longer binds her, so what the
+    // vote had installed on her machine is removed, and her ballots count for nothing.
+    let imported = carol.run(&["events", "import", &after]);
+    assert_eq!(names(&imported["removed"]), [SKILL]);
+    assert!(!carol.has_skill());
+    assert_eq!(carol.run(&["circle", "members"])["charter"]["seq"], 4);
+    assert_eq!(carol.run(&["rule", "list"])["rules"][0]["binds_you"], false);
+    assert_eq!(
+        carol.fail(&["rule", "repeal", SKILL, "--circle", "team", "--yes"]),
+        3,
+        "she is not on the roll any more"
+    );
 }
 
 #[test]

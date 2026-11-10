@@ -8,8 +8,13 @@ every member's agent follows it. There is no server: each person runs their own 
 with their own keys and their own database, and every node checks every signature and
 counts every vote for itself.
 
-> **Status: pre-release, not audited.** Founding a circle, admitting members by vote,
-> proposing, voting and installing passed rules all work today from the command line.
+Agents can suggest rules. Only people decide: your agent may write a rule down for you
+to review, and every step that approves, shares, votes or installs refuses to run
+inside an agent's session.
+
+> **Status: pre-release, not audited.** Writing rules down, reviewing and installing
+> them, founding a circle, admitting and removing members by vote, proposing, voting,
+> repealing and installing passed rules all work today from the command line.
 > Nodes exchange their signed events as a file you send however you like. The live
 > peer-to-peer transport exists as a library but is not wired into the CLI yet. See
 > [What works today](#what-works-today) before relying on anything.
@@ -103,16 +108,62 @@ The precise rules are in [docs/architecture.md](docs/architecture.md), section 1
 |---|---|
 | Voting core: charter, roll, proposals, ballots, result certificates, rule set, charter succession | works, tested |
 | `peerharness demo` | works, tested end to end |
-| `circle create`, `circle invite`, `circle join`, `circle members` | work, tested end to end with three separate nodes |
+| `note`, `review`, `skills list/show/install/uninstall/rollback` (the loop for one person) | work, tested end to end |
+| `circle create`, `circle invite`, `circle join`, `circle members`, `circle remove` | work, tested end to end with three separate nodes |
 | `proposal create`, `list`, `show`, `vote`, `adopt`, `refuse` | work, tested end to end |
-| `rule list`, `rule opt-out`, `rule opt-in` | work, tested end to end |
+| `rule list`, `rule opt-out`, `rule opt-in`, `rule repeal` | work, tested end to end |
 | `events export`, `events import` (signed events as a file) | work, tested end to end |
 | `init`, `status`, `doctor`, `observe demo`, `inbox`, `export --local` | work |
-| `watch claude --install` / `--remove` and the hook that records corrections | work; other hooks and settings in the file are kept, with a backup |
-| `review`, `skills`, `question`, `circle revoke`, `reset` | not implemented yet (they say so) |
+| `watch claude --install` / `--remove`: the hooks, and the skill that asks your agent to report corrections | work, tested; other hooks and settings in the file are kept, with a backup |
+| `question`, `circle revoke`, `reset` | not implemented yet (they say so) |
 | Live peer-to-peer transport over QUIC (`daemon`, `connect`, `sync`) | library exists and is tested, not wired into the CLI |
-| Detecting corrections | a small set of patterns around "use X, not Y"; it misses most real corrections |
+| Finding corrections | you write the rule down, or your agent reports it when you correct it (best effort: it depends on the agent noticing). The built-in pattern detector only knows "use X, not Y" |
 | Windows | not supported yet |
+
+## Start alone
+
+No circle and no network are needed for a rule of your own. Install the binary from
+your clone first:
+
+```sh
+cargo install --path apps/peerharness --locked
+```
+
+```sh
+peerharness init
+
+# Write a rule down in one sentence. It becomes a candidate in your inbox.
+peerharness note "Run the tests before you say a task is done."
+
+# Read the exact skill text it would become, then save it to your library.
+peerharness review <candidate-id>
+peerharness review <candidate-id> --approve
+
+# Install it for Claude Code (~/.claude/skills/<name>/SKILL.md). Reversible.
+peerharness skills install <name>
+peerharness skills uninstall <name>
+```
+
+To have your agent report corrections by itself, run `peerharness watch claude
+--install`. It shows exactly what it adds before it adds anything: two hooks that store
+redacted observations locally, and a small skill that asks the agent to run
+`peerharness note --from-agent "..."` when you correct it. Claude Code asks you before
+it runs that command, as it does for any shell command you have not allowed. The
+agent's note lands in `peerharness inbox` and waits there. Approving it is yours:
+`review --approve`, `skills install`, `proposal create` and `proposal vote` all refuse
+inside an agent's session ([how far that check goes](#known-limits)).
+`peerharness watch claude --remove` takes both out again.
+
+To experiment without touching your real setup, point it at throwaway directories:
+
+```sh
+export PEERHARNESS_HOME=$(mktemp -d) PEERHARNESS_CLAUDE_SKILLS_DIR=$(mktemp -d)
+export PEERHARNESS_CLAUDE_SETTINGS=$(mktemp -d)/settings.json
+peerharness init --keystore insecure-dev --insecure-dev-keystore
+```
+
+`insecure-dev` stores the key in plaintext and is for experiments only. Without those
+flags, `init` uses the OS keychain on macOS and an encrypted key file elsewhere.
 
 ## Use it with a teammate
 
@@ -132,8 +183,8 @@ peerharness circle invite <bob's ed25519: device key> --circle team --member bob
 # Bob checks the fingerprint, reads the charter and joins.
 peerharness circle join peerharness-team-events.jsonl --expect-fingerprint <fingerprint>
 
-# Alice turns a correction her agent received into a proposal, and votes.
-peerharness inbox
+# Alice puts a rule to the vote, and votes. Creating a proposal is not a vote.
+peerharness note "Use pnpm, not npm, in this repository."
 peerharness proposal create <candidate-id> --circle team
 peerharness proposal vote <proposal-id> approve
 peerharness events export --circle team --out for-bob.jsonl
@@ -145,26 +196,22 @@ peerharness proposal vote <proposal-id> approve
 peerharness events export --circle team --out for-alice.jsonl   # so Alice learns of it
 ```
 
-With three or more members a rule passes on a majority, and admitting someone takes a
-vote of the current members. `peerharness rule opt-out <name> --circle team` keeps one
-rule off your own machine.
+With three or more members a rule passes on a majority, and admitting or removing
+someone takes a vote of the current members. What else there is:
+
+```sh
+peerharness rule list                              # what is in force, and where it stands on this machine
+peerharness rule opt-out <name> --circle team      # keep one rule off your own machine
+peerharness rule repeal <name> --circle team       # ask the members to vote it out
+peerharness circle remove <member> --circle team   # ask the members to vote someone off the roll
+```
+
+A rule binds the members who were entitled to vote on it. A repeal removes the rule
+from every member's machine, and never a skill someone installed for themselves.
 
 An exported file contains the circle's roll and proposals in clear text. Send it only
 to members. Every node verifies each line itself, so the channel you send it over does
 not need to be trusted for integrity.
-
-## Try the local commands
-
-```sh
-export PEERHARNESS_HOME=$(mktemp -d)        # keep it away from your real home
-cargo run -p peerharness -- init --keystore insecure-dev --insecure-dev-keystore
-cargo run -p peerharness -- observe demo
-cargo run -p peerharness -- inbox
-cargo run -p peerharness -- doctor
-```
-
-`insecure-dev` stores the key in plaintext and is for experiments only. Without those
-flags, `init` uses the OS keychain on macOS and an encrypted key file elsewhere.
 
 ## Known limits
 
@@ -176,6 +223,11 @@ flags, `init` uses the OS keychain on macOS and an encrypted key file elsewhere.
 * **Votes are signed and attributable.** There is no secret ballot.
 * **Heuristic safety checks.** Redaction and the risk scanner catch common cases and
   miss others. They never prove that a text is safe.
+* **The agent guard is not a wall.** Consent steps recognize an agent's session by an
+  environment variable. That stops an agent that is trying to help; it does not stop a
+  process that deliberately hides the variable.
+* **No way to leave on your own yet.** You can opt out of any rule, but coming off the
+  roll takes a vote, like any change to it.
 * **A compromised device** counts until its revocation reaches each node.
 
 The full list is in [docs/security-model.md](docs/security-model.md).

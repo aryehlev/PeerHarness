@@ -33,7 +33,7 @@ apps/peerharness depends on everything and is the only place crates are wired to
 | `ph-store` | SQLite schema, migrations, typed repositories | make authorization decisions |
 | `ph-network` | libp2p QUIC transport, framing, rate limits | know about circles or authorize anything |
 | `ph-observer` | hook parsing, settings install/remove, spool, notification throttle | open paths from hook payloads |
-| `ph-learning` | detectors, drafts, advisory providers | let provider output drive any decision |
+| `ph-learning` | detectors, free-text notes, drafts, advisory providers | let provider or agent output drive any decision |
 | `ph-governance` | incoming-event authorization, read rules, tally, result verification, rules in force, charter succession, conflicts, anti-spam, adoption gate | do storage or networking; read a clock when counting |
 | `ph-skills` | `SKILL.md` parsing and validation, the instruction-only rule, scanner, bundles, bundle store, installer | execute skill content |
 
@@ -54,6 +54,13 @@ stop, leave the feature disabled, and document the blocker.
   `ph_core::redact` runs before the preview.
 * Never infer consent from agent or model output. Model output is advisory only and is
   never `Actor::Human`. Human-only lifecycle transitions stay human-only.
+* A coding agent may do exactly one thing: write a note (`peerharness note
+  --from-agent`), which creates a `Detected` candidate and nothing else. Every consent
+  step goes through `consent::confirm` or `consent::human_only` and refuses inside an
+  agent session (architecture 12.1, ADR-022). Do not add a flag or a path that lets a
+  consent step run there, and do not let `note` approve, install or share anything.
+* Nothing is saved to the library, installed or signed before the confirmation it
+  belongs to: build previews from drafts, and persist only after `confirm` returns.
 * Observation text, prompts, transcripts, tool output, skill text, circle names,
   revocation reasons and passphrases never appear in logs, error `Display` strings,
   panic messages or network payloads. Log ids and counts only. `Debug` of types holding
@@ -109,6 +116,9 @@ stop, leave the feature disabled, and document the blocker.
   with exactly the content that was voted on.
 * A proposal counts only under the current charter. Only `Passed::by_vote` and
   `Passed::carried` feed `rules_in_force`; do not add another way in.
+* A rule binds only the members of its electorate. A vote removes only what a vote
+  installed (`rule_installs`): never uninstall a skill the owner installed personally
+  because of a vote (ADR-023).
 * Rights no vote overrides (10.10): no vote widens read access; a bundle that fails its
   digest or validity check is never installed; a high-risk finding always asks the
   owner; an opt-out always wins. `LocalPolicy` can hold a rule back on one node and can
@@ -160,6 +170,9 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
 * Multi-node tests use real separate OS processes on ephemeral loopback QUIC ports, with
   no shared database and no network mocks. Poll with deadlines instead of fixed sleeps,
   and kill daemons in `Drop` guards.
+* Tests that play the person remove `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` from
+  the child process (the suite itself may be run by a coding agent). Tests of the
+  agent-session guard set one of them.
 * Security behaviour needs negative tests: show the forged, expired, revoked,
   out-of-scope, replayed or oversized input being rejected.
 * Use fake provider binaries via `PEERHARNESS_CLAUDE_BIN` / `PEERHARNESS_CODEX_BIN`; never

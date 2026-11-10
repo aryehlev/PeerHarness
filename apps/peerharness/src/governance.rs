@@ -729,6 +729,19 @@ pub struct Applied {
     /// Rules that could not be installed because something PeerHarness does not manage
     /// is in the way (it is never overwritten).
     pub conflicts: Vec<String>,
+    /// Rules in force that do not bind this node: it is not in their electorate.
+    pub not_bound: Vec<String>,
+}
+
+/// The owner of this node, as far as applying rules is concerned.
+#[derive(Clone, Copy)]
+pub struct Owner<'a> {
+    /// The node's device key, which places the owner on the roll (or not).
+    pub me: &'a DeviceKey,
+    /// The owner's stricter local policy.
+    pub policy: &'a ph_governance::LocalPolicy,
+    /// Rules the owner explicitly confirmed in this command.
+    pub confirmed: &'a [String],
 }
 
 /// Brings the agent's skills directory in line with the rules in force in `circle`,
@@ -743,16 +756,33 @@ pub fn apply_rules(
     bundles: &BundleStore,
     installer: &ph_skills::Installer,
     circle: &CircleRow,
-    policy: &ph_governance::LocalPolicy,
-    confirmed: &[String],
+    owner: &Owner<'_>,
+    now: Timestamp,
 ) -> Result<Applied> {
+    let Owner {
+        me,
+        policy,
+        confirmed,
+    } = *owner;
     use ph_governance::{
         adoption_step, local_policy_met, AdoptionMode, AdoptionStep, BundleChecks, OwnerChoice,
     };
-    use ph_skills::{InstallOptions, InstallState, UninstallOptions};
+    use ph_skills::{InstallOptions, InstallState, SkillScope, UninstallOptions};
+
+    use crate::installs;
 
     let id = &circle.circle_id;
-    let (_, rules, tallies) = rule_set(store, id)?;
+    let (charter, rules, tallies) = rule_set(store, id)?;
+    // A rule binds the members who were entitled to vote on it: those on the roll whose
+    // scopes cover the rule's scope. A node outside that electorate (a member of another
+    // team, or someone who was removed) installs nothing and keeps nothing the circle
+    // had installed.
+    let binds_me = |rule: &ph_governance::Rule| -> bool {
+        charter
+            .content
+            .voter(me, &ph_protocol::Electorate::Scope(rule.scope()))
+            .is_some()
+    };
     let mode = match circle.adoption_mode.as_str() {
         "follow" => AdoptionMode::Follow,
         _ => AdoptionMode::Ask,
@@ -767,6 +797,10 @@ pub fn apply_rules(
 
     for rule in rules.rules() {
         let name = rule.skill_name().to_owned();
+        if !binds_me(rule) {
+            applied.not_bound.push(name);
+            continue;
+        }
         let Ok(bundle) = bundles.get(&rule.bundle_digest()) else {
             applied.waiting_for_bundle.push(name);
             continue;
@@ -788,46 +822,64 @@ pub fn apply_rules(
                     continue; // already in place
                 }
                 match installer.install(&bundle, InstallOptions::default()) {
-                    Ok(_) => applied.installed.push(name),
+                    Ok(outcome) => {
+                        // Remember that the vote put it here, so a repeal removes it.
+                        store.record_rule_install(id, &name, &rule.bundle_digest(), now)?;
+                        installs::ensure_circle_skill(store, &bundle, &rule.proposal_id(), now)?;
+                        installs::record_install(store, SkillScope::User, &bundle, &outcome, now)?;
+                        applied.installed.push(name);
+                    }
                     Err(_) => applied.conflicts.push(name),
                 }
             }
             step @ AdoptionStep::AskOwner(_) => applied.asking.push((name, step.code())),
             step @ AdoptionStep::Refuse(_) => applied.refused.push((name, step.code())),
             AdoptionStep::OptedOut => {
-                if managed_with(&name, &rule.bundle_digest())
-                    && installer
-                        .uninstall(&name, UninstallOptions::default())
-                        .is_ok()
-                {
-                    applied.removed.push(name.clone());
+                if managed_with(&name, &rule.bundle_digest()) {
+                    if let Ok(gone) = installer.uninstall(&name, UninstallOptions::default()) {
+                        installs::record_uninstall(
+                            store,
+                            SkillScope::User,
+                            &name,
+                            &gone.removed_digest,
+                            &gone.path,
+                            now,
+                        )?;
+                        applied.removed.push(name.clone());
+                    }
                 }
+                store.clear_rule_install(id, &name)?;
                 applied.opted_out.push(name);
             }
         }
     }
 
-    // Rules that are no longer in force: remove what this circle had installed.
-    for ev in store.proposals(id)? {
-        let Ok(env) = ev.envelope() else { continue };
-        let EventBody::Proposal(body) = &env.body else {
+    // Rules that are no longer in force, or no longer bind this node: remove what this
+    // circle's votes installed, and only that. A skill the owner installed personally has
+    // no record here and stays.
+    for (name, digest, _) in store.rule_installs(id)? {
+        let still_applies = rules
+            .get(&name)
+            .is_some_and(|r| r.bundle_digest() == digest && binds_me(r));
+        if still_applies {
             continue;
-        };
-        let Some(adopt) = body.as_adopt() else {
-            continue;
-        };
-        let in_force = rules
-            .get(&adopt.skill_name)
-            .is_some_and(|r| r.bundle_digest() == adopt.bundle_digest);
-        if !in_force
-            && managed_with(&adopt.skill_name, &adopt.bundle_digest)
-            && installer
-                .uninstall(&adopt.skill_name, UninstallOptions::default())
-                .is_ok()
-            && !applied.removed.contains(&adopt.skill_name)
-        {
-            applied.removed.push(adopt.skill_name.clone());
         }
+        if managed_with(&name, &digest) {
+            if let Ok(gone) = installer.uninstall(&name, UninstallOptions::default()) {
+                installs::record_uninstall(
+                    store,
+                    SkillScope::User,
+                    &name,
+                    &gone.removed_digest,
+                    &gone.path,
+                    now,
+                )?;
+                if !applied.removed.contains(&name) {
+                    applied.removed.push(name.clone());
+                }
+            }
+        }
+        store.clear_rule_install(id, &name)?;
     }
     Ok(applied)
 }
@@ -931,8 +983,12 @@ pub fn settle(
         &bundles,
         installer,
         &circle,
-        &node.config.policy,
-        confirmed,
+        &Owner {
+            me: &me,
+            policy: &node.config.policy,
+            confirmed,
+        },
+        now,
     )?;
     Ok(settled)
 }

@@ -4,6 +4,7 @@
 //! parsing (a hook must never fail or print), parses the command line, runs the command
 //! and maps the outcome to the exit code contract in [`error`].
 
+mod agent_notes;
 mod cli;
 mod commands;
 mod config;
@@ -16,6 +17,7 @@ mod governance;
 mod home;
 mod hook;
 mod ids;
+mod installs;
 mod library;
 mod node;
 mod output;

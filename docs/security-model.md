@@ -378,15 +378,25 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 
   There is no root key rotation, recovery or leaderless ratification yet.
 
-### 4.17 LLM-generated decisions
+### 4.17 LLM-generated decisions, and the agent acting for its user
 
-* **Threat.** A model's output is treated as consent or authorization.
+* **Threat.** A model's output is treated as consent or authorization, or a coding
+  agent that has a shell runs the commands that approve, share, vote or install.
 * **Mitigation.** Detectors and advisory providers only suggest text. Their output never
   drives authorization, state transitions, votes, sharing or installation, and never
   counts as a human action; human-only lifecycle transitions are enforced in
-  `ph-core::transition`.
+  `ph-core::transition`. An agent may write a note (`peerharness note --from-agent`),
+  which is a candidate in the inbox and nothing more, and at most 20 unreviewed agent
+  notes are kept. Every consent step refuses inside an agent session, with or without
+  `--yes` (architecture 12.1). A cancelled or refused command saves nothing.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
-  detector can be wrong; it never claims more than medium confidence.
+  detector can be wrong; it never claims more than medium confidence. The agent-session
+  check reads environment variables: an agent that clears them, or one that sets none,
+  is not stopped by it, and what remains is that consent needs a terminal or an explicit
+  `--yes`. An agent running as the owner can also edit the skills directory and the
+  database directly, and can use a device key whose keystore unlocks without the owner
+  (section 4.6). These rules protect against accidents and against other people. They
+  do not protect an owner from their own compromised session.
 
 ### 4.18 Local control endpoint and other local users
 
@@ -509,4 +519,24 @@ for vulnerabilities.
 
 ## Test coverage
 
-TODO(test-map)
+Where each group of threats is exercised. Paths are relative to the repository root.
+Multi-node tests run separate processes of the real binary; the transport tests run at
+library level, because the daemon is not wired into the CLI yet.
+
+| threats | tests |
+|---|---|
+| 4.1, 4.5, 4.7 (peers without membership, impersonation, limits) | `crates/ph-network/tests/network.rs`, `adversarial.rs`, `codec.rs`; `crates/ph-governance/tests/authz.rs`; `apps/peerharness/tests/circle_vote.rs` (an outsider's node stores nothing) |
+| 4.2, 4.9 (forged, expired or revoked membership) | `crates/ph-identity/tests/attacks.rs`, `membership.rs` |
+| 4.3, 4.20 (stolen, duplicated or invented votes; counting; results; succession) | `crates/ph-governance/tests/tally.rs`, `result.rs`, `ruleset.rs`, `succession.rs`, `adversarial.rs`; `apps/peerharness/tests/circle_vote.rs`, `demo.rs` |
+| 4.4, 4.16 (scope access, the root-key holder) | `crates/ph-governance/tests/authz.rs`, `succession.rs` |
+| 4.6 (keys at rest) | `crates/ph-identity/tests/keystore.rs` |
+| 4.8 (replay, malformed and oversized input) | `crates/ph-protocol/tests/adversarial.rs`, `proptests.rs`, `vectors.rs`; `crates/ph-store/tests/events.rs` |
+| 4.10 to 4.12 (hostile skills, paths, script execution) | `crates/ph-skills/tests/malicious.rs`, `bundles.rs`, `install.rs`, `frontmatter_props.rs` |
+| 4.13 (secrets and transcripts) | `crates/ph-core/src/redact.rs` (unit tests), `crates/ph-store/tests/privacy.rs`, `apps/peerharness/tests/local_loop.rs` |
+| 4.14 (hook payloads, settings) | `crates/ph-observer/tests/hooks.rs`, `settings.rs`, `spool.rs` |
+| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs` |
+
+Not covered by an automated test: 4.15 (untrusted repository content) beyond the
+project-scope symlink checks in `crates/ph-skills/tests/install.rs`, 4.18 (the local
+control endpoint, which does not exist until the daemon is wired) and 4.19 (supply
+chain), which CI checks with `cargo deny` and `cargo audit`.

@@ -8,6 +8,7 @@ pub mod export;
 pub mod inbox;
 pub mod init;
 pub mod later;
+pub mod note;
 pub mod observe;
 pub mod proposal;
 pub mod reset;
@@ -58,6 +59,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         Command::Watch { agent } => match agent {
             WatchAgent::Claude(a) => watch::claude(ctx, a),
         },
+        Command::Note(a) => note::run(ctx, a),
         Command::Inbox(a) => inbox::run(ctx, a),
         Command::Review(a) => review::run(ctx, a),
         Command::Skills { command } => skills::run(ctx, command),
