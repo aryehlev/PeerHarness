@@ -8,10 +8,15 @@ page has the same steps as commands, and the ones that have no window.
 curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
 ```
 
-Or from source, with Rust 1.89 or newer:
+To read the script before you run it, download it first: the three lines are in the
+README under [See it run](../README.md#see-it-run). Or build from source, with Rust
+1.89 or newer:
 `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
 `peerharness status` and `peerharness doctor` show where your node stands, and every
 command has `--help`.
+
+This page says "circle" where the README says "team": it is the word the commands
+use. The README has the other words under [Words](../README.md#words).
 
 ## A rule of your own
 
@@ -21,7 +26,7 @@ A rule of your own needs no circle and no network.
 peerharness init
 
 # Write a rule down in one sentence. It becomes a candidate in your inbox.
-peerharness note "Run the tests before you say a task is done."
+peerharness note "Use pnpm, not npm, in this repository."
 
 # Keep it: it shows the exact skill text, asks once, and installs it for Claude Code
 # (~/.claude/skills/<name>/SKILL.md). Reversible with `skills uninstall`.
@@ -53,19 +58,27 @@ claude mcp add --scope user peerharness -- ~/.local/bin/peerharness mcp   # the 
 peerharness watch claude --remove              # take the hooks and the skill out again
 ```
 
-`watch claude --install` shows what it adds before it adds anything: two hooks that
-store redacted observations locally, and a small skill that asks the agent to note a
-rule when you correct it. The note waits in `peerharness inbox`; approving it stays
-yours.
+`watch claude --install` shows what it adds before it adds anything: two hooks and a
+small skill that asks the agent to note a rule when you correct it. One of the hooks
+keeps a redacted copy of each prompt you type, on your machine only; the README says
+[what is stored and for how long](../README.md#what-setup-adds-and-what-is-stored).
+The note waits in `peerharness inbox`; approving it stays yours.
 
 With `--dialogs` your agent may ask you in a window on your screen. (The flag used to
 be `--windows`, which still works; it never meant the operating system.) A window
 shows the exact text and the buttons Cancel and Proceed. Only your click on Proceed
-counts: the agent cannot answer the window and `--yes` does not skip it. It covers
-keeping a rule for yourself, proposing a rule, your ballot on one, installing one that
-passed, inviting someone, your ballot on admitting someone and joining a circle. Everything else, and any text
-too long to show in full, needs your own terminal. Inside an agent's session those
-steps are refused, and so is `setup` itself.
+counts there: nothing the session writes, passes or sets answers the window, and
+`--yes` does not skip it. It covers keeping a rule for yourself, proposing a rule,
+your ballot on one, installing one that passed, inviting someone, your ballot on
+admitting someone and joining a circle. Everything else, and any text too long to show
+in full, needs your own terminal. Inside an agent's session those steps are refused,
+and so is `setup` itself.
+
+This guards against an agent that is trying to help. It is not a sandbox: a session
+is recognized by an environment variable (`CLAUDECODE`, which Claude Code sets, or
+`PEERHARNESS_AGENT_SESSION`), so a process running as you that hides it can run the
+same commands with `--yes`. The table at the top of the [README](../README.md) says
+what is stopped and what is not.
 
 `peerharness mcp` gives an agent the same steps as tools. Without it the agent runs
 the commands it read in the skill. Other agents that speak MCP can use it too; only
@@ -91,9 +104,11 @@ peerharness circle invite <bob's device key> --circle team --member bob
 peerharness daemon --internet
 
 # Bob finds her node by its peer id, checks the fingerprint, reads the charter and joins.
-peerharness circle join <alice's peer id> --internet --expect-fingerprint <fingerprint>
+# --name is what Bob's node calls the circle. Without it: circle-<fingerprint>.
+peerharness circle join <alice's peer id> --internet --expect-fingerprint <fingerprint> --name team
 
 # Alice puts a rule to the vote, and votes. Creating a proposal is not a vote.
+# (If she noted this rule before, `note` prints the id it already has.)
 peerharness note "Use pnpm, not npm, in this repository."
 peerharness proposal create <candidate-id> --circle team
 peerharness proposal vote <proposal-id> approve
@@ -105,20 +120,23 @@ peerharness proposal vote <proposal-id> approve
 peerharness sync --internet     # Alice's node learns of it and installs the rule too
 ```
 
-With three or more members a rule passes on a majority, and admitting or removing
-someone takes a vote of the current members.
+A circle's name is local: each member's node has its own name for it, and `--circle`
+takes that one. A rule needs the approval of more than half of the members: of two,
+both; of three, two. Admitting or removing someone is a vote of the current members
+with the same threshold, from the second member on.
 
 To hear about a vote when it happens, leave your node running like this:
 
 ```sh
-peerharness daemon --internet --sync-every 60 --notify
+peerharness daemon --internet --sync-every 60            # Linux
+peerharness daemon --internet --sync-every 60 --notify   # macOS
 ```
 
-It fetches from the other members every minute and, on macOS, shows a desktop
-notification within seconds of a proposal that needs your vote arriving. The
-notification says how many wait, never what they say. Without `--notify`, the end of
-your next turn in Claude Code tells you instead (with `watch claude --install`), once
-a day at most.
+It fetches from the other members every minute. `--notify` is macOS only: on Linux
+the daemon refuses to start with it. With it, a desktop notification appears within
+seconds of a proposal that needs your vote arriving. The notification says how many
+wait, never what they say. Without it, the end of your next turn in Claude Code tells
+you instead (with `watch claude --install`), once a day at most.
 
 ## What `--internet` exposes
 
@@ -158,7 +176,8 @@ keep a vote intact.
 | A file | `peerharness events export --circle team --out f.jsonl`, then `peerharness events import f.jsonl` | Holds the roll and proposals in clear text: send it only to members |
 
 A new member can join from any of them: `peerharness circle join <address, directory or
-file> --expect-fingerprint <fingerprint>`.
+file> --expect-fingerprint <fingerprint> --name team`. The name is local: it is what
+that member's node calls the circle.
 
 ## More commands
 
@@ -180,9 +199,18 @@ peerharness circle device add <device key> --circle team   # a second device; st
 peerharness circle amend --circle team --pass 2/3   # change the rules of the vote
 peerharness circle leave --circle team              # stop following now, and ask to be taken off the roll
 
-# Not voted on: the founder cuts off a lost or stolen device. It cannot pass anything.
+# Not voted on: the founder cuts off a lost or stolen device. Its ballots stop counting,
+# the ones it already cast included, so a result that needed one of them is open again.
 peerharness circle revoke <member or device key> --circle team
 ```
+
+What a revocation does to results that had passed, and what can go wrong with an
+import afterwards, is under [Known limits](../README.md#known-limits) in the README.
+
+## Take it out again
+
+The README lists every step in order, from the installed rules to the binary:
+[Take it out again](../README.md#take-it-out-again).
 
 ## Try it without touching your setup
 
