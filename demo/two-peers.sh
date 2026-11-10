@@ -21,7 +21,10 @@ BIN="$PWD/target/debug/peerharness"
 WORK="$(mktemp -d)"
 DAEMON_PID=""
 cleanup() {
-  [ -n "$DAEMON_PID" ] && kill "$DAEMON_PID" 2>/dev/null || true
+  if [ -n "$DAEMON_PID" ]; then
+    kill "$DAEMON_PID" 2>/dev/null || true
+    wait "$DAEMON_PID" 2>/dev/null || true
+  fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -41,18 +44,20 @@ echo "alice: $(alice --json status | field fingerprint)    bob: $(bob --json sta
 say "Alice founds a circle and proposes admitting Bob (one member: her approval is the majority)"
 FINGERPRINT="$(alice --json circle create team 2>/dev/null | field root_fingerprint)"
 BOB_KEY="$(bob --json status | field device_key)"
-alice circle invite "$BOB_KEY" --circle team --member bob --yes --out "$WORK/for-bob.jsonl" 2>/dev/null | sed -n '1,3p'
-
-say "Bob checks the root fingerprint and joins from the file Alice gave him"
-bob circle join "$WORK/for-bob.jsonl" --expect-fingerprint "$FINGERPRINT" --yes --name team 2>/dev/null | tail -n 2
+alice circle invite "$BOB_KEY" --circle team --member bob --yes --out "$WORK/unused.jsonl" 2>/dev/null | sed -n '1,3p'
 
 say "Alice's node starts listening (QUIC, loopback, a port the system picks)"
-alice daemon --listen /ip4/127.0.0.1/udp/0/quic-v1 >"$WORK/daemon.log" 2>&1 &
+# The binary is started directly, not through the function above, so that the process id
+# kept here is the daemon's own and stopping it leaves nothing behind.
+USER=alice PEERHARNESS_HOME="$WORK/alice" PEERHARNESS_CLAUDE_SKILLS_DIR="$WORK/alice-skills" \
+  "$BIN" daemon --listen /ip4/127.0.0.1/udp/0/quic-v1 >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
-disown "$DAEMON_PID" 2>/dev/null || true
 for _ in $(seq 1 200); do [ -f "$WORK/alice/daemon.json" ] && break; sleep 0.05; done
 ADDR="$(grep -o '/ip4[^"]*' "$WORK/alice/daemon.json" | head -n 1)"
 echo "$ADDR"
+
+say "Bob checks the root fingerprint and joins straight from Alice's node: he is on its roll now"
+bob circle join "$ADDR" --expect-fingerprint "$FINGERPRINT" --yes --name team 2>/dev/null | grep -E '^Joined|^  charter'
 
 say "Alice was corrected by her agent, writes the rule down and puts it to the vote"
 CANDIDATE="$(alice --json note 'Use pnpm, not npm, in this repository.' | field candidate_id)"
