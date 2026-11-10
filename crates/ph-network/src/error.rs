@@ -49,6 +49,18 @@ pub enum NetError {
     /// 512 KiB). Nothing was sent.
     #[error("request could not be encoded")]
     Encode,
+    /// [`crate::NetworkConfig::internet`] is set and the internet mode could not be
+    /// started (the relay transport could not be set up). Nothing was sent.
+    #[error("failed to start the internet mode")]
+    Internet,
+    /// The call needs the internet mode ([`crate::NetworkConfig::internet`]), which is
+    /// off.
+    #[error("the internet mode is off")]
+    InternetOff,
+    /// Too many lookups are in flight ([`crate::internet::MAX_CONCURRENT_FINDS`]). Try
+    /// again when one has finished.
+    #[error("too many lookups in flight")]
+    Busy,
     /// The network event loop has stopped (after [`crate::NetworkHandle::shutdown`]
     /// or because it ended).
     #[error("network is shut down")]

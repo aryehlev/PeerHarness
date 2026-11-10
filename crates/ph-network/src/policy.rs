@@ -1,4 +1,10 @@
 //! Connection gating: only Ed25519 peer identities, bounded connection counts.
+//!
+//! With the internet mode ([`crate::internet`]) the node also talks to the servers of
+//! the public network, and some of those have other kinds of keys. Such a peer is then
+//! let in on a direct connection, counted like any other, and never becomes a peer of
+//! the application: it has no device key, so it is not listed, cannot be sent a
+//! request, and gets `error{unauthorized}` to anything it asks.
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -7,6 +13,7 @@ use std::task::{Context, Poll};
 
 use libp2p::core::transport::PortUse;
 use libp2p::core::Endpoint;
+use libp2p::multiaddr::Protocol;
 use libp2p::swarm::{
     dummy, ConnectionDenied, ConnectionId, FromSwarm, NetworkBehaviour, THandler, THandlerInEvent,
     THandlerOutEvent, ToSwarm,
@@ -54,6 +61,7 @@ pub struct PeerPolicy {
     total: usize,
     per_peer: HashMap<PeerId, usize>,
     pending_inbound: HashSet<ConnectionId>,
+    foreign_identities: bool,
 }
 
 impl PeerPolicy {
@@ -66,7 +74,17 @@ impl PeerPolicy {
             total: 0,
             per_peer: HashMap::new(),
             pending_inbound: HashSet::new(),
+            foreign_identities: false,
         }
+    }
+
+    /// Whether peers whose id is not a device key may hold a direct connection
+    /// (default: no). Set for the internet mode only. A connection through a relay is
+    /// refused to such a peer either way: relays carry application peers, and those
+    /// have device keys.
+    pub fn with_foreign_identities(mut self, allow: bool) -> Self {
+        self.foreign_identities = allow;
+        self
     }
 
     /// Number of inbound connections currently in the handshake.
@@ -74,9 +92,14 @@ impl PeerPolicy {
         self.pending_inbound.len()
     }
 
-    /// Decides whether a newly established connection from `peer` may proceed.
+    /// Decides whether a newly established direct connection from `peer` may proceed.
     pub fn check(&self, peer: &PeerId) -> Result<(), Denied> {
-        if device_key_from_peer_id(peer).is_none() {
+        self.check_on(peer, false)
+    }
+
+    /// As [`PeerPolicy::check`], for a connection that is `relayed` or not.
+    pub fn check_on(&self, peer: &PeerId, relayed: bool) -> Result<(), Denied> {
+        if device_key_from_peer_id(peer).is_none() && (relayed || !self.foreign_identities) {
             return Err(Denied::NotEd25519);
         }
         if self.total >= self.max_total {
@@ -88,8 +111,8 @@ impl PeerPolicy {
         Ok(())
     }
 
-    fn deny(&self, peer: &PeerId) -> Result<THandler<Self>, ConnectionDenied> {
-        match self.check(peer) {
+    fn deny(&self, peer: &PeerId, relayed: bool) -> Result<THandler<Self>, ConnectionDenied> {
+        match self.check_on(peer, relayed) {
             Ok(()) => Ok(dummy::ConnectionHandler),
             Err(d) => {
                 // Limit refusals can be triggered at will by remote peers, so they are
@@ -103,6 +126,11 @@ impl PeerPolicy {
             }
         }
     }
+}
+
+/// Whether `addr` goes through a relay (it has a `/p2p-circuit` component).
+fn is_relayed(addr: &Multiaddr) -> bool {
+    addr.iter().any(|p| p == Protocol::P2pCircuit)
 }
 
 impl NetworkBehaviour for PeerPolicy {
@@ -127,22 +155,22 @@ impl NetworkBehaviour for PeerPolicy {
         &mut self,
         connection_id: ConnectionId,
         peer: PeerId,
-        _local_addr: &Multiaddr,
+        local_addr: &Multiaddr,
         _remote_addr: &Multiaddr,
     ) -> Result<THandler<Self>, ConnectionDenied> {
         self.pending_inbound.remove(&connection_id);
-        self.deny(&peer)
+        self.deny(&peer, is_relayed(local_addr))
     }
 
     fn handle_established_outbound_connection(
         &mut self,
         _connection_id: ConnectionId,
         peer: PeerId,
-        _addr: &Multiaddr,
+        addr: &Multiaddr,
         _role_override: Endpoint,
         _port_use: PortUse,
     ) -> Result<THandler<Self>, ConnectionDenied> {
-        self.deny(&peer)
+        self.deny(&peer, is_relayed(addr))
     }
 
     fn on_swarm_event(&mut self, event: FromSwarm) {
@@ -217,6 +245,53 @@ mod tests {
                 &addr
             )
             .is_ok());
+    }
+
+    #[test]
+    fn foreign_identities_only_when_allowed_and_never_through_a_relay() {
+        let foreign =
+            PeerId::from_multihash(Multihash::<64>::wrap(0x12, &[1u8; 32]).unwrap()).unwrap();
+        let direct: Multiaddr = "/ip4/203.0.113.7/udp/4001/quic-v1".parse().unwrap();
+        let relayed: Multiaddr = format!(
+            "/ip4/203.0.113.7/udp/4001/quic-v1/p2p/{}/p2p-circuit",
+            ed_peer(9)
+        )
+        .parse()
+        .unwrap();
+        let closed = PeerPolicy::new(10, 2, 4);
+        assert_eq!(closed.check_on(&foreign, false), Err(Denied::NotEd25519));
+        let mut open = PeerPolicy::new(10, 2, 4).with_foreign_identities(true);
+        assert_eq!(open.check(&foreign), Ok(()));
+        assert_eq!(open.check_on(&foreign, true), Err(Denied::NotEd25519));
+        assert_eq!(open.check_on(&ed_peer(1), true), Ok(()));
+        assert!(open
+            .handle_established_inbound_connection(
+                ConnectionId::new_unchecked(1),
+                foreign,
+                &direct,
+                &direct
+            )
+            .is_ok());
+        assert!(open
+            .handle_established_inbound_connection(
+                ConnectionId::new_unchecked(2),
+                foreign,
+                &relayed,
+                &direct
+            )
+            .is_err());
+        assert!(open
+            .handle_established_outbound_connection(
+                ConnectionId::new_unchecked(3),
+                foreign,
+                &relayed,
+                Endpoint::Dialer,
+                PortUse::Reuse
+            )
+            .is_err());
+        // The limits count such a peer like any other.
+        open.total = 10;
+        assert_eq!(open.check(&foreign), Err(Denied::TotalLimit));
     }
 
     #[test]

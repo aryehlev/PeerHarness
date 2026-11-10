@@ -25,6 +25,11 @@ pub struct PeerInfo {
     /// when known. For inbound connections this is the observed source address, not a
     /// dialable listen address.
     pub remote_addr: Option<Multiaddr>,
+    /// Whether that connection goes through a relay (internet mode only). The identity
+    /// is proven end to end either way. What differs is what the connection carries: a
+    /// relay of the public network ends a circuit after about 128 KiB or two minutes
+    /// ([`crate::internet`]).
+    pub relayed: bool,
 }
 
 /// Handles inbound requests that passed decoding and rate limiting.

@@ -7,6 +7,64 @@ use ph_protocol::wire::MAX_FRAME_BYTES;
 
 use crate::codec::LENGTH_PREFIX_BYTES;
 use crate::error::NetError;
+use crate::internet::{self, DEFAULT_RELAYS, MAX_BOOTSTRAP_ADDRS, MAX_RELAYS};
+
+/// Configuration of the opt-in internet mode ([`crate::internet`]): finding and
+/// reaching a peer by its key over the public libp2p network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InternetConfig {
+    /// The peers to join the public network through, at most
+    /// [`MAX_BOOTSTRAP_ADDRS`] addresses, each ending in `/p2p/<peer id>` and in one of
+    /// the forms `/ip4|ip6/<address>/udp/<port>/quic-v1`,
+    /// `/dns|dns4|dns6/<name>/udp/<port>/quic-v1` or `/dnsaddr/<name>`. Default:
+    /// [`InternetConfig::public_bootstrap`], the bootstrap peers of the public libp2p
+    /// (IPFS) network.
+    pub bootstrap: Vec<Multiaddr>,
+    /// How many relay reservations to hold while this node is not known to be publicly
+    /// reachable. Default [`DEFAULT_RELAYS`], at most [`MAX_RELAYS`]. With 0 the node
+    /// never asks a relay for anything: it can still find and dial others, and can be
+    /// reached only at a public address of its own.
+    pub max_relays: usize,
+    /// Treat loopback, private and link-local addresses like public ones, and accept an
+    /// own address on the word of a single peer. For a closed network of nodes that all
+    /// set it (the tests of this crate run one on loopback). Default `false`; on the
+    /// internet it would make the node announce and dial private addresses.
+    pub allow_private_addresses: bool,
+}
+
+impl Default for InternetConfig {
+    fn default() -> Self {
+        Self {
+            bootstrap: Self::public_bootstrap(),
+            max_relays: DEFAULT_RELAYS,
+            allow_private_addresses: false,
+        }
+    }
+}
+
+impl InternetConfig {
+    /// The bootstrap peers of the public libp2p (IPFS) network, as its own software
+    /// ships them: four names under `bootstrap.libp2p.io` that are resolved through DNS
+    /// (`TXT _dnsaddr.<name>`), one more under `va1.bootstrap.libp2p.io`, and one fixed
+    /// address that needs no DNS.
+    pub fn public_bootstrap() -> Vec<Multiaddr> {
+        internet::PUBLIC_BOOTSTRAP
+            .iter()
+            .filter_map(|a| a.parse().ok())
+            .collect()
+    }
+
+    fn validate(&self) -> Result<(), NetError> {
+        if self.max_relays > MAX_RELAYS
+            || self.bootstrap.is_empty()
+            || self.bootstrap.len() > MAX_BOOTSTRAP_ADDRS
+            || !self.bootstrap.iter().all(internet::is_bootstrap_addr)
+        {
+            return Err(NetError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
 
 /// Per-peer inbound limits, enforced before the application handler runs.
 ///
@@ -104,6 +162,16 @@ pub struct NetworkConfig {
     /// [`crate::NetworkHandle::discovered`]. Discovered peers are never dialed by this
     /// crate.
     pub lan_discovery: bool,
+    /// The internet mode ([`crate::internet`]). Default `None`: the node speaks its one
+    /// protocol over QUIC to the addresses it is told to dial, as before, and nothing
+    /// of the mode exists (no DHT, no identify, no relay client, no DNS lookup, no
+    /// further protocol, socket or thread).
+    ///
+    /// When set, the node joins the public libp2p network as a client: it can look a
+    /// peer up by its peer id ([`crate::NetworkHandle::find_peer`]), learns whether it
+    /// is reachable itself, and while it is not, stays reachable through relays. Read
+    /// [`crate::internet`] for what that tells whom.
+    pub internet: Option<InternetConfig>,
 }
 
 impl Default for NetworkConfig {
@@ -121,6 +189,7 @@ impl Default for NetworkConfig {
             max_inbound_buffer_bytes: 32 * 1024 * 1024,
             event_buffer: 256,
             lan_discovery: false,
+            internet: None,
         }
     }
 }
@@ -150,6 +219,9 @@ impl NetworkConfig {
             || self.event_buffer == 0
         {
             return Err(NetError::InvalidConfig);
+        }
+        if let Some(internet) = &self.internet {
+            internet.validate()?;
         }
         Ok(())
     }
@@ -182,6 +254,70 @@ mod tests {
             ..NetworkConfig::default()
         };
         assert_eq!(on.validate(), Ok(()));
+    }
+
+    #[test]
+    fn internet_mode_is_off_unless_asked_for_and_its_defaults_are_valid() {
+        assert_eq!(NetworkConfig::default().internet, None);
+        let addr: Multiaddr = "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap();
+        assert_eq!(NetworkConfig::listening_on([addr]).internet, None);
+        let on = NetworkConfig {
+            internet: Some(InternetConfig::default()),
+            ..NetworkConfig::default()
+        };
+        assert_eq!(on.validate(), Ok(()));
+        let internet = on.internet.unwrap();
+        assert_eq!(internet.max_relays, 2);
+        assert!(!internet.allow_private_addresses);
+        // Every default bootstrap address parsed.
+        assert_eq!(internet.bootstrap.len(), internet::PUBLIC_BOOTSTRAP.len());
+    }
+
+    #[test]
+    fn internet_config_is_bounded() {
+        let with = |internet: InternetConfig| NetworkConfig {
+            internet: Some(internet),
+            ..NetworkConfig::default()
+        };
+        let too_many_relays = InternetConfig {
+            max_relays: MAX_RELAYS + 1,
+            ..InternetConfig::default()
+        };
+        assert_eq!(
+            with(too_many_relays).validate(),
+            Err(NetError::InvalidConfig)
+        );
+        let none = InternetConfig {
+            max_relays: 0,
+            ..InternetConfig::default()
+        };
+        assert_eq!(with(none).validate(), Ok(()));
+        let no_bootstrap = InternetConfig {
+            bootstrap: Vec::new(),
+            ..InternetConfig::default()
+        };
+        assert_eq!(with(no_bootstrap).validate(), Err(NetError::InvalidConfig));
+        let one = InternetConfig::public_bootstrap()[0].clone();
+        let too_many = InternetConfig {
+            bootstrap: vec![one; MAX_BOOTSTRAP_ADDRS + 1],
+            ..InternetConfig::default()
+        };
+        assert_eq!(with(too_many).validate(), Err(NetError::InvalidConfig));
+        for bad in [
+            // No peer id: whoever answers there would be taken for the bootstrap peer.
+            "/ip4/203.0.113.7/udp/4001/quic-v1",
+            "/dnsaddr/bootstrap.libp2p.io",
+            // Not a transport of this crate.
+            "/ip4/203.0.113.7/tcp/4001/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+            // A relayed address is not a way into the network.
+            "/ip4/203.0.113.7/udp/4001/quic-v1/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8/p2p-circuit/p2p/12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+        ] {
+            let c = InternetConfig {
+                bootstrap: vec![bad.parse().unwrap()],
+                ..InternetConfig::default()
+            };
+            assert_eq!(with(c).validate(), Err(NetError::InvalidConfig), "{bad}");
+        }
     }
 
     #[test]
