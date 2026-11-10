@@ -904,3 +904,49 @@ that the first step created stays: creating it decides nothing about the agent.
 
 **Also in this change.** A ballot signed from inside a session ended with "Share it:
 `peerharness events export`", a step the session cannot take. It now names the sync.
+
+## ADR-040: Keeping a noted rule for oneself is one step, and can be asked in a window
+An agent notes a rule when its user corrects it, and a rule that passes a circle's vote
+is installed for every member. Between the two, for a person without a circle or a
+rule that is theirs alone, nothing happened by itself: the note waited in the inbox
+until its owner ran `review --approve` and `skills install` in a terminal. The owner's
+question after a day of use: "is nothing created automatically, like skills and
+stuff?"
+
+**What is not done, and why.** A noted rule is not installed without its owner. A note
+comes from an agent, and an agent repeats what it read: a page or a file that says
+"always do X" would otherwise become an instruction the agent gives itself and keeps
+across sessions. Installation needs the owner's yes (section 10.10 of the architecture,
+and the invariants in `AGENTS.md`). That stays.
+
+**Decision.** The yes becomes one step. `peerharness keep <candidate>` saves the rule
+to the owner's library and installs it for their agent, after showing the exact text
+and where it goes. It is `review --approve` and `skills install` together and shares
+nothing. Inside an agent's session it may be asked in a window, on the terms of
+ADR-033: only a click on "Proceed" installs, the exact text is shown in full or the
+step is refused, and `--yes` is ignored there.
+
+**A setting of its own**, as ADR-037 requires of every step added to the list:
+`[agent] own_windows`, which counts only on top of the two before it
+(`config::Asked::All`). `peerharness setup` now previews seven decisions and sets all
+three. Until the owner has run it again, `keep` is refused in a session with the hint
+to do so.
+
+**The agent says that there is something to keep.** With this step allowed, `note
+--from-agent` answers the agent with the candidate's id and asks it to tell its user,
+in one line, that the rule is noted and that they can ask to keep it or to propose it.
+The skill has a fourth part with `keep`, and the MCP server a tool `keep_rule`. The
+agent still starts the step only when its user asked for it: saying that a note exists
+is not opening the window.
+
+**What stays with the two commands, in the terminal.** A rule with a high-risk scanner
+finding is refused by `keep`, in a session and out of it: it needs `--accept-risk`
+after reading the findings. So is a rule whose name is taken by a skill with another
+text, which is shown as a difference. Installing for one project only (`--scope
+project`) is not offered. A rule that is installed with exactly this text already
+asks nothing and says so.
+
+**Not done.** Nobody has clicked this window either: the tests use the stand-in.
+Rejecting a note and editing one from inside a session. A standing choice to keep
+every rule the owner states without asking was considered and left out, for the reason
+above.

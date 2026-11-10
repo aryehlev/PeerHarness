@@ -81,7 +81,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
     let asked_after = match (a.install, a.remove) {
         (true, _) if a.no_windows => Asked::Nothing,
         // `--windows` always means every step this build can ask in a window.
-        (true, _) if a.windows => Asked::RulesAndCircle,
+        (true, _) if a.windows => Asked::All,
         (false, true) => Asked::Nothing,
         _ => asked_now,
     };
@@ -121,12 +121,19 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         }
         let mut preview = Text::new();
         if want_windows && asked_after != Asked::Nothing {
-            preview.line(if asked_now == Asked::Rules {
-                "Your agent may already put three decisions about rules in front of you. This \
-                 adds three about who is in a circle. All six:"
-            } else {
-                "This lets your agent put six decisions in front of you while you work with it:"
+            preview.line(match asked_now {
+                Asked::Rules => {
+                    "Your agent may already put three decisions about rules in front of you. \
+                     This adds four: keeping a rule for yourself, and three about who is in a \
+                     circle. All seven:"
+                }
+                Asked::RulesAndCircle => {
+                    "Your agent may already put six decisions in front of you. This adds one: \
+                     keeping a rule for yourself. All seven:"
+                }
+                _ => "This lets your agent put seven decisions in front of you while you work with it:",
             });
+            preview.line("  keeping a rule it noted, for your own agent (`keep`),");
             preview.line("  proposing a rule to a circle,");
             preview.line("  your ballot on a proposed rule,");
             preview.line("  installing a rule that passed and waits for you,");
@@ -334,7 +341,8 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         "foreign_hooks": status.foreign_hook_count,
         "agent_notes": notes.as_str(),
         "windows": windows_now,
-        "circle_windows": asked_now == Asked::RulesAndCircle,
+        "circle_windows": asked_now >= Asked::RulesAndCircle,
+        "own_windows": asked_now >= Asked::All,
         "windows_available": Window::find().is_some(),
     });
     let mut t = Text::new();
@@ -361,7 +369,11 @@ fn windows_label(asked: Asked) -> &'static str {
         (Asked::Rules, true) => {
             "on for rules only (run `peerharness setup` again to add inviting and joining)"
         }
-        (Asked::RulesAndCircle, true) => "on (your agent may put six decisions in front of you)",
+        (Asked::RulesAndCircle, true) => {
+            "on, but not for keeping a rule for yourself (run `peerharness setup` again to \
+             add it)"
+        }
+        (Asked::All, true) => "on (your agent may put seven decisions in front of you)",
     }
 }
 
@@ -390,7 +402,8 @@ fn done(
         "foreign_hooks": st.foreign_hook_count,
         "agent_notes": notes.as_str(),
         "windows": asked != Asked::Nothing,
-        "circle_windows": asked == Asked::RulesAndCircle,
+        "circle_windows": asked >= Asked::RulesAndCircle,
+        "own_windows": asked >= Asked::All,
     });
     let mut t = Text::new();
     t.line(headline);

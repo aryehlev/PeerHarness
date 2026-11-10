@@ -18,6 +18,9 @@
 //! * When the owner also allowed the steps about who is in a circle (ADR-037) it has a
 //!   third part: founding a circle, inviting, joining, and the exchange with the other
 //!   members. Inviting and joining are answered in a window too.
+//! * When the owner also allowed keeping a rule for themselves (ADR-040) it has a fourth
+//!   part: `keep`, and telling the user after a note that there is something to keep or
+//!   to propose.
 //! * The skill is this product's own fixed text, installed with the same installer as any
 //!   other skill, so it is marked as managed and `watch claude --remove` removes it. It
 //!   is not a shared bundle and never leaves the machine.
@@ -98,8 +101,11 @@ fn body(program: &str, asked: Asked) -> String {
              - If a step is refused, declined or not answered, tell the user and stop. Do \
              not retry it and do not look for another way.\n"
         ));
-        if asked == Asked::RulesAndCircle {
+        if asked >= Asked::RulesAndCircle {
             text.push_str(&circles(program));
+        }
+        if asked >= Asked::All {
+            text.push_str(&keeping(program));
         }
         text.push_str("- Do not run any other peerharness command.\n");
     } else {
@@ -110,6 +116,32 @@ fn body(program: &str, asked: Asked) -> String {
         );
     }
     text
+}
+
+/// The description when the skill covers every step: keeping a rule as well.
+const DESCRIPTION_WITH_ALL: &str = "Use when the user corrects how you work or states a \
+    standing rule for this project (a tool to use or avoid, a convention, a step to always or \
+    never do), and when they ask about PeerHarness or their team: what waits for them, keeping \
+    a rule for themselves, proposing a rule, voting, creating a team, inviting someone or \
+    joining one.";
+
+/// The part of the skill about keeping a rule for the user alone (ADR-040).
+fn keeping(program: &str) -> String {
+    format!(
+        "\n\
+         # When the user asks you to keep a rule\n\
+         \n\
+         \x20   {program} keep <candidate id>\n\
+         \n\
+         It keeps a rule you noted for the user alone: the rule is saved and installed for \
+         their agent, and nothing is shared. It opens a window that shows the exact rule, \
+         and only the user's click installs it.\n\
+         \n\
+         - After you noted a rule, tell the user in one line that it is noted, and that they \
+         can ask you to keep it for themselves or to propose it to their team. The command \
+         that noted it printed its candidate id.\n\
+         - Keep a rule only when the user asked you to, in this conversation.\n"
+    )
 }
 
 /// The part of the skill about the user's circles (ADR-037).
@@ -157,10 +189,10 @@ fn circles(program: &str) -> String {
 /// Builds the skill for the given program words (`HookCommand::render_program`).
 /// `asked` is what the owner allowed to be asked in a window (`AgentConfig::asked`).
 pub fn bundle(program: &str, asked: Asked) -> Result<Bundle> {
-    let description = if asked == Asked::RulesAndCircle {
-        DESCRIPTION_WITH_CIRCLES
-    } else {
-        DESCRIPTION
+    let description = match asked {
+        Asked::All => DESCRIPTION_WITH_ALL,
+        Asked::RulesAndCircle => DESCRIPTION_WITH_CIRCLES,
+        _ => DESCRIPTION,
     };
     let md = ph_skills::render_skill_md(SKILL_NAME, description, &body(program, asked), None)
         .map_err(|e| anyhow!("cannot render the reporting skill: {e}"))?;
@@ -269,5 +301,42 @@ mod tests {
         // The description brings the agent here for more than corrections.
         assert!(md.contains("inviting someone or joining one"));
         assert!(!rules.skill_md().contains("inviting someone or joining one"));
+    }
+}
+
+#[cfg(test)]
+mod keeping_tests {
+    use super::*;
+
+    const PROGRAM: &str = "PEERHARNESS_HOME='/x y' '/opt/ph/peerharness'";
+
+    #[test]
+    fn with_every_step_the_skill_also_keeps_a_rule_and_says_so_after_a_note() {
+        let all = bundle(PROGRAM, Asked::All).unwrap();
+        let md = all.skill_md();
+        let circles = bundle(PROGRAM, Asked::RulesAndCircle).unwrap();
+        assert_ne!(all.digest(), circles.digest());
+        assert_eq!(all.digest(), bundle(PROGRAM, Asked::All).unwrap().digest());
+        assert!(!ph_skills::has_high_risk(&all.scan()));
+        // Everything the skill before it says is still said, in the same words.
+        let shared = circles
+            .skill_md()
+            .split("# Report corrections")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches("- Do not run any other peerharness command.\n")
+            .to_owned();
+        assert!(md.contains(&shared));
+        assert!(md.contains(&format!("    {PROGRAM} keep <candidate id>\n")));
+        // One command line more than before, and nothing else.
+        assert_eq!(md.matches(PROGRAM).count(), 12);
+        assert!(md.contains("only the user's click installs it"));
+        assert!(md.contains("Keep a rule only when the user asked you to"));
+        assert!(md.contains("tell the user in one line that it is noted"));
+        assert!(md.ends_with("- Do not run any other peerharness command.\n"));
+        assert!(!md.contains("--yes"));
+        assert!(md.contains("keeping a rule for themselves"));
+        // The skills before it do not offer it.
+        assert!(!circles.skill_md().contains(" keep <candidate id>"));
     }
 }

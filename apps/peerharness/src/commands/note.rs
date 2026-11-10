@@ -104,14 +104,19 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
     let (id, created) = node.store.insert_or_merge_candidate(&cand, now)?;
     let mut t = Text::new();
     if a.from_agent {
-        // Read by the agent: say what happened and that its part is over.
-        t.line(
-            if node.config.agent.asked() != crate::config::Asked::Nothing {
-                "Noted for the user's review. Start nothing else unless the user asks you to."
-            } else {
-                "Noted for the user's review. Do not run any other peerharness command."
-            },
-        );
+        // Read by the agent: say what happened and where its part ends.
+        t.line(match node.config.agent.asked() {
+            crate::config::Asked::Nothing => {
+                "Noted for the user's review. Do not run any other peerharness command.".to_owned()
+            }
+            crate::config::Asked::All => format!(
+                "Noted for the user's review, as candidate {id}. Tell the user in one line \
+                 that you noted it and that they can ask you to keep it for themselves or to \
+                 propose it to their team. Start nothing else unless they ask."
+            ),
+            _ => "Noted for the user's review. Start nothing else unless the user asks you to."
+                .to_owned(),
+        });
     } else {
         t.line(format!("Noted: \"{}\"", safe(&statement)));
         if redacted {

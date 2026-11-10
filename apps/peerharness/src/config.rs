@@ -49,6 +49,11 @@ pub struct AgentConfig {
     /// --windows` turns both on; it means nothing while `windows` is off.
     #[serde(default, skip_serializing_if = "is_false")]
     pub circle_windows: bool,
+    /// Whether keeping a noted rule for oneself may be asked in a window too (ADR-040).
+    /// Its own setting for the same reason as `circle_windows`: it was on no list the
+    /// owner read before ADR-040. It means nothing while `circle_windows` is off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub own_windows: bool,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // the signature serde asks for
@@ -65,22 +70,28 @@ pub enum Asked {
     Rules,
     /// Those, and the three about who is in a circle (ADR-037).
     RulesAndCircle,
+    /// Those, and keeping a noted rule for oneself (ADR-040): every step this build can
+    /// ask in a window.
+    All,
 }
 
 impl AgentConfig {
-    /// What the owner allowed, read from the two settings.
+    /// What the owner allowed, read from the settings. Each list of steps came after
+    /// the one before it, so a later setting counts only on top of the earlier ones.
     pub const fn asked(&self) -> Asked {
-        match (self.windows, self.circle_windows) {
-            (false, _) => Asked::Nothing,
-            (true, false) => Asked::Rules,
-            (true, true) => Asked::RulesAndCircle,
+        match (self.windows, self.circle_windows, self.own_windows) {
+            (false, _, _) => Asked::Nothing,
+            (true, false, _) => Asked::Rules,
+            (true, true, false) => Asked::RulesAndCircle,
+            (true, true, true) => Asked::All,
         }
     }
 
-    /// Sets both settings from what the owner allowed.
+    /// Sets the settings from what the owner allowed.
     pub const fn set_asked(&mut self, asked: Asked) {
         self.windows = !matches!(asked, Asked::Nothing);
-        self.circle_windows = matches!(asked, Asked::RulesAndCircle);
+        self.circle_windows = matches!(asked, Asked::RulesAndCircle | Asked::All);
+        self.own_windows = matches!(asked, Asked::All);
     }
 }
 
@@ -341,11 +352,25 @@ mod tests {
         let alone = Config::parse("[agent]\ncircle_windows = true\n").unwrap();
         assert_eq!(alone.agent.asked(), Asked::Nothing);
 
-        for asked in [Asked::Nothing, Asked::Rules, Asked::RulesAndCircle] {
+        for asked in [
+            Asked::Nothing,
+            Asked::Rules,
+            Asked::RulesAndCircle,
+            Asked::All,
+        ] {
             let mut c = Config::default();
             c.agent.set_asked(asked);
             assert_eq!(c.agent.asked(), asked);
         }
+        // Keeping a rule for oneself was allowed last, and counts only on top of the rest.
+        let all =
+            Config::parse("[agent]\nwindows = true\ncircle_windows = true\nown_windows = true\n")
+                .unwrap();
+        assert_eq!(all.agent.asked(), Asked::All);
+        assert_eq!(Config::parse(&all.to_toml().unwrap()).unwrap(), all);
+        let gap = Config::parse("[agent]\nwindows = true\nown_windows = true\n").unwrap();
+        assert_eq!(gap.agent.asked(), Asked::Rules);
+        assert!(Asked::All > Asked::RulesAndCircle && Asked::RulesAndCircle > Asked::Rules);
         // Turning windows off leaves nothing of the second setting behind.
         let mut c = both;
         c.agent.set_asked(Asked::Nothing);

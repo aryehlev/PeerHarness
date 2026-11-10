@@ -86,6 +86,11 @@ pub enum Command {
     Inbox(InboxArgs),
     /// Review a candidate rule: save it to your library, edit it or ignore it.
     Review(ReviewArgs),
+    /// Keep a noted rule for your own agent: save it and install it, in one step.
+    ///
+    /// Shows the exact text and where it goes, and asks once. Nothing is shared. It is
+    /// `review --approve` and `skills install` together.
+    Keep(KeepArgs),
     /// Local skill library and installation.
     Skills {
         #[command(subcommand)]
@@ -236,9 +241,10 @@ pub struct WatchClaudeArgs {
     /// With --install: do not install the skill that asks the agent to report corrections.
     #[arg(long, requires = "install")]
     pub no_agent_notes: bool,
-    /// With --install: let your agent put six decisions in front of you in a window on
-    /// your screen (proposing a rule, your ballot on one, installing one that passed,
-    /// inviting someone to a circle, your ballot on admitting someone, joining a circle).
+    /// With --install: let your agent put seven decisions in front of you in a window on
+    /// your screen (keeping a rule for yourself, proposing a rule, your ballot on one,
+    /// installing one that passed, inviting someone to a circle, your ballot on
+    /// admitting someone, joining a circle).
     /// Only your click in that window decides. macOS only.
     /// The flag is about confirmation dialogs, not the operating system; `--windows`
     /// is its older name and still works.
@@ -296,6 +302,15 @@ pub struct ReviewArgs {
     /// Replace the statement (combine with --approve to approve the edited text).
     #[arg(long, value_name = "STATEMENT")]
     pub edit: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct KeepArgs {
+    /// Candidate id (cand_…, or a unique prefix of at least 8 hex characters).
+    pub candidate: String,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
