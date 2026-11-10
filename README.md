@@ -12,7 +12,7 @@ Agents can suggest rules. Only people decide. Keeping a rule, sharing one, votin
 inviting and joining each open a window on your screen with the exact text, and only
 your click counts. Your agent can open that window. It cannot answer it.
 
-> **Status: v0.3.0, early and not audited.** What this page describes works.
+> **Status: v0.4.0, early and not audited.** What this page describes works.
 > [What works today](#what-works-today) says how each part was tested and
 > [Known limits](#known-limits) says what is missing. Read both before relying on it.
 
