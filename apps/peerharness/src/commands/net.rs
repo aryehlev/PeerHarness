@@ -188,6 +188,13 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
             ..NetworkConfig::listening_on(listen)
         }
     };
+    let desktop = match args.notify {
+        true => Some(
+            crate::notify::Desktop::find()
+                .ok_or_else(|| usage("--notify: desktop notifications need macOS in this build"))?,
+        ),
+        false => None,
+    };
     let home = ctx.home.clone();
     let out = ctx.out;
     // Held until this function returns; the operating system releases it if we crash.
@@ -252,8 +259,18 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
                  add --sync-every <seconds>.",
             );
         }
+        if desktop.is_some() {
+            out.note(
+                "A proposal that needs your vote is announced on this desktop when it arrives.",
+            );
+        }
         let stop = stop_signal();
         tokio::pin!(stop);
+        // With --notify: looks every few seconds at what waits for the owner's vote.
+        let mut desktop = desktop;
+        let mut watch = desktop
+            .is_some()
+            .then(|| tokio::time::interval(crate::notify::LOOK_EVERY));
         // In internet mode: looks every few seconds at where the node stands, keeps
         // `daemon.json` current and tells the owner when it changes.
         let mut standing = on_internet.then(|| tokio::time::interval(STANDING_INTERVAL));
@@ -278,8 +295,38 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
                     None => std::future::pending().await,
                 }
             };
+            let news = async {
+                match watch.as_mut() {
+                    Some(t) => {
+                        t.tick().await;
+                    }
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 _ = &mut stop => break,
+                _ = news => {
+                    let found = run.worker.call(crate::notify::news).await;
+                    if let (Ok(Some(news)), Some(shows)) = (found, desktop.clone()) {
+                        let text = news.text.clone();
+                        let shown = tokio::task::spawn_blocking(move || shows.show(&text))
+                            .await
+                            .unwrap_or(false);
+                        if shown {
+                            out.note(&news.text);
+                            let _ = run
+                                .worker
+                                .call(move |node| crate::notify::record(node, &news.proposals))
+                                .await;
+                        } else {
+                            // Not tried again: a machine that cannot show one now will
+                            // not be able to in three seconds either.
+                            out.warn("a desktop notification could not be shown; --notify is off for this run");
+                            desktop = None;
+                            watch = None;
+                        }
+                    }
+                }
                 _ = look => {
                     let now = runtime::internet_info(&run).await;
                     if now != info.internet {

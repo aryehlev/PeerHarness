@@ -160,6 +160,10 @@ pub struct DaemonArgs {
     /// this node looks for. They never see a circle or anything said in one.
     #[arg(long)]
     pub internet: bool,
+    /// Show a notification on this desktop when a proposal that needs your vote reaches
+    /// this node: a count, never its text. macOS only.
+    #[arg(long)]
+    pub notify: bool,
 }
 
 #[derive(Debug, Args)]

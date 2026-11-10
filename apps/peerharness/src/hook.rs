@@ -123,10 +123,13 @@ fn stop_notice(store: &Store, config: &Config, now: Timestamp) -> HookOutput {
         return HookOutput::silent();
     };
     let _ = store.purge_notifications_before(now.minus_secs(NOTIFICATION_HISTORY_SECS));
+    // What the daemon showed on the desktop (ADR-036) is counted by its own limits,
+    // not by the hook's.
     let history: Vec<(String, Timestamp)> = store
         .notifications()
         .unwrap_or_default()
         .into_iter()
+        .filter(|n| !n.topic.starts_with(crate::notify::DESKTOP_PREFIX))
         .map(|n| (n.topic, n.shown_at))
         .collect();
     // One message per turn. Each topic has its own cooldown, so a note that was

@@ -172,10 +172,19 @@ peerharness sync --internet     # Alice's node learns of it and installs the rul
 ```
 
 With three or more members a rule passes on a majority, and admitting or removing
-someone takes a vote of the current members. A daemon started with `--sync-every 300`
-also fetches from the other members by itself every five minutes. When a proposal that
-needs your vote has reached your node, the end of your next turn in Claude Code says
-so (with `watch claude --install`): a count and `peerharness inbox`, once a day at most.
+someone takes a vote of the current members.
+
+To hear about a vote when it happens, leave your node running like this:
+
+```sh
+peerharness daemon --internet --sync-every 60 --notify
+```
+
+It fetches from the other members every minute and, on macOS, shows a desktop
+notification within seconds of a proposal that needs your vote arriving. The
+notification says how many wait, never what they say. Without `--notify`, the end of
+your next turn in Claude Code tells you instead (with `watch claude --install`), once
+a day at most.
 
 ### What `--internet` exposes
 
@@ -256,6 +265,7 @@ command has `--help`.
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
 | Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. The logic is tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not |
+| Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
 | The install script | tested against a stand-in release (a matching checksum installs, a changed archive does not). No release has been published yet: until one is, the script says so and prints the build-from-source command |
 | Windows | not supported yet |
 

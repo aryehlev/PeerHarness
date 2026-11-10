@@ -61,6 +61,12 @@ governance (section 10, ADR-012 onwards).
   of the proposals that wait for the owner's vote (`governance::awaiting_vote`,
   ADR-035), or else of the new candidates to review. Each has its own notification
   topic, and the message holds no text written by anyone else.
+* `daemon --notify` (ADR-036) looks every three seconds at the same
+  `governance::awaiting_vote` and shows one notification of the operating system
+  (`apps/peerharness/src/notify.rs`; macOS) for proposals it has not announced before.
+  It holds a count only. Announced proposals are rows in `notifications` under the
+  topic prefix `desktop:`, with limits of their own (60 seconds apart, 10 proposals a
+  day, the owner's quiet hours) that the hook's throttle does not count.
 
 ## 2. Crates and dependency direction
 

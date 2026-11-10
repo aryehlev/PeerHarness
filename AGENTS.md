@@ -77,7 +77,9 @@ stop, leave the feature disabled, and document the blocker.
   after.
 * Observation text, prompts, transcripts, tool output, skill text, circle names,
   revocation reasons and passphrases never appear in logs, error `Display` strings,
-  panic messages or network payloads. Log ids and counts only. `Debug` of types holding
+  panic messages or network payloads. Log ids and counts only. The same holds for
+  what PeerHarness shows unasked (the Stop notice, `daemon --notify`): a count, never
+  text another member wrote. `Debug` of types holding
   such text prints lengths.
 * `transcript_path` and any other path from a hook payload is never opened. Hooks always
   exit 0, never block, and print nothing for `UserPromptSubmit`.
@@ -229,10 +231,12 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
 * Tests that play the person remove `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` from
   the child process (the suite itself may be run by a coding agent). Tests of the
   agent-session guard set one of them.
-* No test opens a real window. A test that turns confirmation windows on sets
-  `PEERHARNESS_TEST_WINDOW_BIN` on every command it runs (see
-  `apps/peerharness/tests/agent_windows.rs`); otherwise a developer's Mac would show
-  dialogs during `cargo test`.
+* No test opens a real window or shows a real notification. A test that turns
+  confirmation windows on sets `PEERHARNESS_TEST_WINDOW_BIN` on every command it runs
+  (see `apps/peerharness/tests/agent_windows.rs`), and a test that starts `daemon
+  --notify` sets `PEERHARNESS_TEST_NOTIFY_BIN`; otherwise a developer's Mac would show
+  dialogs and banners during `cargo test`. Both variables are read by debug builds
+  only.
 * Security behaviour needs negative tests: show the forged, expired, revoked,
   out-of-scope, replayed or oversized input being rejected.
 * Use fake provider binaries via `PEERHARNESS_CLAUDE_BIN` / `PEERHARNESS_CODEX_BIN`; never

@@ -227,6 +227,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   memory while it waits for records they depend on. Unsolicited notifications are
   limited to 2 per day with a per-topic cooldown, and hold a count only: a member who
   floods the circle with proposals changes a number in one daily notice (ADR-035).
+  The desktop notifications of `daemon --notify` are off unless asked for, also hold
+  a count only, are shown once per proposal, at least 60 seconds apart and for at
+  most 10 proposals a day (ADR-036).
 * **Residual risk.** Device keys cost nothing to create, so per-peer limits do not stop an
   attacker who uses many keys; the global caps then protect the node's memory but can
   starve legitimate peers of connection slots. There is no IP-level limiting. A member

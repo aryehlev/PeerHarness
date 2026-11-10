@@ -647,3 +647,44 @@ daemon with `--sync-every`, or `sync`). The notice appears only at the end of a 
 in Claude Code with the hooks installed; there is no operating-system notification
 and no window opens by itself (a window opens when the owner asks for a step, ADR-033).
 A member who is not using their agent is told nothing.
+
+## ADR-036: A running daemon announces a proposal that needs the owner's vote
+ADR-035 tells the owner at the end of their next turn with their agent, once a day. A
+member who is not in a session, or whose colleagues are waiting now, hears nothing
+until then. Claude Code has no way to push a message into a running session, so the
+news has to come from the process that receives it: the daemon.
+
+**Decision.** `daemon --notify` looks every three seconds at what waits for the owner's
+vote (`governance::awaiting_vote`) and shows one notification of the operating system
+for what is new: "N proposal(s) wait for your vote. Run: peerharness inbox". It is off
+unless asked for. It also prints that line to its own output.
+
+* **A count only.** No title, name or text written by another member reaches the
+  notification program or the daemon's output, so a proposal cannot put words on the
+  owner's screen before they chose to read it.
+* **Once per proposal**, also across restarts: each announced proposal is a row in the
+  `notifications` table under the topic prefix `desktop:`. The Stop hook does not count
+  those rows against its own two notices a day, and may still mention the vote at the
+  end of a turn.
+* **Bounded.** Arrivals within 60 seconds are announced together, at most 10 proposals
+  are announced in 24 hours, the owner's quiet hours are kept, and
+  `notifications.max_per_day = 0` turns it off. A notification that cannot be shown is
+  not tried again by that daemon.
+* **How fast it is** depends on the sync, not on the notification: the proposal must
+  reach the node first. With the proposer's node or this one syncing every N seconds
+  (`--sync-every N`), the owner is told at most N plus three seconds after it was
+  proposed. Measured on one machine over loopback: 2.9 seconds after the proposer's
+  `sync`.
+
+macOS only: `/usr/bin/osascript` with `display notification`, the text on standard
+input as in ADR-033. Such a notification belongs to Script Editor: macOS shows it
+according to the owner's notification settings for that application, and a click on it
+opens Script Editor and not PeerHarness. The daemon knows that the system accepted the
+notification, not that anyone saw it. Debug builds read `PEERHARNESS_TEST_NOTIFY_BIN`,
+a stand-in for tests; release builds do not.
+
+Not done: Linux (`notify-send`), a notification that opens the inbox or the vote, and
+opening the confirmation window (ADR-033) by itself when a proposal arrives. The last
+one would put a consent step in front of the owner that nobody on their machine asked
+for, and is left out on purpose.
+

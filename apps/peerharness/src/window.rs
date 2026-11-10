@@ -320,7 +320,7 @@ fn applescript(text: &str, rows: usize) -> String {
 /// `s` as an AppleScript string literal. Backslash and the double quote are the only
 /// characters with a meaning inside one; line breaks and tabs are written as escapes so
 /// the literal stays on one line, and other control characters are left out.
-fn applescript_literal(s: &str) -> String {
+pub(crate) fn applescript_literal(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
