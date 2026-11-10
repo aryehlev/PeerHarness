@@ -989,14 +989,6 @@ fn registry_circle_rules() {
             MembershipRejection::UnknownCircle
         ))
     ));
-    // A revocation dated far in the future is refused.
-    let future = a.issue_revocation(k, "", t0().plus_days(1)).unwrap();
-    assert!(matches!(
-        reg.add_revocation(future, t0()),
-        Err(IdentityError::Membership(
-            MembershipRejection::InvalidRevocation(_)
-        ))
-    ));
     // A tampered revocation (reason changed after signing).
     let mut tampered = a.issue_revocation(k, "x", t0()).unwrap();
     tampered.unsigned.reason = "y".into();
@@ -1006,6 +998,12 @@ fn registry_circle_rules() {
             MembershipRejection::InvalidRevocation(_)
         ))
     ));
+    assert!(!reg.is_revoked(&a.circle_id(), &k));
+    // A revocation dated ahead of this node's clock is accepted: it only ever denies,
+    // so a fast clock on the issuer's side must not leave the device trusted here.
+    let future = a.issue_revocation(k, "", t0().plus_days(1)).unwrap();
+    assert_eq!(reg.add_revocation(future, t0()).unwrap(), AddOutcome::Added);
+    assert!(reg.is_revoked(&a.circle_id(), &k));
     assert!(reg.remove_circle(&a.circle_id()));
     assert!(!reg.remove_circle(&a.circle_id()));
 }

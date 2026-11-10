@@ -10,7 +10,7 @@ use std::fmt;
 use ph_core::{CircleId, DeviceKey, Digest, EventId, Scope, Timestamp};
 use ph_protocol::jcs::{parse_strict_str, ParseLimits};
 use ph_protocol::limits::{MAX_FETCH_LIMIT, MAX_FRAME_BYTES};
-use ph_protocol::{EventBody, EventType, SignedEnvelope, VerifiedEnvelope};
+use ph_protocol::{EventBody, EventType, ProposalAction, SignedEnvelope, VerifiedEnvelope};
 use rusqlite::{params, OptionalExtension, Row};
 use serde::Serialize;
 use serde_json::Value;
@@ -55,9 +55,10 @@ pub struct StoredEvent {
     pub received_at: Timestamp,
     /// The peer it was received from (`None` for locally created events).
     pub origin_peer: Option<String>,
-    /// Referenced event: `question_id` of an ANSWER, `proposal_id` of a VOTE or RELEASE.
+    /// Referenced event: `question_id` of an ANSWER, `proposal_id` of a VOTE or RESULT,
+    /// `target` of a `repeal` PROPOSAL.
     pub ref_event_id: Option<EventId>,
-    /// `bundle_digest` of a PROPOSAL, VOTE or RELEASE.
+    /// `bundle_digest` of an `adopt` PROPOSAL.
     pub bundle_digest: Option<Digest>,
     /// Canonical (JCS) JSON of the transmitted envelope.
     pub envelope_json: String,
@@ -121,7 +122,9 @@ pub struct EventFilter<'a> {
     /// Only events whose scope is covered by one of these granted scopes
     /// (`Scope::covers`); `None` for no scope filter.
     pub readable_scopes: Option<&'a [Scope]>,
-    /// Only events with `expires_at > t`; `None` to include expired events.
+    /// Only events that have not expired at `t`: `expires_at > t`, or a permanent type
+    /// (PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION), which never expires. `None` to
+    /// include expired events.
     pub not_expired_at: Option<Timestamp>,
     /// Maximum number of events returned.
     pub limit: usize,
@@ -145,7 +148,8 @@ pub struct MissingQuery<'a> {
     pub circle_id: &'a CircleId,
     /// Event ids the peer already has (from `FetchEvents.known`).
     pub known: &'a HashSet<EventId>,
-    /// Local time; events with `expires_at <= now` are never returned.
+    /// Local time; expiring events (QUESTION, ANSWER, MEMBERSHIP) with
+    /// `expires_at <= now` are never returned. Permanent events always are.
     pub now: Timestamp,
     /// Maximum number of events (clamped to `MAX_FETCH_LIMIT`).
     pub limit: usize,
@@ -212,13 +216,34 @@ fn row(r: &Row<'_>) -> rusqlite::Result<StoredEvent> {
 fn refs(body: &EventBody) -> (Option<EventId>, Option<Digest>) {
     match body {
         EventBody::Answer(b) => (Some(b.question_id), None),
-        EventBody::Proposal(b) => (None, Some(b.bundle_digest)),
-        EventBody::Vote(b) => (Some(b.proposal_id), Some(b.bundle_digest)),
-        EventBody::Release(b) => (Some(b.proposal_id), Some(b.bundle_digest)),
-        EventBody::Question(_) | EventBody::Membership(_) | EventBody::Revocation(_) => {
-            (None, None)
-        }
+        EventBody::Proposal(b) => match &b.action {
+            ProposalAction::Adopt(a) => (None, Some(a.bundle_digest)),
+            ProposalAction::Repeal { target } => (Some(*target), None),
+            ProposalAction::Amend { .. } => (None, None),
+        },
+        EventBody::Vote(b) => (Some(b.proposal_id), None),
+        EventBody::Result(b) => (Some(b.proposal_id), None),
+        EventBody::Question(_)
+        | EventBody::Charter(_)
+        | EventBody::Membership(_)
+        | EventBody::Revocation(_) => (None, None),
     }
+}
+
+/// SQL condition "this event has not expired at the bound time parameter `param`":
+/// its `expires_at` is later, or its type is permanent (architecture section 10.11:
+/// decision events, CHARTER and REVOCATION never expire). The type list is derived from
+/// [`EventType::is_permanent`] so it cannot drift.
+fn not_expired_sql(param: &str) -> String {
+    let permanent: Vec<String> = EventType::ALL
+        .into_iter()
+        .filter(|t| t.is_permanent())
+        .map(|t| format!("'{}'", t.as_str()))
+        .collect();
+    format!(
+        "(expires_at > {param} OR type IN ({}))",
+        permanent.join(", ")
+    )
 }
 
 impl Store {
@@ -376,7 +401,7 @@ impl Store {
             }
         }
         if let Some(t) = filter.not_expired_at {
-            where_sql.push_str(" AND expires_at > ?");
+            where_sql.push_str(&format!(" AND {}", not_expired_sql("?")));
             args.push(Box::new(t.unix_seconds()));
         }
         let mut st = self.conn.prepare(&format!(
@@ -407,13 +432,14 @@ impl Store {
         Ok(rows)
     }
 
-    /// Ids of a circle's events that have not expired at `now`, oldest first
-    /// (the `known` set this node sends in `FetchEvents`).
+    /// Ids of a circle's events that have not expired at `now` (permanent events never
+    /// do), oldest first: the `known` set this node sends in `FetchEvents`.
     pub fn event_ids_for_circle(&self, circle: &CircleId, now: Timestamp) -> Result<Vec<EventId>> {
-        let mut st = self.conn.prepare(
-            "SELECT event_id FROM events WHERE circle_id = ?1 AND expires_at > ?2
+        let mut st = self.conn.prepare(&format!(
+            "SELECT event_id FROM events WHERE circle_id = ?1 AND {}
              ORDER BY created_at, event_id",
-        )?;
+            not_expired_sql("?2")
+        ))?;
         let ids = st
             .query_map(params![circle.to_string(), now.unix_seconds()], |r| {
                 sql::parse(r, 0, "event id")
@@ -425,17 +451,25 @@ impl Store {
     /// The events a peer is missing, for answering `FetchEvents` (architecture 7).
     ///
     /// Returns unexpired events of `q.circle_id` (never of another circle) that are not
-    /// in `q.known` and either are control-plane events (MEMBERSHIP, REVOCATION; always
-    /// included) or have a scope for which `readable` returns `true`. `readable` is
-    /// where the caller applies the requester's credential (for example
-    /// `|s| oracle.authorize_read(&circle, &requester, s, now).is_ok()`).
+    /// in `q.known` and are readable by the requester. Permanent events (PROPOSAL, VOTE,
+    /// RESULT, CHARTER, REVOCATION) never count as expired, so a node that joins later
+    /// can still fetch the circle's decisions. An event is readable when
+    ///
+    /// * it is a control-plane event (MEMBERSHIP, REVOCATION, CHARTER), or
+    /// * it is a decision event with scope `*`, which concerns every member
+    ///   (architecture section 10.3; every `amend` proposal and its ballots), or
+    /// * `readable` returns `true` for its scope. `readable` is where the caller applies
+    ///   the requester's credential (for example
+    ///   `|s| oracle.authorize_read(&circle, &requester, s, now).is_ok()`).
+    ///
     /// Ordered by `(created_at, event_id)`; bounded by `q.limit` and `q.max_bytes`;
     /// `more` reports whether further eligible events remain.
     ///
     /// # Security precondition
     ///
     /// Control-plane events carry the circle's member list (subject keys, roles,
-    /// scopes) and are returned **regardless of `readable`**. The caller must therefore
+    /// scopes, and the charter's roll), and they and circle-wide decision events are
+    /// returned **regardless of `readable`**. The caller must therefore
     /// first establish that the requester is an active member of `q.circle_id` (for
     /// example `oracle.is_active_member(&circle, &requester, now)`) and answer
     /// `Error{unauthorized}` otherwise, without calling this method. A deny-all
@@ -447,8 +481,9 @@ impl Store {
     ) -> Result<MissingEvents> {
         let limit = q.limit.min(MAX_FETCH_LIMIT as usize);
         let mut st = self.conn.prepare(&format!(
-            "SELECT {COLS} FROM events WHERE circle_id = ?1 AND expires_at > ?2
-             ORDER BY created_at, event_id"
+            "SELECT {COLS} FROM events WHERE circle_id = ?1 AND {}
+             ORDER BY created_at, event_id",
+            not_expired_sql("?2")
         ))?;
         let mut rows = st.query(params![q.circle_id.to_string(), q.now.unix_seconds()])?;
         let mut out = MissingEvents::default();
@@ -460,7 +495,9 @@ impl Store {
                 continue;
             }
             let ev = row(r)?;
-            if !(ev.event_type.is_control_plane() || readable(&ev.scope)) {
+            let for_every_member = ev.event_type.is_control_plane()
+                || (ev.event_type.is_decision() && ev.scope.is_wildcard());
+            if !(for_every_member || readable(&ev.scope)) {
                 continue;
             }
             let size = ev.envelope_json.len() + 1;
@@ -483,8 +520,8 @@ impl Store {
 
     /// VOTE events referencing `proposal_id` **in the proposal's own circle**, oldest
     /// first. Empty while the PROPOSAL itself is not stored. A VOTE published in another
-    /// circle that names this proposal is never returned. Callers must still check each
-    /// vote's `bundle_digest` and voter eligibility (ph-governance).
+    /// circle that names this proposal is never returned. Callers must still count them
+    /// against the roll of the charter the proposal names (ph-governance `tally`).
     pub fn votes_for_proposal(&self, proposal_id: &EventId) -> Result<Vec<StoredEvent>> {
         self.referencing(proposal_id, EventType::Vote, EventType::Proposal)
     }
@@ -495,11 +532,17 @@ impl Store {
         self.referencing(question_id, EventType::Answer, EventType::Question)
     }
 
-    /// RELEASE events referencing `proposal_id` in the proposal's own circle, oldest
-    /// first. Empty while the PROPOSAL is not stored. A RELEASE is only a claim; it
-    /// must be re-verified against local votes (architecture section 10).
-    pub fn releases_for_proposal(&self, proposal_id: &EventId) -> Result<Vec<StoredEvent>> {
-        self.referencing(proposal_id, EventType::Release, EventType::Proposal)
+    /// RESULT events referencing `proposal_id` in the proposal's own circle, oldest
+    /// first. Empty while the PROPOSAL is not stored. A RESULT carries no authority; it
+    /// must be verified against the ballots it lists (ph-governance `verify_result`).
+    pub fn results_for_proposal(&self, proposal_id: &EventId) -> Result<Vec<StoredEvent>> {
+        self.referencing(proposal_id, EventType::Result, EventType::Proposal)
+    }
+
+    /// `repeal` PROPOSAL events targeting the `adopt` proposal `target`, in the target's
+    /// own circle, oldest first. Empty while the target is not stored.
+    pub fn repeals_of(&self, target: &EventId) -> Result<Vec<StoredEvent>> {
+        self.referencing(target, EventType::Proposal, EventType::Proposal)
     }
 
     /// Events of type `ty` whose `ref_event_id` is `target`, restricted to the circle of
@@ -522,7 +565,7 @@ impl Store {
         self.events_where("circle_id = ?1 AND type = 'PROPOSAL'", [circle.to_string()])
     }
 
-    /// PROPOSAL events of a circle with this bundle digest (for `FetchBundle`
+    /// `adopt` PROPOSAL events of a circle with this bundle digest (for `FetchBundle`
     /// authorization), oldest first.
     pub fn proposals_with_bundle(
         &self,

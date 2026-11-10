@@ -46,7 +46,7 @@ pub use observation::{
     bound_text, Confidence, NormalizedObservation, ObservationId, ObservationKind,
     ObservationSource, SkillCandidate, MAX_OBSERVATION_TEXT_BYTES,
 };
-pub use redact::{redact, Redacted, REDACTED};
+pub use redact::{redact, Redacted, REDACTED, REDACTED_EMAIL};
 pub use role::{roles_grant, Capability, Role};
 pub use scope::Scope;
 pub use timestamp::Timestamp;

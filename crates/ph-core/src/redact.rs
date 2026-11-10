@@ -1,8 +1,9 @@
 //! Heuristic secret and home-path redaction (architecture section 13).
 //!
 //! [`redact`] runs on every observation before storage and on every human-approved text
-//! before the sharing preview. It replaces likely secrets with [`REDACTED`] and rewrites
-//! absolute home-directory prefixes to `~/`.
+//! before the sharing preview. It replaces likely secrets with [`REDACTED`], email
+//! addresses with [`REDACTED_EMAIL`], and rewrites absolute home-directory prefixes to
+//! `~/`.
 //!
 //! Detected secret shapes:
 //!
@@ -18,6 +19,15 @@
 //! * passwords in URLs (`scheme://user:<password>@host`, the user and host are kept)
 //! * generic assignments such as `api_key=...`, `token: ...`, `password = "..."`,
 //!   `GITHUB_TOKEN=...`, `AWS_SECRET_ACCESS_KEY=...` (the key is kept, the value replaced)
+//! * email addresses (`local@domain.tld`, replaced by [`REDACTED_EMAIL`] so the preview
+//!   says what was removed), including internationalized ones. The domain needs a final
+//!   label of 2-63 letters.
+//!   npm package specs are kept: `@scope/pkg` has no local part, and `pkg@1.2.3`,
+//!   `pkg@1.2.3-beta.rc` or `@scope/pkg@^2` have a numeric version where the domain would
+//!   be (a "domain" whose first two labels are all digits is treated as a version).
+//!   The user part of `scheme://user:password@host` is kept by the URL rule above, which
+//!   runs first. Note that SSH remotes such as `git@github.com:org/repo` are redacted
+//!   too.
 //! * long high-entropy runs: hex of at least 32 chars mixing digits and letters (this
 //!   includes git commit SHAs), or base64/base64url of at least 32 chars mixing upper
 //!   case, lower case and digits whose character classes change often (random-looking).
@@ -32,6 +42,9 @@ use regex::{Captures, Regex};
 
 /// The replacement marker for redacted secrets.
 pub const REDACTED: &str = "[REDACTED]";
+
+/// The replacement marker for redacted email addresses.
+pub const REDACTED_EMAIL: &str = "[REDACTED-EMAIL]";
 
 /// Result of [`redact`].
 #[derive(Clone, PartialEq, Eq)]
@@ -63,6 +76,9 @@ enum Action {
     KeepPrefix,
     /// Replace the whole match only if it looks high-entropy.
     HighEntropy,
+    /// Replace the whole match with [`REDACTED_EMAIL`] unless it is a package version
+    /// spec (see [`looks_like_version_spec`]).
+    Email,
 }
 
 struct Rule {
@@ -112,6 +128,10 @@ const SECRET_PATTERNS: &[(&str, Action)] = &[
     (
         r#"(?i)(\b(?:[a-z0-9]+[_\-])*(?:api[_\-]?key|apikey|secret|access[_\-]?key|private[_\-]?key|token|password|passwd|passphrase|pwd|credentials?)(?:[_\-][a-z0-9]+)*["']?\s*[:=]\s*["']?)([^\s"'`,;]{3,})"#,
         Action::KeepPrefix,
+    ),
+    (
+        r"\b[\p{L}\p{N}][\p{L}\p{N}._%+\-]*@[\p{L}\p{N}](?:[\p{L}\p{N}\-]*[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}\-]*[\p{L}\p{N}])?)*\.\p{L}{2,63}\b",
+        Action::Email,
     ),
     (r"[A-Za-z0-9+/_\-]{32,}={0,2}", Action::HighEntropy),
 ];
@@ -192,7 +212,21 @@ fn looks_high_entropy(s: &str) -> bool {
     class_transition_rate(body) >= MIN_CLASS_TRANSITION_RATE
 }
 
-/// Redacts likely secrets and strips absolute home-directory prefixes.
+/// Whether an email-shaped match `local@domain` is really a package version spec such as
+/// `pkg@1.2.3-beta.rc`: the first two labels of the domain are all digits. Real domains
+/// with a numeric first label (`163.com`) are still emails.
+fn looks_like_version_spec(email_match: &str) -> bool {
+    let Some((_, domain)) = email_match.rsplit_once('@') else {
+        return false;
+    };
+    let mut labels = domain.split('.');
+    let numeric =
+        |l: Option<&str>| l.is_some_and(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_digit()));
+    numeric(labels.next()) && numeric(labels.next())
+}
+
+/// Redacts likely secrets and email addresses and strips absolute home-directory
+/// prefixes.
 ///
 /// Never panics, and never logs its input.
 pub fn redact(text: &str) -> Redacted {
@@ -224,6 +258,14 @@ pub fn redact(text: &str) -> Redacted {
                         REDACTED.to_owned()
                     } else {
                         whole.to_owned()
+                    }
+                }
+                Action::Email => {
+                    if looks_like_version_spec(whole) {
+                        whole.to_owned()
+                    } else {
+                        findings += 1;
+                        REDACTED_EMAIL.to_owned()
                     }
                 }
             }
@@ -419,6 +461,56 @@ mod tests {
     }
 
     #[test]
+    fn emails() {
+        assert_eq!(
+            r("ping alice@example.com about it"),
+            "ping [REDACTED-EMAIL] about it"
+        );
+        assert_eq!(
+            r("use alice@corp.com, not bob@corp.com"),
+            "use [REDACTED-EMAIL], not [REDACTED-EMAIL]"
+        );
+        assert_eq!(r("<x.y+tag@mail.example.co.uk>"), "<[REDACTED-EMAIL]>");
+        assert_eq!(r("mailto:Carol_D@Example.ORG."), "mailto:[REDACTED-EMAIL].");
+        assert_eq!(r("dev@163.com"), "[REDACTED-EMAIL]");
+        assert_eq!(r("héllo bob@exämple.com"), "héllo [REDACTED-EMAIL]");
+        assert_eq!(
+            r("git@github.com:org/repo.git"),
+            "[REDACTED-EMAIL]:org/repo.git"
+        );
+        let out = redact("a@b.io and c@d.dev");
+        assert_eq!(out.text, "[REDACTED-EMAIL] and [REDACTED-EMAIL]");
+        assert_eq!(out.findings_count, 2);
+        // URL credentials: the password rule runs first and keeps user and host.
+        assert_eq!(
+            r("https://alice:hunter2pass@example.com/x"),
+            "https://alice:[REDACTED]@example.com/x"
+        );
+    }
+
+    #[test]
+    fn package_specs_are_not_emails() {
+        for keep in [
+            "pnpm add @scope/pkg",
+            "pnpm add @acme/web-app2024@latest",
+            "npm i react@18.2.0",
+            "npm i pkg@1.2.3",
+            "npm i pkg@1.2.3-beta.rc",
+            "npm i @types/node@20.11.5",
+            "npm i @scope/pkg@^2.0.0 left-pad@~1.3",
+            "npm WARN deprecated request@2.88.2: use got",
+            "cargo add serde@1",
+            "user@localhost",
+            "foo@bar",
+            "@alice mentioned it",
+        ] {
+            let out = redact(keep);
+            assert_eq!(out.text, keep);
+            assert_eq!(out.findings_count, 0, "{keep}");
+        }
+    }
+
+    #[test]
     fn bearer() {
         assert_eq!(
             r("Authorization: Bearer abc.def-ghi_jkl"),
@@ -490,6 +582,14 @@ mod tests {
         #[test]
         fn never_panics(s in "\\PC{0,300}") {
             let _ = redact(&s);
+        }
+
+        #[test]
+        fn embedded_email_always_removed(local in "[a-z][a-z0-9._+-]{0,15}", host in "[a-z][a-z0-9-]{0,10}[a-z0-9]", tld in "[a-z]{2,6}") {
+            let email = format!("{local}@{host}.{tld}");
+            let out = redact(&format!("contact {email} today"));
+            proptest::prop_assert!(!out.text.contains(&email));
+            proptest::prop_assert!(out.text.contains(REDACTED_EMAIL));
         }
 
         #[test]

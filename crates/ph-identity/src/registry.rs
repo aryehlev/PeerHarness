@@ -31,8 +31,8 @@ use ph_core::{
 };
 use ph_protocol::limits::MAX_AUTH_MEMBERSHIPS;
 use ph_protocol::{
-    verify_acceptance, verify_credential_signature, verify_membership_proof, verify_revocation,
-    MembershipProof, Revocation,
+    verify_acceptance, verify_credential_signature, verify_membership_proof,
+    verify_revocation_signature, MembershipProof, Revocation,
 };
 
 use crate::error::{MembershipRejection, Result};
@@ -236,10 +236,15 @@ impl MembershipRegistry {
         Ok(AddOutcome::Added)
     }
 
-    /// Records a revocation after verifying it at `now` (signature, structure, not
-    /// future-dated) and checking that its circle is registered and its issuer is the
-    /// circle root. Only the first revocation per subject is kept (`Duplicate` after).
-    pub fn add_revocation(&mut self, rev: Revocation, now: Timestamp) -> Result<AddOutcome> {
+    /// Records a revocation after verifying its structure and root signature and
+    /// checking that its circle is registered and its issuer is the circle root. Only
+    /// the first revocation per subject is kept (`Duplicate` after).
+    ///
+    /// No time rule applies, and `_now` is unused: a revocation only ever denies, so it
+    /// must never be refused because the issuer's clock runs ahead of this node's, nor
+    /// dropped when stored revocations are reloaded after the local clock stepped back.
+    /// Refusing it would leave the revoked device trusted.
+    pub fn add_revocation(&mut self, rev: Revocation, _now: Timestamp) -> Result<AddOutcome> {
         let circle_id = rev.circle_id;
         let state = self
             .circles
@@ -248,7 +253,7 @@ impl MembershipRegistry {
         if rev.issuer_key != state.root_key {
             return Err(MembershipRejection::IssuerNotRoot.into());
         }
-        verify_revocation(&rev, now).map_err(MembershipRejection::InvalidRevocation)?;
+        verify_revocation_signature(&rev).map_err(MembershipRejection::InvalidRevocation)?;
         let subject = rev.subject_device_key;
         if state.revocations.contains_key(&subject) {
             return Ok(AddOutcome::Duplicate);
@@ -534,6 +539,11 @@ impl MembershipOracle for MembershipRegistry {
         };
         !c.revocations.contains_key(key) && c.subject_proofs(key).any(|p| is_active(p, now))
     }
+
+    /// Same as the inherent [`MembershipRegistry::is_revoked`].
+    fn is_revoked(&self, circle: &CircleId, key: &DeviceKey) -> bool {
+        MembershipRegistry::is_revoked(self, circle, key)
+    }
 }
 
 /// A cloneable, thread-safe handle to a [`MembershipRegistry`] (`Arc<RwLock<_>>`) that
@@ -585,5 +595,9 @@ impl MembershipOracle for SharedMembershipRegistry {
 
     fn is_active_member(&self, circle: &CircleId, key: &DeviceKey, now: Timestamp) -> bool {
         self.read().is_active_member(circle, key, now)
+    }
+
+    fn is_revoked(&self, circle: &CircleId, key: &DeviceKey) -> bool {
+        self.read().is_revoked(circle, key)
     }
 }

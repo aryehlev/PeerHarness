@@ -3,11 +3,11 @@
 use std::fmt;
 
 use ed25519_dalek::SigningKey;
-use ph_core::{CircleId, DeviceKey, Nonce, Role, Scope, Timestamp};
+use ph_core::{CircleId, DeviceKey, EventId, Nonce, Role, Scope, Timestamp};
 use ph_protocol::limits::{lifetimes, MAX_CREDENTIAL_LIFETIME_SECS};
 use ph_protocol::{
-    verify_credential, verify_invite, Invite, MembershipCredential, Revocation, UnsignedInvite,
-    UnsignedMembershipCredential, UnsignedRevocation,
+    verify_credential, verify_invite, Charter, CharterContent, Invite, MembershipCredential,
+    Revocation, UnsignedCharter, UnsignedInvite, UnsignedMembershipCredential, UnsignedRevocation,
 };
 
 use crate::device::random_seed;
@@ -287,6 +287,47 @@ impl CircleAuthority {
         .sign(&self.signing_key)?;
         tracing::info!(circle = %self.circle_id, subject = %subject, "revocation issued");
         Ok(rev)
+    }
+
+    /// Signs the founding charter of this circle (`seq` 1): `content` is normally
+    /// `CharterContent::founding(founder_entry)`, the founder as the only member with
+    /// the default rules (architecture section 10.2).
+    pub fn issue_founding_charter(
+        &self,
+        content: CharterContent,
+        now: Timestamp,
+    ) -> Result<Charter> {
+        let charter =
+            UnsignedCharter::founding(self.root_key, content, now).sign(&self.signing_key)?;
+        tracing::info!(circle = %self.circle_id, members = charter.content.roll.len(), "founding charter issued");
+        Ok(charter)
+    }
+
+    /// Notarizes the next charter: the successor of `current` with content `next`,
+    /// justified by the RESULT event `justification`.
+    ///
+    /// The root key is a notary, not a ruler (architecture section 10.8). This method
+    /// only signs; it cannot know whether a vote passed. **The caller must verify the
+    /// returned charter with `ph_governance::check_successor` before storing or
+    /// publishing it**, exactly as every other node will: a charter whose content
+    /// differs from the passed amendment, or whose amendment did not pass, is rejected
+    /// by all of them however validly it is signed.
+    pub fn issue_next_charter(
+        &self,
+        current: &Charter,
+        next: CharterContent,
+        justification: EventId,
+        now: Timestamp,
+    ) -> Result<Charter> {
+        if current.circle_id != self.circle_id || current.issuer_key != self.root_key {
+            return Err(IdentityError::KeyMismatch {
+                what: "the current charter belongs to another circle",
+            });
+        }
+        let charter = UnsignedCharter::successor(current, next, justification, now)?
+            .sign(&self.signing_key)?;
+        tracing::info!(circle = %self.circle_id, seq = charter.seq, members = charter.content.roll.len(), "charter notarized");
+        Ok(charter)
     }
 }
 

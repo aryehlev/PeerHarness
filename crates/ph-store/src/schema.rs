@@ -227,8 +227,41 @@ CREATE INDEX notifications_by_time  ON notifications(shown_at);
 CREATE INDEX notifications_by_topic ON notifications(topic, shown_at);
 "#;
 
+/// Version 2: governance by charter (architecture section 10).
+///
+/// * `charters` holds the chain of charters this node has accepted for each circle; the
+///   row with the greatest `seq` is the current one. A node that joined late starts at
+///   whatever `seq` its invitation carried.
+/// * `rule_optouts` records rules the owner opted out of on this machine.
+/// * `circles` loses the per-node quorum policy (the rules of the vote now live in the
+///   charter and are the same for every member) and gains the owner's adoption mode and
+///   the digest of the charter the owner last accepted.
+const V2: &str = r#"
+ALTER TABLE circles DROP COLUMN policy_json;
+ALTER TABLE circles DROP COLUMN policy_hash;
+ALTER TABLE circles ADD COLUMN adoption_mode TEXT NOT NULL DEFAULT 'ask'
+    CHECK (adoption_mode IN ('follow', 'ask'));
+ALTER TABLE circles ADD COLUMN accepted_charter TEXT;
+
+CREATE TABLE charters (
+    circle_id    TEXT    NOT NULL REFERENCES circles(circle_id),
+    seq          INTEGER NOT NULL CHECK (seq >= 1),
+    digest       TEXT    NOT NULL UNIQUE,
+    charter_json TEXT    NOT NULL,
+    accepted_at  INTEGER NOT NULL,
+    PRIMARY KEY (circle_id, seq)
+) STRICT;
+
+CREATE TABLE rule_optouts (
+    circle_id    TEXT    NOT NULL REFERENCES circles(circle_id),
+    skill_name   TEXT    NOT NULL,
+    opted_out_at INTEGER NOT NULL,
+    PRIMARY KEY (circle_id, skill_name)
+) STRICT;
+"#;
+
 /// All migrations, in order. `MIGRATIONS[i]` moves from version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// Reads `PRAGMA user_version`.
 pub(crate) fn user_version(conn: &Connection) -> Result<u32> {

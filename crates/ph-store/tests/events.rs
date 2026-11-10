@@ -101,7 +101,9 @@ fn reference_queries() {
         HashSet::from([v1.event_id, v2.event_id])
     );
     assert!(votes.iter().all(|v| v.event_type == EventType::Vote));
-    assert!(votes.iter().any(|v| v.bundle_digest == Some(digest)));
+    // A ballot is bound to its proposal by id; only the adopt proposal indexes a bundle.
+    assert!(votes.iter().all(|v| v.bundle_digest.is_none()));
+    assert!(votes.iter().all(|v| v.ref_event_id == Some(p.event_id)));
     assert_eq!(
         ids(s.proposals(&circle()).unwrap()),
         HashSet::from([p.event_id, other_p.event_id])
@@ -110,7 +112,8 @@ fn reference_queries() {
         ids(s.proposals_with_bundle(&circle(), &digest).unwrap()),
         HashSet::from([p.event_id])
     );
-    assert!(s.releases_for_proposal(&p.event_id).unwrap().is_empty());
+    assert!(s.results_for_proposal(&p.event_id).unwrap().is_empty());
+    assert!(s.repeals_of(&p.event_id).unwrap().is_empty());
     assert!(s.votes_for_proposal(&q.event_id).unwrap().is_empty());
 }
 
@@ -168,19 +171,95 @@ fn list_events_filters() {
         )
         .unwrap();
     assert_eq!(limited.len(), 1);
-    let none_live = s
+    // Far in the future the questions have expired. The proposal has not: decision
+    // events are permanent records.
+    let still_live = s
         .list_events(
             &circle(),
             &EventFilter {
-                not_expired_at: Some(now().plus_days(400)),
+                not_expired_at: Some(now().plus_days(4000)),
                 ..Default::default()
             },
         )
         .unwrap();
-    assert!(none_live.is_empty());
+    assert_eq!(
+        still_live.iter().map(|e| e.event_id).collect::<Vec<_>>(),
+        vec![p.event_id]
+    );
+}
+
+/// A node that joins years later can still fetch the circle's decisions: PROPOSAL, VOTE
+/// and RESULT never expire, while a QUESTION does.
+#[test]
+fn decisions_are_served_long_after_questions_expired() {
+    let s = store_with_circle();
+    let digest = Digest::sha256(b"bundle");
+    let q = question(ALICE, "team/backend", "q", 1);
+    let p = proposal(ALICE, "team/backend", digest, 2);
+    let v = vote(BOB, "team/backend", p.event_id, digest, 3);
+    let r = in_circle(
+        circle(),
+        BOB,
+        "team/backend",
+        ph_protocol::EventBody::Result(ph_protocol::ResultBody::new(p.event_id, vec![v.event_id])),
+        4,
+    );
+    for e in [&q, &p, &v, &r] {
+        s.insert_signed_event(e, None, now()).unwrap();
+    }
+    let much_later = now().plus_days(3650);
+    let got = s
+        .missing_for_peer(
+            &MissingQuery::new(&circle(), &HashSet::new(), much_later),
+            readable,
+        )
+        .unwrap();
+    assert_eq!(
+        ids(got.events),
+        HashSet::from([p.event_id, v.event_id, r.event_id])
+    );
+    assert_eq!(
+        s.event_ids_for_circle(&circle(), much_later)
+            .unwrap()
+            .into_iter()
+            .collect::<HashSet<_>>(),
+        HashSet::from([p.event_id, v.event_id, r.event_id])
+    );
+}
+
+/// A circle-wide (`*`) decision concerns every member, so it is served whatever the
+/// requester's scopes are; a decision in a scope the requester cannot read is not.
+#[test]
+fn circle_wide_decisions_reach_every_member() {
+    let s = store_with_circle();
+    let digest = Digest::sha256(b"bundle");
+    let wide = proposal(ALICE, "*", digest, 1);
+    let wide_vote = vote(BOB, "*", wide.event_id, digest, 2);
+    let finance = proposal(ALICE, "team/finance", digest, 3);
+    let wide_question = question(ALICE, "*", "everyone?", 4);
+    for e in [&wide, &wide_vote, &finance, &wide_question] {
+        s.insert_signed_event(e, None, now()).unwrap();
+    }
+    // `readable` grants team/backend only.
+    let got = s
+        .missing_for_peer(
+            &MissingQuery::new(&circle(), &HashSet::new(), now()),
+            readable,
+        )
+        .unwrap();
+    assert_eq!(
+        ids(got.events),
+        HashSet::from([wide.event_id, wide_vote.event_id]),
+        "the `*` decisions, but neither the finance proposal nor the `*` question"
+    );
 }
 
 /// Scope `team/backend` is readable; `team/finance` is not.
+/// The event ids of `events`, as a set.
+fn ids(events: Vec<ph_store::StoredEvent>) -> HashSet<EventId> {
+    events.into_iter().map(|e| e.event_id).collect()
+}
+
 fn readable(sc: &Scope) -> bool {
     Scope::any_covers(&[scope("team/backend")], sc)
 }
@@ -661,7 +740,7 @@ fn resync_between_two_stores_is_idempotent() {
     assert_eq!(b.event_count(&circle()).unwrap(), 7);
 }
 
-/// A VOTE/ANSWER/RELEASE published in another circle that names this circle's
+/// A VOTE/ANSWER/RESULT published in another circle that names this circle's
 /// proposal or question is not returned by the reference queries.
 #[test]
 fn reference_queries_stay_in_the_target_circle() {
@@ -678,7 +757,6 @@ fn reference_queries_stay_in_the_target_circle() {
         "team/backend",
         ph_protocol::EventBody::Vote(ph_protocol::VoteBody {
             proposal_id: p.event_id,
-            bundle_digest: digest,
             decision: ph_protocol::VoteDecision::Approve,
             rationale: None,
         }),
@@ -695,22 +773,20 @@ fn reference_queries_stay_in_the_target_circle() {
         }),
         5,
     );
-    let foreign_release = in_circle(
+    let foreign_result = in_circle(
         other.circle_id,
         BOB,
         "team/backend",
-        ph_protocol::EventBody::Release(ph_protocol::ReleaseBody {
-            proposal_id: p.event_id,
-            bundle_digest: digest,
-            skill_name: "pnpm-repository-convention".into(),
-            approvals: vec![good_vote.event_id],
-        }),
+        ph_protocol::EventBody::Result(ph_protocol::ResultBody::new(
+            p.event_id,
+            vec![good_vote.event_id],
+        )),
         6,
     );
     // Votes arriving before their proposal are stored but not yet listed.
     s.insert_signed_event(&good_vote, None, now()).unwrap();
     assert!(s.votes_for_proposal(&p.event_id).unwrap().is_empty());
-    for e in [&p, &q, &foreign_vote, &foreign_answer, &foreign_release] {
+    for e in [&p, &q, &foreign_vote, &foreign_answer, &foreign_result] {
         s.insert_signed_event(e, None, now()).unwrap();
     }
     let votes = s.votes_for_proposal(&p.event_id).unwrap();
@@ -719,7 +795,27 @@ fn reference_queries_stay_in_the_target_circle() {
         vec![good_vote.event_id]
     );
     assert!(s.answers_for_question(&q.event_id).unwrap().is_empty());
-    assert!(s.releases_for_proposal(&p.event_id).unwrap().is_empty());
+    assert!(s.results_for_proposal(&p.event_id).unwrap().is_empty());
+    // A result published in the proposal's own circle is listed.
+    let own_result = in_circle(
+        circle(),
+        BOB,
+        "team/backend",
+        ph_protocol::EventBody::Result(ph_protocol::ResultBody::new(
+            p.event_id,
+            vec![good_vote.event_id],
+        )),
+        8,
+    );
+    s.insert_signed_event(&own_result, None, now()).unwrap();
+    assert_eq!(
+        s.results_for_proposal(&p.event_id)
+            .unwrap()
+            .iter()
+            .map(|e| e.event_id)
+            .collect::<Vec<_>>(),
+        vec![own_result.event_id]
+    );
     // An id that is a QUESTION, not a PROPOSAL, has no votes even if one names it.
     let odd_vote = vote(CAROL, "team/backend", q.event_id, digest, 7);
     s.insert_signed_event(&odd_vote, None, now()).unwrap();

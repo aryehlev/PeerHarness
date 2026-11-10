@@ -1,21 +1,23 @@
 //! Shared fixtures: a small in-memory `MembershipOracle` built only from real, verified
-//! ph-protocol credentials, acceptances and revocations, plus event builders.
+//! ph-protocol credentials, acceptances and revocations; an in-memory
+//! `DecisionRecords`; charters signed by the test root key; and event builders.
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use ph_core::{
     roles_grant, Capability, CircleId, DenyReason, DeviceKey, Digest, EventId, MembershipOracle,
     Nonce, Role, Scope, Timestamp,
 };
-use ph_governance::{ProposalView, ReleaseView, VoteView};
+use ph_governance::{DecisionRecords, ProposalView, ResultView, VoteView};
 use ph_protocol::{
-    validate_stateless, verify_credential_signature, verify_membership_proof, verify_revocation,
-    AnswerBody, AnswerChoice, EnvelopeBuilder, EventBody, MembershipBody, MembershipCredential,
-    MembershipProof, ProposalBody, QuestionBody, ReleaseBody, Revocation, RevocationBody,
-    SignedEnvelope, SigningKey, UnsignedAcceptance, UnsignedMembershipCredential,
-    UnsignedRevocation, VerifiedEnvelope, VoteBody, VoteDecision,
+    validate_stateless, verify_credential_signature, verify_membership_proof,
+    verify_revocation_signature, AdoptAction, AnswerBody, AnswerChoice, Charter, CharterBody,
+    CharterContent, CharterRules, EnvelopeBuilder, EventBody, MembershipBody, MembershipCredential,
+    MembershipProof, ProposalAction, ProposalBody, QuestionBody, ResultBody, Revocation,
+    RevocationBody, RollEntry, SignedEnvelope, SigningKey, UnsignedAcceptance, UnsignedCharter,
+    UnsignedMembershipCredential, UnsignedRevocation, VerifiedEnvelope, VoteBody, VoteDecision,
 };
 
 pub fn sk(seed: u8) -> SigningKey {
@@ -77,9 +79,12 @@ impl TestOracle {
         true
     }
 
-    /// Applies a revocation only if it verifies and was issued by the circle root.
-    pub fn revoke(&self, rev: &Revocation, at: Timestamp) -> bool {
-        if verify_revocation(rev, at).is_err() || !rev.circle_id.is_derived_from(&rev.issuer_key) {
+    /// Applies a revocation only if it verifies and was issued by the circle root. A
+    /// revocation only ever denies, so no time rule applies (`_at` is unused).
+    pub fn revoke(&self, rev: &Revocation, _at: Timestamp) -> bool {
+        if verify_revocation_signature(rev).is_err()
+            || !rev.circle_id.is_derived_from(&rev.issuer_key)
+        {
             return false;
         }
         self.revoked
@@ -154,6 +159,10 @@ impl MembershipOracle for TestOracle {
         } else {
             Err(DenyReason::CapabilityDenied)
         }
+    }
+
+    fn is_revoked(&self, circle: &CircleId, key: &DeviceKey) -> bool {
+        TestOracle::is_revoked(self, circle, key)
     }
 
     fn is_active_member(&self, circle: &CircleId, key: &DeviceKey, now: Timestamp) -> bool {
@@ -274,37 +283,198 @@ pub fn answer_env(seed: u8, scope_s: &str, question_id: EventId) -> SignedEnvelo
     )
 }
 
-pub fn proposal_body(skill: &str, d: Digest) -> ProposalBody {
-    ProposalBody {
-        skill_name: skill.into(),
-        description: "Use pnpm when installing packages in this repository.".into(),
-        title: "pnpm repository convention".into(),
-        bundle_digest: d,
-        bundle_size: 321,
-        related_question: None,
-        supersedes: None,
-        provenance_summary: "Corrected twice in local sessions".into(),
-    }
-}
+// ---------------------------------------------------------------------------------------
+// Charters
+// ---------------------------------------------------------------------------------------
 
-pub fn proposal_env(seed: u8, scope_s: &str, skill: &str, d: Digest) -> SignedEnvelope {
-    sign_at(
-        &sk(seed),
-        circle(),
-        scope_s,
-        EventBody::Proposal(proposal_body(skill, d)),
-        now().minus_secs(3600),
+/// A roll entry: member `name`, devices from `seeds`, scopes from `scopes`.
+pub fn entry(name: &str, seeds: &[u8], scopes: &[&str]) -> RollEntry {
+    RollEntry::new(
+        name,
+        seeds.iter().map(|s| pk(*s)).collect(),
+        scopes.iter().map(|s| scope(s)).collect(),
     )
 }
 
-pub fn proposal(seed: u8, scope_s: &str, d: Digest) -> ProposalView {
-    ProposalView::from_envelope(&proposal_env(
-        seed,
+/// Charter content with default rules (majority to pass, two thirds to change the
+/// rules, binding), the given roll and nothing carried.
+pub fn content(roll: Vec<RollEntry>) -> CharterContent {
+    let mut c = CharterContent {
+        rules: CharterRules::default(),
+        roll,
+        carried: Vec::new(),
+    };
+    c.normalize();
+    c
+}
+
+/// A founding charter (seq 1) of the default circle, signed by the test root key.
+pub fn founding(roll: Vec<RollEntry>) -> Charter {
+    founding_with(content(roll))
+}
+
+pub fn founding_with(content: CharterContent) -> Charter {
+    UnsignedCharter::founding(pk(ROOT), content, now().minus_secs(7200))
+        .sign(&root())
+        .unwrap()
+}
+
+/// The usual three-member circle: alice (device 1), bob (device 2), carol (device 3),
+/// all with scope `*`.
+pub fn abc() -> Charter {
+    founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["*"]),
+        entry("carol", &[3], &["*"]),
+    ])
+}
+
+/// The successor of `current` with `next` as content, justified by `result`, signed by
+/// the test root key.
+pub fn successor(current: &Charter, next: CharterContent, result: EventId) -> Charter {
+    UnsignedCharter::successor(current, next, result, now())
+        .unwrap()
+        .sign(&root())
+        .unwrap()
+}
+
+pub fn charter_env(author: &SigningKey, charter: &Charter) -> SignedEnvelope {
+    EnvelopeBuilder::new(
+        charter.circle_id,
+        Scope::all(),
+        EventBody::Charter(CharterBody {
+            charter: charter.clone(),
+        }),
+    )
+    .sign(author, now())
+    .unwrap()
+}
+
+/// In-memory `DecisionRecords`.
+#[derive(Default)]
+pub struct TestRecords {
+    charters: HashMap<Digest, Charter>,
+    proposals: HashMap<EventId, SignedEnvelope>,
+}
+
+impl TestRecords {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_charter(mut self, c: &Charter) -> Self {
+        self.add_charter(c);
+        self
+    }
+    pub fn add_charter(&mut self, c: &Charter) {
+        self.charters.insert(c.digest().unwrap(), c.clone());
+    }
+    pub fn add_proposal(&mut self, p: &ProposalView) {
+        self.proposals.insert(p.event_id(), p.envelope().clone());
+    }
+    pub fn with_proposal(mut self, p: &ProposalView) -> Self {
+        self.add_proposal(p);
+        self
+    }
+}
+
+impl DecisionRecords for TestRecords {
+    fn charter(&self, circle: &CircleId, digest: &Digest) -> Option<Charter> {
+        self.charters
+            .get(digest)
+            .filter(|c| &c.circle_id == circle)
+            .cloned()
+    }
+    fn proposal(&self, circle: &CircleId, id: &EventId) -> Option<SignedEnvelope> {
+        self.proposals
+            .get(id)
+            .filter(|p| &p.circle_id == circle)
+            .cloned()
+    }
+}
+
+pub fn nobody_revoked(_: &DeviceKey) -> bool {
+    false
+}
+
+// ---------------------------------------------------------------------------------------
+// Decision events
+// ---------------------------------------------------------------------------------------
+
+pub const SKILL: &str = "pnpm-repository-convention";
+
+pub fn adopt_body(charter: &Charter, skill: &str, d: Digest) -> ProposalBody {
+    ProposalBody {
+        charter: charter.digest().unwrap(),
+        title: "pnpm repository convention".into(),
+        summary: "Corrected twice in local sessions".into(),
+        action: ProposalAction::Adopt(AdoptAction {
+            skill_name: skill.into(),
+            description: "Use pnpm when installing packages in this repository.".into(),
+            bundle_digest: d,
+            bundle_size: 321,
+            related_question: None,
+            supersedes: None,
+        }),
+    }
+}
+
+pub fn proposal_from(seed: u8, scope_s: &str, body: ProposalBody, at: Timestamp) -> ProposalView {
+    ProposalView::from_envelope(&sign_at(
+        &sk(seed),
+        circle(),
         scope_s,
-        "pnpm-repository-convention",
-        d,
+        EventBody::Proposal(body),
+        at,
     ))
     .unwrap()
+}
+
+/// An `adopt` proposal for [`SKILL`] under `charter`, by device `seed`.
+pub fn adopt(seed: u8, charter: &Charter, scope_s: &str, d: Digest) -> ProposalView {
+    adopt_named(seed, charter, scope_s, SKILL, d, now().minus_secs(3600))
+}
+
+pub fn adopt_named(
+    seed: u8,
+    charter: &Charter,
+    scope_s: &str,
+    skill: &str,
+    d: Digest,
+    at: Timestamp,
+) -> ProposalView {
+    proposal_from(seed, scope_s, adopt_body(charter, skill, d), at)
+}
+
+/// A `repeal` proposal targeting `target`, in the target's scope.
+pub fn repeal(seed: u8, charter: &Charter, target: &ProposalView) -> ProposalView {
+    proposal_from(
+        seed,
+        target.scope().as_str(),
+        ProposalBody {
+            charter: charter.digest().unwrap(),
+            title: "Drop the rule".into(),
+            summary: String::new(),
+            action: ProposalAction::Repeal {
+                target: target.event_id(),
+            },
+        },
+        now().minus_secs(1800),
+    )
+}
+
+/// An `amend` proposal under `charter` proposing `next`.
+pub fn amend(seed: u8, charter: &Charter, next: CharterContent) -> ProposalView {
+    proposal_from(
+        seed,
+        "*",
+        ProposalBody {
+            charter: charter.digest().unwrap(),
+            title: "Amend the charter".into(),
+            summary: String::new(),
+            action: ProposalAction::Amend { next },
+        },
+        now().minus_secs(1800),
+    )
 }
 
 pub fn vote_env_for(
@@ -319,7 +489,6 @@ pub fn vote_env_for(
         p.scope().as_str(),
         EventBody::Vote(VoteBody {
             proposal_id: p.event_id(),
-            bundle_digest: p.bundle_digest(),
             decision,
             rationale: Some("looks right".into()),
         }),
@@ -335,23 +504,27 @@ pub fn vote_at(seed: u8, p: &ProposalView, decision: VoteDecision, at: Timestamp
     VoteView::from_envelope(&vote_env_for(seed, p, decision, at)).unwrap()
 }
 
-pub fn release_env(seed: u8, p: &ProposalView, approvals: Vec<EventId>) -> SignedEnvelope {
+pub fn approve(seed: u8, p: &ProposalView) -> VoteView {
+    vote(seed, p, VoteDecision::Approve)
+}
+
+pub fn result_env(seed: u8, p: &ProposalView, approvals: Vec<EventId>) -> SignedEnvelope {
     sign_at(
         &sk(seed),
         p.circle_id(),
         p.scope().as_str(),
-        EventBody::Release(ReleaseBody {
-            proposal_id: p.event_id(),
-            bundle_digest: p.bundle_digest(),
-            skill_name: p.skill_name().into(),
-            approvals,
-        }),
+        EventBody::Result(ResultBody::new(p.event_id(), approvals)),
         now(),
     )
 }
 
-pub fn release(seed: u8, p: &ProposalView, approvals: Vec<EventId>) -> ReleaseView {
-    ReleaseView::from_envelope(&release_env(seed, p, approvals)).unwrap()
+pub fn result(seed: u8, p: &ProposalView, approvals: Vec<EventId>) -> ResultView {
+    ResultView::from_envelope(&result_env(seed, p, approvals)).unwrap()
+}
+
+/// The RESULT a member publishes once `votes` carry `p` over its threshold.
+pub fn result_of(seed: u8, p: &ProposalView, votes: &[VoteView]) -> ResultView {
+    result(seed, p, votes.iter().map(|v| v.event_id()).collect())
 }
 
 pub fn membership_env(seed: u8, proof: &MembershipProof, scope_s: &str) -> SignedEnvelope {

@@ -1,12 +1,17 @@
 //! Read authorization: which peers may receive which events (spec 5.3, 6.4; architecture
 //! section 7).
 //!
-//! * Knowledge-plane events (QUESTION, ANSWER, PROPOSAL, VOTE, RELEASE) are readable by
-//!   a peer iff the oracle grants it `read` on the event scope in the event's circle at
-//!   `now`.
-//! * Control-plane events (MEMBERSHIP, REVOCATION) are readable by every **active
-//!   member** of that circle (`oracle.is_active_member`), regardless of scope, so that
-//!   revocations and memberships propagate to everyone who must enforce them.
+//! * QUESTION and ANSWER events, and decision events (PROPOSAL, VOTE, RESULT) with a
+//!   scope other than `*`, are readable by a peer iff the oracle grants it `read` on the
+//!   event scope in the event's circle at `now`.
+//! * Control-plane events (MEMBERSHIP, REVOCATION, CHARTER) are readable by every
+//!   **active member** of that circle (`oracle.is_active_member`), regardless of scope,
+//!   so that revocations, memberships and the charter reach everyone who must enforce
+//!   them.
+//! * Decision events with scope `*` are readable by every active member too. A `*`
+//!   proposal concerns the whole circle and its electorate is the whole roll
+//!   (architecture section 10.3); every `amend` proposal is one. Members could not vote
+//!   on what they cannot read.
 //!
 //! Use [`recipients_for_event`] (or [`recipients`]) to filter outgoing pushes and the
 //! outbox, [`filter_readable`] to filter `FetchEvents` responses, and
@@ -33,15 +38,17 @@ pub fn may_read(
     oracle.authorize_read(circle, peer, scope, now).is_ok()
 }
 
-/// Whether `peer` may read `env` at `now`: control-plane events need active membership
-/// in the event's circle, all others need [`may_read`] on the event scope.
+/// Whether `peer` may read `env` at `now`: control-plane events and circle-wide (`*`)
+/// decision events need active membership in the event's circle, all others need
+/// [`may_read`] on the event scope.
 pub fn may_read_event(
     oracle: &dyn MembershipOracle,
     env: &SignedEnvelope,
     peer: &DeviceKey,
     now: Timestamp,
 ) -> bool {
-    if env.event_type().is_control_plane() {
+    let t = env.event_type();
+    if t.is_control_plane() || (t.is_decision() && env.scope.is_wildcard()) {
         oracle.is_active_member(&env.circle_id, peer, now)
     } else {
         may_read(oracle, &env.circle_id, peer, &env.scope, now)
@@ -104,9 +111,9 @@ where
 }
 
 /// For a `FetchBundle { circle_id, digest }` request from `peer`: `true` iff one of the
-/// stored `proposals` is in `circle`, has `bundle_digest == digest`, and has a scope
-/// `peer` may read now. The caller passes the stored proposals with that digest (passing
-/// more is harmless).
+/// stored `proposals` is an `adopt` proposal in `circle` with `bundle_digest == digest`
+/// that `peer` may read now ([`may_read_event`]). The caller passes the stored proposals
+/// with that digest (passing more is harmless).
 pub fn may_fetch_bundle(
     circle: &CircleId,
     digest: &Digest,
@@ -117,7 +124,7 @@ pub fn may_fetch_bundle(
 ) -> bool {
     proposals.iter().any(|p| {
         &p.circle_id() == circle
-            && &p.bundle_digest() == digest
-            && may_read(oracle, circle, peer, p.scope(), now)
+            && p.bundle_digest().as_ref() == Some(digest)
+            && may_read_event(oracle, p.envelope(), peer, now)
     })
 }

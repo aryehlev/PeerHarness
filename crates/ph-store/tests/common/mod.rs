@@ -3,9 +3,10 @@
 
 use ph_core::{CircleId, DeviceKey, Digest, EventId, Nonce, Role, Scope, Timestamp};
 use ph_protocol::{
-    validate_stateless, Acceptance, AnswerBody, AnswerChoice, EnvelopeBuilder, EventBody,
-    MembershipBody, MembershipCredential, MembershipProof, ProposalBody, QuestionBody, Revocation,
-    RevocationBody, SignedEnvelope, SigningKey, UnsignedAcceptance, UnsignedMembershipCredential,
+    validate_stateless, Acceptance, AdoptAction, AnswerBody, AnswerChoice, Charter, CharterContent,
+    EnvelopeBuilder, EventBody, MembershipBody, MembershipCredential, MembershipProof,
+    ProposalAction, ProposalBody, QuestionBody, Revocation, RevocationBody, RollEntry,
+    SignedEnvelope, SigningKey, UnsignedAcceptance, UnsignedCharter, UnsignedMembershipCredential,
     UnsignedRevocation, VerifiedEnvelope, VoteBody, VoteDecision,
 };
 use ph_store::{CircleRow, Store};
@@ -42,8 +43,8 @@ pub fn circle_row() -> CircleRow {
         root_key: pk(ROOT),
         is_founder: true,
         root_keystore_ref: Some("file:keys/root-acme.key".into()),
-        policy_json: r#"{"min_approvals":2}"#.into(),
-        policy_hash: Digest::sha256(b"policy"),
+        adoption_mode: "ask".into(),
+        accepted_charter: None,
         created_at: now(),
     }
 }
@@ -147,27 +148,50 @@ pub fn proposal(author: u8, sc: &str, digest: Digest, nonce: u8) -> SignedEnvelo
         author,
         sc,
         EventBody::Proposal(ProposalBody {
-            skill_name: "pnpm-repository-convention".into(),
-            description: "Use pnpm.".into(),
+            charter: charter_digest(),
             title: "pnpm".into(),
-            bundle_digest: digest,
-            bundle_size: 10,
-            related_question: None,
-            supersedes: None,
-            provenance_summary: "corrected twice".into(),
+            summary: "corrected twice".into(),
+            action: ProposalAction::Adopt(AdoptAction {
+                skill_name: "pnpm-repository-convention".into(),
+                description: "Use pnpm.".into(),
+                bundle_digest: digest,
+                bundle_size: 10,
+                related_question: None,
+                supersedes: None,
+            }),
         }),
         nonce,
         now(),
     )
 }
 
-pub fn vote(author: u8, sc: &str, p: EventId, digest: Digest, nonce: u8) -> SignedEnvelope {
+/// The founding charter of the test circle: alice, bob and carol, all with scope `*`.
+pub fn charter() -> Charter {
+    let mut content =
+        CharterContent::founding(RollEntry::new("alice", vec![pk(ALICE)], vec![Scope::all()]));
+    for (name, seed) in [("bob", BOB), ("carol", CAROL)] {
+        content
+            .roll
+            .push(RollEntry::new(name, vec![pk(seed)], vec![Scope::all()]));
+    }
+    content.normalize();
+    UnsignedCharter::founding(pk(ROOT), content, now())
+        .sign(&sk(ROOT))
+        .unwrap()
+}
+
+pub fn charter_digest() -> Digest {
+    charter().digest().unwrap()
+}
+
+/// A ballot. `_digest` is accepted and ignored: a ballot is bound to the proposal by
+/// its id alone.
+pub fn vote(author: u8, sc: &str, p: EventId, _digest: Digest, nonce: u8) -> SignedEnvelope {
     sign(
         author,
         sc,
         EventBody::Vote(VoteBody {
             proposal_id: p,
-            bundle_digest: digest,
             decision: VoteDecision::Approve,
             rationale: None,
         }),

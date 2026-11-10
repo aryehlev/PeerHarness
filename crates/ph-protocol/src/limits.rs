@@ -29,14 +29,11 @@ pub mod lifetimes {
     pub const QUESTION_SECS: i64 = 30 * 86_400;
     /// ANSWER: 30 days.
     pub const ANSWER_SECS: i64 = 30 * 86_400;
-    /// PROPOSAL: 90 days.
-    pub const PROPOSAL_SECS: i64 = 90 * 86_400;
-    /// VOTE: 90 days.
-    pub const VOTE_SECS: i64 = 90 * 86_400;
-    /// RELEASE: 365 days.
-    pub const RELEASE_SECS: i64 = 365 * 86_400;
-    /// REVOCATION: 365 days.
-    pub const REVOCATION_SECS: i64 = 365 * 86_400;
+    /// PROPOSAL, VOTE, RESULT, CHARTER and REVOCATION are permanent records
+    /// (architecture section 10.11): receivers never enforce their `expires_at`. The
+    /// envelope schema still requires the member, so builders set the longest lifetime
+    /// the schema allows, 400 days.
+    pub const PERMANENT_SECS: i64 = super::MAX_EVENT_LIFETIME_SECS;
     /// Default invite validity: 24 hours.
     pub const INVITE_SECS: i64 = 86_400;
     /// Default credential validity: 30 days.
@@ -55,16 +52,29 @@ pub mod text {
     pub const DESCRIPTION: usize = 1024;
     /// PROPOSAL `title`.
     pub const TITLE: usize = 200;
-    /// PROPOSAL `provenance_summary`.
-    pub const PROVENANCE_SUMMARY: usize = 1000;
+    /// PROPOSAL `summary`.
+    pub const SUMMARY: usize = 1000;
     /// REVOCATION `reason`.
     pub const REVOCATION_REASON: usize = 200;
     /// INVITE `circle_name`.
     pub const CIRCLE_NAME: usize = 64;
 }
 
-/// Maximum approvals listed in a RELEASE.
-pub const MAX_RELEASE_APPROVALS: usize = 64;
+/// Maximum approvals listed in a RESULT. A roll has at most [`MAX_ROLL_MEMBERS`]
+/// members, so every threshold can be evidenced.
+pub const MAX_RESULT_APPROVALS: usize = 64;
+/// Maximum members on a charter's roll.
+pub const MAX_ROLL_MEMBERS: usize = 64;
+/// Maximum device keys per member.
+pub const MAX_MEMBER_DEVICES: usize = 4;
+/// Maximum scopes per member.
+pub const MAX_MEMBER_SCOPES: usize = 16;
+/// Maximum length of a member handle, in bytes.
+pub const MAX_MEMBER_NAME_BYTES: usize = 32;
+/// Maximum rules a charter carries over from its predecessor.
+pub const MAX_CARRIED_RULES: usize = 256;
+/// Largest denominator of a voting threshold.
+pub const MAX_THRESHOLD_DEN: u32 = 100;
 /// Maximum scopes in a credential.
 pub const MAX_CREDENTIAL_SCOPES: usize = 16;
 /// Maximum roles in a credential (each role at most once).

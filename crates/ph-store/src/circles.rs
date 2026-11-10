@@ -12,8 +12,9 @@ use crate::error::{Result, StoreError};
 use crate::sql;
 use crate::Store;
 
-/// Maximum size of a stored circle policy document.
-pub const MAX_POLICY_JSON_BYTES: usize = 16 * 1024;
+/// The values of `circles.adoption_mode`: install passed rules without asking
+/// (`"follow"`) or ask the owner first (`"ask"`). See architecture section 10.9.
+pub const ADOPTION_MODES: [&str; 2] = ["follow", "ask"];
 
 /// A circle row.
 #[derive(Clone, PartialEq, Eq, Serialize)]
@@ -28,10 +29,11 @@ pub struct CircleRow {
     pub is_founder: bool,
     /// Keystore reference of the root private key (founder only; never key bytes).
     pub root_keystore_ref: Option<String>,
-    /// Circle policy document (JSON text owned by ph-governance).
-    pub policy_json: String,
-    /// Hash of the policy, as computed by ph-governance.
-    pub policy_hash: Digest,
+    /// The owner's standing decision about rules that pass in this circle, one of
+    /// [`ADOPTION_MODES`].
+    pub adoption_mode: String,
+    /// Digest of the charter the owner was last shown and accepted (`None` until then).
+    pub accepted_charter: Option<Digest>,
     /// When the row was created locally.
     pub created_at: Timestamp,
 }
@@ -43,14 +45,15 @@ impl fmt::Debug for CircleRow {
             .field("name_len", &self.name.len())
             .field("root_key", &self.root_key)
             .field("is_founder", &self.is_founder)
-            .field("policy_hash", &self.policy_hash)
+            .field("adoption_mode", &self.adoption_mode)
+            .field("accepted_charter", &self.accepted_charter)
             .field("created_at", &self.created_at)
             .finish_non_exhaustive()
     }
 }
 
-const COLS: &str = "circle_id, name, root_key, is_founder, root_keystore_ref, policy_json, \
-                    policy_hash, created_at";
+const COLS: &str = "circle_id, name, root_key, is_founder, root_keystore_ref, adoption_mode, \
+                    accepted_charter, created_at";
 
 fn row(r: &Row<'_>) -> rusqlite::Result<CircleRow> {
     Ok(CircleRow {
@@ -59,8 +62,8 @@ fn row(r: &Row<'_>) -> rusqlite::Result<CircleRow> {
         root_key: sql::parse(r, 2, "root key")?,
         is_founder: sql::flag(r, 3)?,
         root_keystore_ref: r.get(4)?,
-        policy_json: r.get(5)?,
-        policy_hash: sql::parse(r, 6, "policy hash")?,
+        adoption_mode: r.get(5)?,
+        accepted_charter: sql::parse_opt(r, 6, "charter digest")?,
         created_at: sql::ts(r, 7)?,
     })
 }
@@ -71,8 +74,8 @@ impl Store {
     /// # Errors
     ///
     /// [`StoreError::Mismatch`] if `circle_id != CircleId::derive(root_key)`,
-    /// [`StoreError::Invalid`] for a bad name (1-64 chars, single line) or oversized
-    /// policy, [`StoreError::AlreadyExists`] if the id or the name is taken.
+    /// [`StoreError::Invalid`] for a bad name (1-64 chars, single line) or an unknown
+    /// adoption mode, [`StoreError::AlreadyExists`] if the id or the name is taken.
     pub fn insert_circle(&self, c: &CircleRow) -> Result<()> {
         if !c.circle_id.is_derived_from(&c.root_key) {
             return Err(StoreError::Mismatch {
@@ -81,9 +84,7 @@ impl Store {
         }
         check_text("circle name", &c.name, 1, CIRCLE_NAME, Lines::Single)
             .map_err(|_| StoreError::invalid("circle name", "expected 1-64 characters"))?;
-        if c.policy_json.len() > MAX_POLICY_JSON_BYTES {
-            return Err(StoreError::invalid("circle policy", "too large"));
-        }
+        check_adoption_mode(&c.adoption_mode)?;
         if let Some(r) = &c.root_keystore_ref {
             sql::check_short("root keystore reference", r, 1024)?;
         }
@@ -95,8 +96,8 @@ impl Store {
                 c.root_key.to_string(),
                 sql::b(c.is_founder),
                 c.root_keystore_ref,
-                c.policy_json,
-                c.policy_hash.to_string(),
+                c.adoption_mode,
+                c.accepted_charter.as_ref().map(ToString::to_string),
                 c.created_at.unix_seconds()
             ],
         );
@@ -142,23 +143,36 @@ impl Store {
         Ok(rows)
     }
 
-    /// Replaces a circle's policy document and hash.
-    pub fn set_circle_policy(
+    /// Records the owner's adoption mode for a circle and the digest of the charter the
+    /// owner was shown and accepted when choosing it.
+    ///
+    /// Only call this after an explicit human confirmation: `"follow"` lets rules that
+    /// pass in the circle be installed without asking (architecture section 10.9).
+    pub fn set_circle_adoption(
         &self,
         id: &CircleId,
-        policy_json: &str,
-        policy_hash: &Digest,
+        adoption_mode: &str,
+        accepted_charter: &Digest,
     ) -> Result<()> {
-        if policy_json.len() > MAX_POLICY_JSON_BYTES {
-            return Err(StoreError::invalid("circle policy", "too large"));
-        }
+        check_adoption_mode(adoption_mode)?;
         let n = self.conn.execute(
-            "UPDATE circles SET policy_json = ?2, policy_hash = ?3 WHERE circle_id = ?1",
-            params![id.to_string(), policy_json, policy_hash.to_string()],
+            "UPDATE circles SET adoption_mode = ?2, accepted_charter = ?3 WHERE circle_id = ?1",
+            params![id.to_string(), adoption_mode, accepted_charter.to_string()],
         )?;
         if n == 0 {
             return Err(StoreError::NotFound { what: "circle" });
         }
         Ok(())
+    }
+}
+
+fn check_adoption_mode(mode: &str) -> Result<()> {
+    if ADOPTION_MODES.contains(&mode) {
+        Ok(())
+    } else {
+        Err(StoreError::invalid(
+            "adoption mode",
+            "expected follow or ask",
+        ))
     }
 }

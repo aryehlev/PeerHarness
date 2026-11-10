@@ -76,6 +76,15 @@ pub trait MembershipOracle: Send + Sync {
     /// `circle`, regardless of scope and capability.
     fn is_active_member(&self, circle: &CircleId, key: &DeviceKey, now: Timestamp) -> bool;
 
+    /// Whether the local state holds a verified revocation of `key` in `circle`.
+    ///
+    /// This is independent of whether any credential for `key` is known: a key that was
+    /// revoked before this node ever saw its credential still reports `true`, so a later
+    /// MEMBERSHIP republish by that key can be refused. Revocations are permanent in v0
+    /// and take no time argument. Unknown circles and keys report `false` (callers must
+    /// still deny them through [`MembershipOracle::authorize`]).
+    fn is_revoked(&self, circle: &CircleId, key: &DeviceKey) -> bool;
+
     /// Shorthand for `authorize(.., Capability::Read, ..)`.
     fn authorize_read(
         &self,
@@ -106,6 +115,11 @@ impl MembershipOracle for DenyAllOracle {
     }
 
     fn is_active_member(&self, _circle: &CircleId, _key: &DeviceKey, _now: Timestamp) -> bool {
+        false
+    }
+
+    /// Always `false`: this oracle holds no state (and already denies everything).
+    fn is_revoked(&self, _circle: &CircleId, _key: &DeviceKey) -> bool {
         false
     }
 }
@@ -142,5 +156,6 @@ mod tests {
             Err(DenyReason::NotMember)
         );
         assert!(!o.is_active_member(&circle, &key, now));
+        assert!(!o.is_revoked(&circle, &key));
     }
 }

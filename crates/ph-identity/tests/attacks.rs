@@ -334,10 +334,11 @@ fn forged_and_foreign_revocations_rejected() {
             MembershipRejection::IssuerNotRoot
         ))
     ));
-    // A member (even an owner) cannot author a valid revocation in v0.
+    // A member (even an owner) cannot author a valid revocation in v0: signed by Bob it
+    // binds to Bob's own derived circle, not ours.
     let member_signed = UnsignedRevocation::new(
         bob.public(),
-        bob.public(),
+        other.root_key(),
         now,
         String::new(),
         ph_core::Nonce::from_bytes([8; 16]),
@@ -346,17 +347,35 @@ fn forged_and_foreign_revocations_rejected() {
     .unwrap();
     assert!(reg.add_revocation(member_signed, now).is_err());
     assert!(!reg.is_revoked(&c, &bob.public()));
+    // A key cannot revoke itself (ph-protocol refuses to sign it), and the circle root
+    // revoking itself is refused too.
+    assert!(UnsignedRevocation::new(
+        bob.public(),
+        bob.public(),
+        now,
+        String::new(),
+        ph_core::Nonce::from_bytes([8; 16]),
+    )
+    .sign(bob.signing_key())
+    .is_err());
+    assert!(auth.issue_revocation(auth.root_key(), "", now).is_err());
 
-    // Far-future-dated revocations are refused now (beyond the clock-skew allowance).
+    // A revocation dated ahead of this node's clock (the founder's clock runs fast) is
+    // accepted at once. A revocation only ever denies; refusing it would leave the
+    // device trusted here until someone pushed it again.
     let future = auth
         .issue_revocation(bob.public(), "", now.plus_secs(3600))
         .unwrap();
-    assert!(reg.add_revocation(future.clone(), now).is_err());
     assert_eq!(
-        reg.add_revocation(future, now.plus_secs(3600)).unwrap(),
+        reg.add_revocation(future.clone(), now).unwrap(),
         AddOutcome::Added
     );
     assert!(reg.is_revoked(&c, &bob.public()));
+    // And it survives a reload after the local clock stepped back a day.
+    assert_eq!(
+        reg.add_revocation(future, now.minus_secs(86_400)).unwrap(),
+        AddOutcome::Duplicate
+    );
 }
 
 #[test]

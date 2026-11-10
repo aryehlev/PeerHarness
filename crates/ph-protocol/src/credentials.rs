@@ -564,13 +564,23 @@ impl Acceptance {
     }
 }
 
-/// Verifies that `acc` accepts `cred`: signed by `cred.subject_device_key`, same
-/// subject and circle, `credential_digest == cred.digest()`, and
+/// Verifies that `acc` accepts `cred` at `now`: [`verify_acceptance_signature`] plus
 /// `accepted_at <= now + skew`. Does not verify `cred` itself.
 pub fn verify_acceptance(
     acc: &Acceptance,
     cred: &MembershipCredential,
     now: Timestamp,
+) -> Result<(), ProtocolError> {
+    verify_acceptance_signature(acc, cred)?;
+    not_future("acceptance", acc.accepted_at, now)
+}
+
+/// Verifies that `acc` accepts `cred`, without time rules (for acceptances loaded from
+/// local storage): same subject and circle, `credential_digest == cred.digest()`, and a
+/// valid signature by `cred.subject_device_key`. Does not verify `cred` itself.
+pub fn verify_acceptance_signature(
+    acc: &Acceptance,
+    cred: &MembershipCredential,
 ) -> Result<(), ProtocolError> {
     if acc.subject_device_key != cred.subject_device_key {
         return Err(ProtocolError::Mismatch {
@@ -592,8 +602,7 @@ pub fn verify_acceptance(
         &acc.subject_device_key,
         &acc.signing_input()?,
         &acc.signature,
-    )?;
-    not_future("acceptance", acc.accepted_at, now)
+    )
 }
 
 /// A credential together with its acceptance, as carried in MEMBERSHIP events and in
@@ -782,7 +791,10 @@ impl UnsignedRevocation {
         Ok(signing::digest_of_input(&self.signing_input()?))
     }
 
-    /// Checks `reason` bounds and the circle/issuer binding.
+    /// Checks `reason` bounds, the circle/issuer binding, and that the subject is not
+    /// the issuer: the circle root holds no credential and cannot be revoked in v0 (a
+    /// compromised root means a new circle), so a root self-revocation is malformed.
+    /// Revoking the founder's **device** key (a different key) is allowed.
     pub fn check_structure(&self) -> Result<(), ProtocolError> {
         check_text(
             "reason",
@@ -795,6 +807,12 @@ impl UnsignedRevocation {
             return Err(ProtocolError::Mismatch {
                 what: "revocation circle_id and issuer_key",
             });
+        }
+        if self.subject_device_key == self.issuer_key {
+            return Err(ProtocolError::field(
+                "subject_device_key",
+                "the circle root cannot revoke itself",
+            ));
         }
         Ok(())
     }
@@ -828,16 +846,24 @@ impl Revocation {
     }
 }
 
-/// Verifies a revocation: `reason` bounded, `circle_id == derive(issuer_key)`, a valid
-/// signature by `issuer_key`, and `revoked_at <= now + skew`.
-pub fn verify_revocation(rev: &Revocation, now: Timestamp) -> Result<(), ProtocolError> {
+/// Checks a revocation's structure and signature, without time rules (for revocations
+/// loaded from local storage): `reason` bounded, `circle_id == derive(issuer_key)`,
+/// `subject_device_key != issuer_key` (the root cannot revoke itself), and a valid
+/// signature by `issuer_key`.
+pub fn verify_revocation_signature(rev: &Revocation) -> Result<(), ProtocolError> {
     rev.check_structure()?;
     signing::verify_input(
         Context::Revocation,
         &rev.issuer_key,
         &rev.signing_input()?,
         &rev.signature,
-    )?;
+    )
+}
+
+/// Verifies a revocation at `now`: [`verify_revocation_signature`] plus
+/// `revoked_at <= now + skew`.
+pub fn verify_revocation(rev: &Revocation, now: Timestamp) -> Result<(), ProtocolError> {
+    verify_revocation_signature(rev)?;
     not_future("revocation", rev.revoked_at, now)
 }
 
@@ -1279,6 +1305,11 @@ mod tests {
         let mut m = a.clone();
         m.unsigned.accepted_at = t0();
         assert!(verify_acceptance(&m, &c, t0()).is_err());
+        assert!(verify_acceptance_signature(&m, &c).is_err());
+        assert!(verify_acceptance_signature(&a, &other).is_err());
+        // the signature-only check ignores time; the full check does not
+        verify_acceptance_signature(&a, &c).unwrap();
+        assert!(verify_acceptance(&a, &c, t0().minus_secs(3600)).is_err());
         assert_eq!(
             Acceptance::from_json_bytes(a.to_canonical_json().unwrap().as_bytes()).unwrap(),
             a
@@ -1317,6 +1348,52 @@ mod tests {
         let mut m = r.clone();
         m.unsigned.subject_device_key = pk(3);
         assert!(verify_revocation(&m, t0()).is_err());
+        assert!(verify_revocation_signature(&m).is_err());
+        assert_eq!(
+            Revocation::from_json_bytes(r.to_canonical_json().unwrap().as_bytes()).unwrap(),
+            r
+        );
+        // The signature-only check ignores time; the full check does not.
+        verify_revocation_signature(&r).unwrap();
+        let future = UnsignedRevocation::new(
+            pk(2),
+            pk(1),
+            t0().plus_days(30),
+            String::new(),
+            Nonce::from_bytes([7; 16]),
+        )
+        .sign(&sk(2))
+        .unwrap();
+        verify_revocation_signature(&future).unwrap();
+        assert!(verify_revocation(&future, t0()).is_err());
+    }
+
+    #[test]
+    fn root_cannot_revoke_itself() {
+        let u = UnsignedRevocation::new(
+            pk(2),
+            pk(2),
+            t0(),
+            String::new(),
+            Nonce::from_bytes([8; 16]),
+        );
+        // Signing refuses it ...
+        assert!(matches!(
+            u.clone().sign(&sk(2)),
+            Err(ProtocolError::Field {
+                field: "subject_device_key",
+                ..
+            })
+        ));
+        // ... and a hand-signed one never verifies, with or without time rules.
+        let signature = signing::sign_input(&sk(2), &u.signing_input().unwrap());
+        let r = Revocation {
+            unsigned: u,
+            signature,
+        };
+        assert!(verify_revocation_signature(&r).is_err());
+        assert!(verify_revocation(&r, t0()).is_err());
+        // It still parses (schema only), so the stateless event validation must catch it.
         assert_eq!(
             Revocation::from_json_bytes(r.to_canonical_json().unwrap().as_bytes()).unwrap(),
             r

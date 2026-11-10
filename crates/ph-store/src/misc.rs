@@ -201,11 +201,28 @@ impl Store {
             })?,
             None => Value::Null,
         };
+        let circles = self.circles()?;
+        let mut charters = Vec::new();
+        let mut optouts = Vec::new();
+        for c in &circles {
+            for charter in self.charters(&c.circle_id)? {
+                charters.push(charter.to_value()?);
+            }
+            for (skill_name, at) in self.rule_opt_outs(&c.circle_id)? {
+                optouts.push(json!({
+                    "circle_id": c.circle_id,
+                    "skill_name": skill_name,
+                    "opted_out_at": at,
+                }));
+            }
+        }
         Ok(json!({
             "schema": EXPORT_SCHEMA,
             "schema_version": SCHEMA_VERSION,
             "identity": identity,
-            "circles": rows_json(&self.circles()?)?,
+            "circles": rows_json(&circles)?,
+            "charters": Value::Array(charters),
+            "rule_optouts": Value::Array(optouts),
             "memberships": rows_json(&self.all_memberships()?)?,
             "issued_invites": rows_json(&self.issued_invites(None)?)?,
             "revocations": rows_json(&self.all_revocations()?)?,

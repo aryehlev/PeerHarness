@@ -38,16 +38,19 @@ pub enum Context {
     Revocation,
     /// Invitation, schema `peerharness.invite/0.1`, context `peerharness-invite-v0`.
     Invite,
+    /// Charter, schema `peerharness.charter/0.1`, context `peerharness-charter-v0`.
+    Charter,
 }
 
 impl Context {
     /// All contexts.
-    pub const ALL: [Context; 5] = [
+    pub const ALL: [Context; 6] = [
         Context::Event,
         Context::Membership,
         Context::Acceptance,
         Context::Revocation,
         Context::Invite,
+        Context::Charter,
     ];
 
     /// The context string (without the trailing NUL).
@@ -58,6 +61,7 @@ impl Context {
             Context::Acceptance => "peerharness-acceptance-v0",
             Context::Revocation => "peerharness-revocation-v0",
             Context::Invite => "peerharness-invite-v0",
+            Context::Charter => "peerharness-charter-v0",
         }
     }
 
@@ -69,6 +73,7 @@ impl Context {
             Context::Acceptance => "peerharness.acceptance/0.1",
             Context::Revocation => "peerharness.revocation/0.1",
             Context::Invite => "peerharness.invite/0.1",
+            Context::Charter => "peerharness.charter/0.1",
         }
     }
 
@@ -80,6 +85,7 @@ impl Context {
             Context::Acceptance => "acceptance",
             Context::Revocation => "revocation",
             Context::Invite => "invite",
+            Context::Charter => "charter",
         }
     }
 

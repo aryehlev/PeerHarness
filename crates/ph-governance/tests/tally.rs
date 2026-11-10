@@ -1,519 +1,491 @@
-//! Vote tally and eligibility (architecture section 10; spec section 11 vote cases).
+//! Counting a vote: one member one vote, a majority of the whole electorate, no veto,
+//! approvals that only accumulate, and no clock (architecture section 10).
 
 mod common;
 
 use common::*;
-use ph_core::{DenyReason, EventId, Role};
-use ph_governance::{
-    evaluate_proposal, Blocker, CirclePolicy, IgnoreReason, LocalPolicy, ProposalStatus,
-    ProposalView, ViewError, VoteView,
-};
-use ph_protocol::{validate_stateless, EventBody, ProtocolError, VoteDecision};
-use serde_json::json;
+use ph_core::DeviceKey;
+use ph_governance::{tally, threshold_for, IgnoreReason, Tally, TallyError, VoteView};
+use ph_protocol::{Charter, CharterRules, Threshold, VoteDecision::*};
 
-const S: &str = "team/frontend";
-
-/// Alice (1) proposes; Bob (2), Carol (3) and Dave (4) are members of team/frontend.
-fn setup() -> (TestOracle, ProposalView) {
-    let o = TestOracle::new();
-    for seed in 1..=4 {
-        enroll(&o, seed, &[S]);
-    }
-    (o, proposal(1, S, digest(b"A")))
+fn count(p: &ph_governance::ProposalView, c: &Charter, votes: &[VoteView]) -> Tally {
+    tally(p, c, votes, &nobody_revoked).unwrap()
 }
 
-fn eval(o: &TestOracle, p: &ProposalView, votes: &[VoteView]) -> ProposalStatus {
-    evaluate_proposal(
-        p,
-        votes,
-        o,
-        &CirclePolicy::default(),
-        &LocalPolicy::default(),
-        now(),
-    )
+fn approvers(t: &Tally) -> Vec<&str> {
+    t.approvals().iter().map(|a| a.member.as_str()).collect()
 }
 
 #[test]
-fn two_distinct_approvers_make_eligible() {
-    let (o, p) = setup();
+fn two_of_three_pass_and_one_is_not_enough() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+
+    let t = count(&p, &c, &[]);
+    assert_eq!(t.electorate(), ["alice", "bob", "carol"]);
+    assert_eq!((t.need(), t.missing()), (2, 2));
+    assert!(!t.passed());
+    assert_eq!(t.silent(), ["alice", "bob", "carol"]);
+    assert_eq!(t.certificate(), None);
+
+    let a = approve(1, &p);
+    let t = count(&p, &c, std::slice::from_ref(&a));
+    assert!(!t.passed(), "the proposer alone is not a majority of three");
+    assert_eq!(t.missing(), 1);
+
+    let b = approve(2, &p);
+    let t = count(&p, &c, &[a.clone(), b.clone()]);
+    assert!(t.passed());
+    assert_eq!(approvers(&t), ["alice", "bob"]);
+    assert_eq!(t.silent(), ["carol"]);
+    assert_eq!(t.summary(), "passed: 2 of 3 approved (2 needed)");
+    let mut expected = vec![a.event_id(), b.event_id()];
+    expected.sort_by_key(|id| id.to_string());
+    assert_eq!(t.certificate(), Some(expected));
+}
+
+#[test]
+fn nobody_holds_a_veto() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+    // Carol rejects and Bob asks for a revision before anyone approves.
     let votes = [
-        vote(1, &p, VoteDecision::Approve),
-        vote(2, &p, VoteDecision::Approve),
+        vote(3, &p, Reject),
+        vote(2, &p, Revise),
+        approve(1, &p),
+        // Bob is persuaded and approves with a later ballot.
+        vote_at(2, &p, Approve, now()),
     ];
-    let st = eval(&o, &p, &votes);
-    assert!(st.eligible, "{}", st.explain());
-    assert!(st.blockers.is_empty());
-    let mut want = vec![pk(1), pk(2)];
-    want.sort();
-    assert_eq!(st.approvers, want);
-    assert_eq!(st.counted_votes.len(), 2);
-    assert!(st.ignored.is_empty());
-    assert_eq!(st.required_approvals, 2);
+    let t = count(&p, &c, &votes);
+    assert!(t.passed(), "one dissent cannot block a majority");
+    assert_eq!(approvers(&t), ["alice", "bob"]);
+    // Carol's dissent is on the record, with her rationale length but not its text.
+    assert_eq!(t.dissent().len(), 1);
+    let d = &t.dissent()[0];
+    assert_eq!((d.member.as_str(), d.decision), ("carol", Reject));
+    assert_eq!(d.rationale_chars, "looks right".len());
+    assert_eq!(
+        t.summary(),
+        "passed: 2 of 3 approved (2 needed), 1 dissenting"
+    );
+    // Bob's earlier `revise` is superseded by his approval.
+    assert_eq!(
+        t.ignore_reason(&votes[1].event_id()),
+        Some(IgnoreReason::Redundant)
+    );
+
+    // Even two members dissenting only matters because they did not approve.
+    let t = count(
+        &p,
+        &c,
+        &[approve(1, &p), vote(2, &p, Reject), vote(3, &p, Revise)],
+    );
+    assert!(!t.passed());
+    assert_eq!(t.dissent().len(), 2);
+    assert_eq!(t.missing(), 1);
 }
 
 #[test]
-fn proposer_alone_cannot_reach_eligibility() {
-    let (o, p) = setup();
-    let votes = [vote(1, &p, VoteDecision::Approve)];
-    let st = eval(&o, &p, &votes);
-    assert!(!st.eligible);
-    assert!(st
-        .blockers
-        .contains(&Blocker::NotEnoughApprovals { have: 1, need: 2 }));
-    assert!(st.blockers.contains(&Blocker::NoNonProposerApproval));
-    // Even with a 1-approval policy, require_non_proposer still blocks.
-    let lax = CirclePolicy {
-        min_approvals: 1,
-        ..CirclePolicy::default()
-    };
-    let st = evaluate_proposal(&p, &votes, &o, &lax, &LocalPolicy::default(), now());
-    assert_eq!(st.blockers, vec![Blocker::NoNonProposerApproval]);
-    // The proposer voting many times is still one approver.
-    let many: Vec<_> = (0..5)
-        .map(|i| vote_at(1, &p, VoteDecision::Approve, now().minus_secs(100 + i)))
-        .collect();
-    let st = eval(&o, &p, &many);
-    assert_eq!(st.approvers, vec![pk(1)]);
-    assert!(!st.eligible);
+fn one_person_one_vote_however_many_devices() {
+    // Alice has three devices; bob and carol one each.
+    let c = founding(vec![
+        entry("alice", &[1, 11, 21], &["*"]),
+        entry("bob", &[2], &["*"]),
+        entry("carol", &[3], &["*"]),
+    ]);
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let votes = [approve(1, &p), approve(11, &p), approve(21, &p)];
+    let t = count(&p, &c, &votes);
     assert_eq!(
-        st.ignored
-            .iter()
-            .filter(|(_, r)| *r == IgnoreReason::Replaced)
-            .count(),
-        4
+        approvers(&t),
+        ["alice"],
+        "three devices are still one member"
     );
-}
-
-#[test]
-fn replayed_vote_counts_once() {
-    let (o, p) = setup();
-    let v = vote(2, &p, VoteDecision::Approve);
-    let st = eval(&o, &p, &[v.clone(), v.clone(), v.clone()]);
-    assert_eq!(st.approvers, vec![pk(2)]);
-    assert_eq!(st.counted_votes, vec![v.event_id()]);
+    assert!(!t.passed());
     assert_eq!(
-        st.ignored,
-        vec![
-            (v.event_id(), IgnoreReason::Duplicate),
-            (v.event_id(), IgnoreReason::Duplicate)
-        ]
+        t.electorate().len(),
+        3,
+        "devices do not enlarge the electorate"
     );
-    assert!(!st.eligible);
-}
-
-#[test]
-fn vote_cannot_be_retargeted() {
-    let (_o, p) = setup();
-    let other = proposal(1, S, digest(b"B"));
-    let env = vote_env_for(2, &p, VoteDecision::Approve, now());
-
-    // Over the wire: changing proposal_id or bundle_digest breaks the signature.
-    for (field, value) in [
-        ("proposal_id", json!(other.event_id().to_string())),
-        ("bundle_digest", json!(digest(b"B").to_string())),
-        ("decision", json!("reject")),
-    ] {
-        let mut v = env.to_value().unwrap();
-        v["body"][field] = value;
-        assert!(
-            matches!(
-                validate_stateless(v.to_string().as_bytes(), now()),
-                Err(ProtocolError::BadSignature { .. })
-            ),
-            "{field}"
-        );
-    }
-    // In memory: a view cannot be built from a re-pointed envelope.
-    let mut forged = env.clone();
-    if let EventBody::Vote(b) = &mut forged.envelope.body {
-        b.proposal_id = other.event_id();
-    }
-    assert_eq!(
-        VoteView::from_envelope(&forged),
-        Err(ViewError::BadSignature)
-    );
-    let mut forged = env.clone();
-    if let EventBody::Vote(b) = &mut forged.envelope.body {
-        b.bundle_digest = digest(b"B");
-    }
-    assert_eq!(
-        VoteView::from_envelope(&forged),
-        Err(ViewError::BadSignature)
-    );
-    // Wrong type.
-    let q = question_env(2, S, "q?");
-    assert!(matches!(
-        VoteView::from_envelope(&q),
-        Err(ViewError::WrongType { .. })
-    ));
-}
-
-#[test]
-fn sybil_keys_without_root_credentials_cannot_satisfy_quorum() {
-    let (o, p) = setup();
-    let mut votes = vec![vote(2, &p, VoteDecision::Approve)];
-    // Ten self-made keys, each with a self-issued "credential" the oracle happily stores
-    // (it is valid for the attacker's own circle) and a valid-looking signed vote.
-    for seed in 100..110u8 {
-        let fake = proof_by(
-            &sk(seed),
-            &sk(seed),
-            vec![Role::Owner],
-            &["*"],
-            now().minus_secs(60),
-            now().plus_days(10),
-        );
-        assert!(o.add_proof(&fake, now()));
-        votes.push(vote(seed, &p, VoteDecision::Approve));
-    }
-    // Ten keys issued by a fake root claiming to be ours are equally useless.
-    let fake_root = sk(150);
-    for seed in 110..120u8 {
-        let fake = proof_by(
-            &fake_root,
-            &sk(seed),
-            vec![Role::Member],
-            &[S],
-            now().minus_secs(60),
-            now().plus_days(10),
-        );
-        assert!(o.add_proof(&fake, now()));
-        votes.push(vote(seed, &p, VoteDecision::Approve));
-    }
-    let st = eval(&o, &p, &votes);
-    assert_eq!(st.approvers, vec![pk(2)]);
-    assert!(!st.eligible);
-    assert_eq!(st.ignored.len(), 20);
-    assert!(st
-        .ignored
+    // Exactly one of her ballots evidences the approval; the others are redundant.
+    let redundant = t
+        .ignored()
         .iter()
-        .all(|(_, r)| *r == IgnoreReason::VoterNotAuthorized(DenyReason::NotMember)));
+        .filter(|(_, r)| *r == IgnoreReason::Redundant)
+        .count();
+    assert_eq!(redundant, 2);
+    // Which one is chosen does not depend on the order they are supplied in.
+    let chosen = t.approvals()[0].vote_id;
+    let reversed: Vec<VoteView> = votes.iter().rev().cloned().collect();
+    assert_eq!(count(&p, &c, &reversed).approvals()[0].vote_id, chosen);
 }
 
 #[test]
-fn vote_for_hash_a_does_not_count_for_modified_hash_b() {
-    let (o, p_a) = setup();
-    // Alice modifies the bundle: a new proposal with digest B.
-    let p_b = proposal(1, S, digest(b"B"));
-    let votes_a = [
-        vote(2, &p_a, VoteDecision::Approve),
-        vote(3, &p_a, VoteDecision::Approve),
+fn approvals_only_accumulate() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let a = approve(1, &p);
+    let b = approve(2, &p);
+    // Bob later signs a reject. It does not undo his approval.
+    let b_regret = vote_at(2, &p, Reject, now());
+    let t = count(&p, &c, &[a.clone(), b.clone(), b_regret.clone()]);
+    assert!(t.passed(), "passed never turns back into not passed");
+    assert_eq!(approvers(&t), ["alice", "bob"]);
+    assert!(t.dissent().is_empty());
+    assert_eq!(
+        t.ignore_reason(&b_regret.event_id()),
+        Some(IgnoreReason::Redundant)
+    );
+    // Adding ballots never removes an approval: every superset of a passing set passes.
+    let extra = [vote(3, &p, Reject), vote_at(1, &p, Revise, now())];
+    let mut all = vec![a, b, b_regret];
+    for e in extra {
+        all.push(e);
+        assert!(count(&p, &c, &all).passed());
+    }
+}
+
+#[test]
+fn the_outcome_does_not_depend_on_arrival_order() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let votes = vec![
+        vote(3, &p, Reject),
+        approve(1, &p),
+        vote(2, &p, Revise),
+        vote_at(2, &p, Approve, now()),
+        vote_at(3, &p, Revise, now()),
+        vote(42, &p, Approve), // not on the roll
     ];
-    assert!(eval(&o, &p_a, &votes_a).eligible);
-    let st_b = eval(&o, &p_b, &votes_a);
-    assert!(!st_b.eligible);
-    assert!(st_b.approvers.is_empty());
-    assert!(st_b
-        .ignored
+    let reference = count(&p, &c, &votes);
+    // Every rotation and the reverse of the input give the same approvals and dissent.
+    let mut order = votes.clone();
+    for _ in 0..votes.len() {
+        order.rotate_left(1);
+        for candidate in [order.clone(), order.iter().rev().cloned().collect()] {
+            let t = count(&p, &c, &candidate);
+            assert_eq!(t.approvals(), reference.approvals());
+            assert_eq!(t.dissent(), reference.dissent());
+            assert_eq!(t.passed(), reference.passed());
+            assert_eq!(t.certificate(), reference.certificate());
+        }
+    }
+    assert!(reference.passed());
+    // Carol's recorded dissent is her latest ballot.
+    assert_eq!(reference.dissent()[0].decision, Revise);
+}
+
+#[test]
+fn the_outcome_does_not_depend_on_a_clock() {
+    let c = abc();
+    // A proposal and ballots stamped ten years apart count exactly the same: nothing in
+    // the tally reads the time, and decision events never expire.
+    let old = now().minus_secs(10 * 365 * 86_400);
+    let p = adopt_named(1, &c, "*", SKILL, digest(b"b"), old);
+    let votes = [vote_at(1, &p, Approve, old), vote_at(2, &p, Approve, now())];
+    let t = count(&p, &c, &votes);
+    assert!(t.passed());
+    assert_eq!(approvers(&t), ["alice", "bob"]);
+}
+
+#[test]
+fn silence_counts_as_not_approving() {
+    // Five members: three approvals are needed whether or not the others ever vote.
+    let c = founding(
+        (1..=5u8)
+            .map(|i| entry(&format!("m{i}"), &[i], &["*"]))
+            .collect(),
+    );
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let t = count(&p, &c, &[approve(1, &p), approve(2, &p)]);
+    assert_eq!((t.need(), t.passed()), (3, false));
+    assert_eq!(t.silent(), ["m3", "m4", "m5"]);
+    let t = count(&p, &c, &[approve(1, &p), approve(2, &p), approve(3, &p)]);
+    assert!(t.passed());
+}
+
+#[test]
+fn founder_alone_and_a_circle_of_two() {
+    let solo = founding(vec![entry("alice", &[1], &["*"])]);
+    let p = adopt(1, &solo, "*", digest(b"b"));
+    assert!(!count(&p, &solo, &[]).passed());
+    assert!(count(&p, &solo, &[approve(1, &p)]).passed());
+
+    // With two members a majority means both.
+    let two = founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["*"]),
+    ]);
+    let p = adopt(1, &two, "*", digest(b"b"));
+    let t = count(&p, &two, &[approve(1, &p)]);
+    assert_eq!((t.need(), t.passed()), (2, false));
+    assert!(count(&p, &two, &[approve(1, &p), approve(2, &p)]).passed());
+}
+
+#[test]
+fn the_electorate_follows_the_scope() {
+    let c = founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["team/backend"]),
+        entry("carol", &[3], &["team/frontend"]),
+        entry("dave", &[4], &["team/backend", "docs"]),
+    ]);
+    // A backend rule: alice (wildcard), bob and dave vote. Carol does not.
+    let p = adopt(2, &c, "team/backend", digest(b"b"));
+    let carol_ballot = approve(3, &p);
+    let t = count(
+        &p,
+        &c,
+        &[approve(2, &p), approve(4, &p), carol_ballot.clone()],
+    );
+    assert_eq!(t.electorate(), ["alice", "bob", "dave"]);
+    assert_eq!(t.need(), 2);
+    assert!(t.passed());
+    assert_eq!(approvers(&t), ["bob", "dave"]);
+    assert_eq!(
+        t.ignored(),
+        [(carol_ballot.event_id(), IgnoreReason::NotInElectorate)],
+        "a frontend member cannot vote on a backend rule"
+    );
+
+    // A narrower scope is covered by the broader grant.
+    let p = adopt(2, &c, "team/backend/db", digest(b"b"));
+    assert_eq!(count(&p, &c, &[]).electorate(), ["alice", "bob", "dave"]);
+
+    // A circle-wide (`*`) rule concerns everyone, whatever their own scopes.
+    let p = adopt(2, &c, "*", digest(b"b"));
+    let t = count(&p, &c, &[approve(2, &p), approve(3, &p), approve(4, &p)]);
+    assert_eq!(t.electorate().len(), 4);
+    assert_eq!(t.need(), 3);
+    assert!(t.passed());
+
+    // A scope nobody but the wildcard member covers: she decides alone.
+    let p = adopt(1, &c, "finance", digest(b"b"));
+    let t = count(&p, &c, &[approve(1, &p)]);
+    assert_eq!(t.electorate(), ["alice"]);
+    assert!(t.passed());
+}
+
+#[test]
+fn an_empty_electorate_passes_nothing() {
+    let c = founding(vec![entry("bob", &[2], &["team/backend"])]);
+    let p = adopt(2, &c, "team/frontend", digest(b"b"));
+    let t = count(&p, &c, &[approve(2, &p)]);
+    assert!(t.electorate().is_empty());
+    assert_eq!(t.need(), 1);
+    assert!(!t.passed());
+}
+
+#[test]
+fn amendments_are_decided_by_the_whole_roll() {
+    let c = founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["team/backend"]),
+        entry("carol", &[3], &["team/frontend"]),
+    ]);
+    // Admitting dave changes only the roll: simple majority of all three members.
+    let mut next = c.content.clone();
+    next.roll.push(entry("dave", &[4], &["*"]));
+    next.normalize();
+    let p = amend(2, &c, next);
+    assert_eq!(threshold_for(&p, &c.content), Threshold::MAJORITY);
+    let t = count(&p, &c, &[approve(2, &p), approve(3, &p)]);
+    assert_eq!(t.electorate(), ["alice", "bob", "carol"]);
+    assert!(t.passed(), "narrow-scope members vote on the charter too");
+
+    // Changing the rules needs the amend threshold: more than two thirds of three is
+    // all three.
+    let mut next = c.content.clone();
+    next.rules = CharterRules {
+        binding: false,
+        ..next.rules
+    };
+    let p = amend(1, &c, next);
+    assert_eq!(threshold_for(&p, &c.content), Threshold::TWO_THIRDS);
+    let two = [approve(1, &p), approve(2, &p)];
+    let t = count(&p, &c, &two);
+    assert_eq!((t.need(), t.passed()), (3, false));
+    let t = count(&p, &c, &[two[0].clone(), two[1].clone(), approve(3, &p)]);
+    assert!(t.passed());
+}
+
+#[test]
+fn keys_cannot_be_invented_to_reach_a_majority() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+    // Fifty fresh keys approve. None is on the roll.
+    let mut votes: Vec<VoteView> = (100..150u8).map(|s| approve(s, &p)).collect();
+    votes.push(approve(1, &p));
+    let t = count(&p, &c, &votes);
+    assert_eq!(approvers(&t), ["alice"]);
+    assert!(!t.passed());
+    assert_eq!(
+        t.ignored()
+            .iter()
+            .filter(|(_, r)| *r == IgnoreReason::NotOnRoll)
+            .count(),
+        50
+    );
+    // The circle root key is not a member either.
+    let t = count(&p, &c, &[approve(ROOT, &p)]);
+    assert_eq!(t.ignored()[0].1, IgnoreReason::NotOnRoll);
+}
+
+#[test]
+fn a_ballot_counts_only_for_the_proposal_it_signs() {
+    let c = abc();
+    let a = adopt(1, &c, "*", digest(b"bundle-a"));
+    // The same rule with one byte of the bundle changed is a different proposal.
+    let b = adopt(1, &c, "*", digest(b"bundle-b"));
+    assert_ne!(a.event_id(), b.event_id());
+    let votes_for_a = [approve(1, &a), approve(2, &a)];
+    assert!(count(&a, &c, &votes_for_a).passed());
+    let t = count(&b, &c, &votes_for_a);
+    assert!(!t.passed(), "approvals of A are not approvals of B");
+    assert!(t.approvals().is_empty());
+    assert!(t
+        .ignored()
         .iter()
         .all(|(_, r)| *r == IgnoreReason::WrongProposal));
+}
 
-    // A vote naming B's id but A's digest (signed so by a confused/malicious member).
-    let mixed = sign_at(
-        &sk(3),
-        circle(),
-        S,
-        EventBody::Vote(ph_protocol::VoteBody {
-            proposal_id: p_b.event_id(),
-            bundle_digest: digest(b"A"),
-            decision: VoteDecision::Approve,
-            rationale: None,
-        }),
-        now(),
-    );
-    let mixed = VoteView::from_envelope(&mixed).unwrap();
-    let st = eval(&o, &p_b, std::slice::from_ref(&mixed));
+#[test]
+fn a_replayed_ballot_counts_once() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let a = approve(1, &p);
+    let t = count(&p, &c, &[a.clone(), a.clone(), a.clone()]);
+    assert_eq!(approvers(&t), ["alice"]);
     assert_eq!(
-        st.ignored,
-        vec![(mixed.event_id(), IgnoreReason::DigestMismatch)]
-    );
-}
-
-#[test]
-fn later_reject_blocks_and_latest_decision_wins() {
-    let (o, p) = setup();
-    let t1 = now().minus_secs(600);
-    let t2 = now().minus_secs(300);
-    let approve_then_reject = [
-        vote_at(1, &p, VoteDecision::Approve, t1),
-        vote_at(3, &p, VoteDecision::Approve, t1),
-        vote_at(2, &p, VoteDecision::Approve, t1),
-        vote_at(2, &p, VoteDecision::Reject, t2),
-    ];
-    let st = eval(&o, &p, &approve_then_reject);
-    assert!(!st.eligible);
-    assert_eq!(st.rejecters, vec![pk(2)]);
-    assert!(st.blockers.contains(&Blocker::Rejected(pk(2))));
-    assert!(!st.approvers.contains(&pk(2)));
-
-    // Order of input does not matter.
-    let mut rev = approve_then_reject.to_vec();
-    rev.reverse();
-    let st2 = eval(&o, &p, &rev);
-    assert_eq!(st2.approvers, st.approvers);
-    assert_eq!(st2.blockers, st.blockers);
-    assert_eq!(st2.counted_votes, st.counted_votes);
-
-    // Changing one's mind back to approve unblocks.
-    let mut votes = approve_then_reject.to_vec();
-    votes.push(vote_at(2, &p, VoteDecision::Approve, now().minus_secs(10)));
-    assert!(eval(&o, &p, &votes).eligible);
-
-    // Revise blocks too.
-    let st = eval(
-        &o,
-        &p,
-        &[
-            vote(1, &p, VoteDecision::Approve),
-            vote(2, &p, VoteDecision::Approve),
-            vote(3, &p, VoteDecision::Revise),
-        ],
-    );
-    assert_eq!(st.blockers, vec![Blocker::RevisionRequested(pk(3))]);
-
-    // block_on_reject = false: a reject no longer blocks.
-    let lenient = CirclePolicy {
-        block_on_reject: false,
-        ..CirclePolicy::default()
-    };
-    let st = evaluate_proposal(
-        &p,
-        &approve_then_reject,
-        &o,
-        &lenient,
-        &LocalPolicy::default(),
-        now(),
-    );
-    assert!(st.eligible);
-    assert_eq!(st.rejecters, vec![pk(2)]);
-}
-
-#[test]
-fn same_timestamp_tie_breaks_by_event_id() {
-    let (o, p) = setup();
-    let t = now().minus_secs(5);
-    let a = vote_at(2, &p, VoteDecision::Approve, t);
-    let r = vote_at(2, &p, VoteDecision::Reject, t);
-    let winner = if a.event_id() > r.event_id() { &a } else { &r };
-    for order in [[a.clone(), r.clone()], [r.clone(), a.clone()]] {
-        let st = eval(&o, &p, &order);
-        assert_eq!(st.counted_votes, vec![winner.event_id()]);
-    }
-}
-
-#[test]
-fn revoked_voters_earlier_approve_no_longer_counts() {
-    let (o, p) = setup();
-    let votes = [
-        vote(1, &p, VoteDecision::Approve),
-        vote(2, &p, VoteDecision::Approve),
-    ];
-    assert!(eval(&o, &p, &votes).eligible);
-    assert!(o.revoke(&revocation_of(2, now()), now()));
-    let st = eval(&o, &p, &votes);
-    assert!(!st.eligible);
-    assert_eq!(st.approvers, vec![pk(1)]);
-    assert_eq!(
-        st.ignored,
-        vec![(
-            votes[1].event_id(),
-            IgnoreReason::VoterNotAuthorized(DenyReason::Revoked)
-        )]
-    );
-}
-
-#[test]
-fn expired_voter_credential_and_out_of_scope_voter_do_not_count() {
-    let (o, p) = setup();
-    // Eve (5) only has team/finance.
-    enroll(&o, 5, &["team/finance"]);
-    // Bob's credential is evaluated after it expires.
-    let votes = [
-        vote(1, &p, VoteDecision::Approve),
-        vote(2, &p, VoteDecision::Approve),
-        vote(5, &p, VoteDecision::Approve),
-    ];
-    let st = eval(&o, &p, &votes);
-    assert!(st.eligible);
-    assert!(st.ignored.contains(&(
-        votes[2].event_id(),
-        IgnoreReason::VoterNotAuthorized(DenyReason::ScopeDenied)
-    )));
-    let later = now().plus_days(30);
-    let st = evaluate_proposal(
-        &p,
-        &votes,
-        &o,
-        &CirclePolicy::default(),
-        &LocalPolicy::default(),
-        later,
-    );
-    assert!(!st.eligible);
-    assert!(st.approvers.is_empty());
-}
-
-#[test]
-fn vote_scope_and_circle_must_match() {
-    let (o, p) = setup();
-    let wrong_scope = sign_at(
-        &sk(2),
-        circle(),
-        "team/frontend/web",
-        EventBody::Vote(ph_protocol::VoteBody {
-            proposal_id: p.event_id(),
-            bundle_digest: p.bundle_digest(),
-            decision: VoteDecision::Approve,
-            rationale: None,
-        }),
-        now(),
-    );
-    let other_circle = sign_at(
-        &sk(2),
-        ph_core::CircleId::derive(&pk(9)),
-        S,
-        EventBody::Vote(ph_protocol::VoteBody {
-            proposal_id: p.event_id(),
-            bundle_digest: p.bundle_digest(),
-            decision: VoteDecision::Approve,
-            rationale: None,
-        }),
-        now(),
-    );
-    let ws = VoteView::from_envelope(&wrong_scope).unwrap();
-    let oc = VoteView::from_envelope(&other_circle).unwrap();
-    let st = eval(&o, &p, &[ws.clone(), oc.clone()]);
-    assert_eq!(
-        st.ignored,
-        vec![
-            (ws.event_id(), IgnoreReason::ScopeMismatch),
-            (oc.event_id(), IgnoreReason::WrongCircle)
+        t.ignored(),
+        [
+            (a.event_id(), IgnoreReason::Duplicate),
+            (a.event_id(), IgnoreReason::Duplicate)
         ]
     );
+    assert!(!t.passed());
 }
 
 #[test]
-fn expired_vote_and_expired_proposal() {
-    let (o, p) = setup();
-    let old = vote_at(2, &p, VoteDecision::Approve, now().minus_secs(3000));
-    // Evaluate at the vote's expiry, which is after the proposal's expiry.
-    let at = old.expires_at();
-    let st = evaluate_proposal(
+fn ballots_with_the_wrong_scope_or_circle_are_ignored() {
+    let c = founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["*"]),
+    ]);
+    let p = adopt(1, &c, "team/backend", digest(b"b"));
+    // Bob signs a ballot for the right proposal id but under another envelope scope.
+    let wrong_scope = VoteView::from_envelope(&sign_at(
+        &sk(2),
+        circle(),
+        "team/frontend",
+        ph_protocol::EventBody::Vote(ph_protocol::VoteBody {
+            proposal_id: p.event_id(),
+            decision: Approve,
+            rationale: None,
+        }),
+        now(),
+    ))
+    .unwrap();
+    // And one in another circle entirely.
+    let other_circle = VoteView::from_envelope(&sign_at(
+        &sk(2),
+        ph_core::CircleId::derive(&pk(77)),
+        "team/backend",
+        ph_protocol::EventBody::Vote(ph_protocol::VoteBody {
+            proposal_id: p.event_id(),
+            decision: Approve,
+            rationale: None,
+        }),
+        now(),
+    ))
+    .unwrap();
+    let t = count(
         &p,
-        std::slice::from_ref(&old),
-        &o,
-        &CirclePolicy::default(),
-        &LocalPolicy::default(),
-        at,
+        &c,
+        &[approve(1, &p), wrong_scope.clone(), other_circle.clone()],
     );
-    assert_eq!(st.ignored, vec![(old.event_id(), IgnoreReason::Expired)]);
-    assert!(st.blockers.contains(&Blocker::ProposalExpired));
+    assert!(!t.passed());
+    assert_eq!(
+        t.ignore_reason(&wrong_scope.event_id()),
+        Some(IgnoreReason::ScopeMismatch)
+    );
+    assert_eq!(
+        t.ignore_reason(&other_circle.event_id()),
+        Some(IgnoreReason::WrongCircle)
+    );
 }
 
 #[test]
-fn local_required_approvers_give_distinct_local_views() {
-    let (o, p) = setup();
-    let votes = [
-        vote(1, &p, VoteDecision::Approve),
-        vote(2, &p, VoteDecision::Approve),
-    ];
-    let node_b = LocalPolicy::default();
-    let node_c = LocalPolicy {
-        required_approvers: vec![pk(3), pk(3)],
-        extra_min_approvals: None,
+fn a_revoked_device_cannot_approve() {
+    let c = founding(vec![
+        entry("alice", &[1, 11], &["*"]),
+        entry("bob", &[2], &["*"]),
+        entry("carol", &[3], &["*"]),
+    ]);
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let votes = [approve(2, &p), approve(11, &p)];
+    assert!(count(&p, &c, &votes).passed());
+
+    // Alice's second device is lost and revoked before the proposal passed here.
+    let lost = pk(11);
+    let revoked = move |d: &DeviceKey| *d == lost;
+    let t = tally(&p, &c, &votes, &revoked).unwrap();
+    assert!(!t.passed());
+    assert_eq!(approvers(&t), ["bob"]);
+    assert_eq!(
+        t.ignore_reason(&votes[1].event_id()),
+        Some(IgnoreReason::Revoked)
+    );
+    // Revoking a device does not shrink the electorate: it can block, never pass.
+    assert_eq!(t.electorate().len(), 3);
+    assert_eq!(t.need(), 2);
+    // Alice is still a member and can vote from her other device.
+    let t = tally(
+        &p,
+        &c,
+        &[votes[0].clone(), votes[1].clone(), approve(1, &p)],
+        &revoked,
+    )
+    .unwrap();
+    assert!(t.passed());
+}
+
+#[test]
+fn the_charter_must_be_the_one_the_proposal_names() {
+    let c = abc();
+    let p = adopt(1, &c, "*", digest(b"b"));
+    // The same people under different rules is a different charter.
+    let mut other = c.content.clone();
+    other.rules.binding = false;
+    let other = founding_with(other);
+    assert_eq!(
+        tally(&p, &other, &[approve(1, &p)], &nobody_revoked),
+        Err(TallyError::WrongCharter)
+    );
+    // So is a charter that only differs in who is on the roll.
+    let bigger = founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["*"]),
+        entry("carol", &[3], &["*"]),
+        entry("mallory", &[66], &["*"]),
+    ]);
+    assert_eq!(
+        tally(&p, &bigger, &[], &nobody_revoked),
+        Err(TallyError::WrongCharter)
+    );
+}
+
+#[test]
+fn stricter_charters_need_more_approvals() {
+    let mut content = abc().content.clone();
+    content.rules = CharterRules {
+        pass: Threshold { num: 3, den: 4 },
+        amend: Threshold { num: 3, den: 4 },
+        binding: true,
     };
-    let policy = CirclePolicy::default();
-    let b = evaluate_proposal(&p, &votes, &o, &policy, &node_b, now());
-    let c = evaluate_proposal(&p, &votes, &o, &policy, &node_c, now());
-    assert!(b.eligible);
-    assert!(!c.eligible);
-    assert_eq!(c.blockers, vec![Blocker::MissingRequiredApprover(pk(3))]);
-    // Once Carol approves, node C agrees.
-    let mut more = votes.to_vec();
-    more.push(vote(3, &p, VoteDecision::Approve));
-    assert!(evaluate_proposal(&p, &more, &o, &policy, &node_c, now()).eligible);
-
-    // extra_min_approvals raises the bar, never lowers it.
-    let strict = LocalPolicy {
-        required_approvers: vec![],
-        extra_min_approvals: Some(3),
-    };
-    let st = evaluate_proposal(&p, &votes, &o, &policy, &strict, now());
-    assert_eq!(
-        st.blockers,
-        vec![Blocker::NotEnoughApprovals { have: 2, need: 3 }]
-    );
-    let lower = LocalPolicy {
-        required_approvers: vec![],
-        extra_min_approvals: Some(1),
-    };
-    let st = evaluate_proposal(&p, &[votes[1].clone()], &o, &policy, &lower, now());
-    assert!(!st.eligible);
-    assert_eq!(st.required_approvals, 2);
-}
-
-#[test]
-fn revoked_proposer_blocks() {
-    let (o, p) = setup();
-    let votes = [
-        vote(2, &p, VoteDecision::Approve),
-        vote(3, &p, VoteDecision::Approve),
-    ];
-    assert!(eval(&o, &p, &votes).eligible);
-    o.revoke(&revocation_of(1, now()), now());
-    let st = eval(&o, &p, &votes);
-    assert_eq!(
-        st.blockers,
-        vec![Blocker::ProposerNotAuthorized(DenyReason::Revoked)]
-    );
-}
-
-#[test]
-fn explanation_has_fingerprints_and_no_peer_text() {
-    let (o, p) = setup();
-    let votes = [
-        vote(1, &p, VoteDecision::Approve),
-        vote(2, &p, VoteDecision::Reject),
-        vote(60, &p, VoteDecision::Approve),
-    ];
-    let st = eval(&o, &p, &votes);
-    let text = st.explain();
-    assert!(text.contains("NOT ELIGIBLE"));
-    assert!(text.contains(&pk(1).fingerprint()));
-    assert!(text.contains("(proposer)"));
-    assert!(text.contains(&format!("rejected by {}", pk(2).fingerprint())));
-    assert!(text.contains("rationale: 11 chars"));
-    assert!(text.contains("not an eligible voter (not_member)"));
-    assert!(!text.contains("looks right"));
-    assert_eq!(st.to_string(), text);
-    // Debug of views prints lengths only.
-    let dbg = format!("{:?} {:?}", votes[0], p);
-    assert!(!dbg.contains("looks right"));
-    assert!(!dbg.contains("pnpm repository convention"));
-    // Accessors.
-    assert_eq!(votes[0].rationale(), Some("looks right"));
-    assert_eq!(votes[1].decision(), VoteDecision::Reject);
-    assert_eq!(
-        st.counted_decision(&votes[0].event_id()).unwrap().voter,
-        pk(1)
-    );
-    assert!(st
-        .counted_decision(&EventId::from_digest(digest(b"z")))
-        .is_none());
-}
-
-#[test]
-fn proposal_view_requires_valid_signature() {
-    let env = proposal_env(1, S, "pnpm-repository-convention", digest(b"A"));
-    let mut forged = env.clone();
-    if let EventBody::Proposal(b) = &mut forged.envelope.body {
-        b.bundle_digest = digest(b"evil");
-    }
-    assert_eq!(
-        ProposalView::from_envelope(&forged),
-        Err(ViewError::BadSignature)
-    );
-    let v = ProposalView::from_verified(&verified(&env)).unwrap();
-    assert_eq!(v, ProposalView::from_envelope(&env).unwrap());
-    assert_eq!(v.skill_name(), "pnpm-repository-convention");
-    assert_eq!(v.envelope(), &env);
+    let c = founding_with(content);
+    let p = adopt(1, &c, "*", digest(b"b"));
+    let t = count(&p, &c, &[approve(1, &p), approve(2, &p)]);
+    assert_eq!((t.need(), t.passed()), (3, false));
+    assert_eq!(t.threshold(), Threshold { num: 3, den: 4 });
 }

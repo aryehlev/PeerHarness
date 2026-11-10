@@ -6,10 +6,9 @@
 //! before trusting an object, and must evaluate expiry and revocation at use time.
 
 use ph_core::{CircleId, DeviceKey, Digest, Role, Scope, Timestamp};
-use ph_protocol::signing::verify_input;
 use ph_protocol::{
-    verify_credential_signature, Acceptance, Context, MembershipCredential, MembershipProof,
-    Revocation,
+    verify_acceptance_signature, verify_credential_signature, verify_revocation_signature,
+    Acceptance, MembershipCredential, MembershipProof, Revocation,
 };
 use rusqlite::{params, OptionalExtension, Row};
 use serde::Serialize;
@@ -169,12 +168,7 @@ fn check_acceptance(cred: &MembershipCredential, digest: &Digest, acc: &Acceptan
             what: "acceptance does not match credential",
         });
     }
-    verify_input(
-        Context::Acceptance,
-        &acc.subject_device_key,
-        &acc.signing_input()?,
-        &acc.signature,
-    )?;
+    verify_acceptance_signature(acc, cred)?;
     Ok(())
 }
 
@@ -411,7 +405,8 @@ impl Store {
     /// stored revocation for a subject is kept and later ones return
     /// [`RevocationInsert::AlreadyRevoked`].
     ///
-    /// Checks (time-independent): structure, `circle_id == derive(issuer_key)` and the
+    /// Checks (time-independent, `ph_protocol::verify_revocation_signature`): structure,
+    /// `circle_id == derive(issuer_key)`, the subject is not the root itself, and the
     /// root signature. A new revocation raises the circle's epoch by one.
     ///
     /// # Errors
@@ -423,13 +418,7 @@ impl Store {
         rev: &Revocation,
         received_at: Timestamp,
     ) -> Result<RevocationInsert> {
-        rev.check_structure()?;
-        verify_input(
-            Context::Revocation,
-            &rev.issuer_key,
-            &rev.signing_input()?,
-            &rev.signature,
-        )?;
+        verify_revocation_signature(rev)?;
         let json = rev.to_canonical_json()?;
         let circle = rev.circle_id.to_string();
         let tx = self.tx()?;

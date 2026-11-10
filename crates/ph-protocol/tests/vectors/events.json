@@ -44,12 +44,12 @@
     "verify_at": "2026-11-10T18:10:00Z"
   },
   {
-    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"answer\":\"agree\",\"question_id\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"rationale\":\"We switched to pnpm in March; the lockfile is pnpm-lock.yaml.\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:20:00Z\",\"expires_at\":\"2026-12-09T18:20:00Z\",\"nonce\":\"base64url:EREREREREREREREREREREQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"ANSWER\"}",
+    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"answer\":\"agree\",\"question_id\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"rationale\":\"We switched to pnpm in March; the lockfile is pnpm-lock.yaml.\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:11:00Z\",\"expires_at\":\"2026-12-09T18:11:00Z\",\"nonce\":\"base64url:EREREREREREREREREREREQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"ANSWER\"}",
     "context": "peerharness-event-v0",
-    "event_id": "sha256:3ca0999453b2f414f937925e9b9b45892b638d86800fd028bd51033e1330b034",
+    "event_id": "sha256:c2b022045627f1b87a94d4d62a1ef1dad6d7d0dcf7b3ff90fa07c00b3b60a0bc",
     "name": "ANSWER",
     "schema": "peerharness.event/0.1",
-    "signature": "base64url:MnCA4fX146gghpnHaUAnD8-rV4K7n6bzCJyY8FADTOpWDn9DCD7MHSEzA6HMxiT_0Qp2U-ujJOVdKAW9ohjKAw",
+    "signature": "base64url:CpOmEm77QIaq8Pos4j_cWqneSAdYw1ooTJxK1ncuvlqPDif_Ex0I_FWUX_2f5tWhU7rI9oJpt9qILCU9pM6fCA",
     "signed": {
       "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
       "body": {
@@ -58,18 +58,18 @@
         "rationale": "We switched to pnpm in March; the lockfile is pnpm-lock.yaml."
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
-      "created_at": "2026-11-09T18:20:00Z",
-      "event_id": "sha256:3ca0999453b2f414f937925e9b9b45892b638d86800fd028bd51033e1330b034",
-      "expires_at": "2026-12-09T18:20:00Z",
+      "created_at": "2026-11-09T18:11:00Z",
+      "event_id": "sha256:c2b022045627f1b87a94d4d62a1ef1dad6d7d0dcf7b3ff90fa07c00b3b60a0bc",
+      "expires_at": "2026-12-09T18:11:00Z",
       "nonce": "base64url:EREREREREREREREREREREQ",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
-      "signature": "base64url:MnCA4fX146gghpnHaUAnD8-rV4K7n6bzCJyY8FADTOpWDn9DCD7MHSEzA6HMxiT_0Qp2U-ujJOVdKAW9ohjKAw",
+      "signature": "base64url:CpOmEm77QIaq8Pos4j_cWqneSAdYw1ooTJxK1ncuvlqPDif_Ex0I_FWUX_2f5tWhU7rI9oJpt9qILCU9pM6fCA",
       "type": "ANSWER"
     },
-    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"answer\":\"agree\",\"question_id\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"rationale\":\"We switched to pnpm in March; the lockfile is pnpm-lock.yaml.\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:20:00Z\",\"event_id\":\"sha256:3ca0999453b2f414f937925e9b9b45892b638d86800fd028bd51033e1330b034\",\"expires_at\":\"2026-12-09T18:20:00Z\",\"nonce\":\"base64url:EREREREREREREREREREREQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:MnCA4fX146gghpnHaUAnD8-rV4K7n6bzCJyY8FADTOpWDn9DCD7MHSEzA6HMxiT_0Qp2U-ujJOVdKAW9ohjKAw\",\"type\":\"ANSWER\"}",
+    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"answer\":\"agree\",\"question_id\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"rationale\":\"We switched to pnpm in March; the lockfile is pnpm-lock.yaml.\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:11:00Z\",\"event_id\":\"sha256:c2b022045627f1b87a94d4d62a1ef1dad6d7d0dcf7b3ff90fa07c00b3b60a0bc\",\"expires_at\":\"2026-12-09T18:11:00Z\",\"nonce\":\"base64url:EREREREREREREREREREREQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:CpOmEm77QIaq8Pos4j_cWqneSAdYw1ooTJxK1ncuvlqPDif_Ex0I_FWUX_2f5tWhU7rI9oJpt9qILCU9pM6fCA\",\"type\":\"ANSWER\"}",
     "signer_public_key": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
-    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b22616e73776572223a226167726565222c227175657374696f6e5f6964223a227368613235363a62653739393135343938656562666331353534376266656564643762333430363437383933316337313137336330343033643161323736623563323863613137222c22726174696f6e616c65223a22576520737769746368656420746f20706e706d20696e204d617263683b20746865206c6f636b66696c6520697320706e706d2d6c6f636b2e79616d6c2e227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a32303a30305a222c22657870697265735f6174223a22323032362d31322d30395431383a32303a30305a222c226e6f6e6365223a2262617365363475726c3a45524552455245524552455245524552455245524551222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a22414e53574552227d",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b22616e73776572223a226167726565222c227175657374696f6e5f6964223a227368613235363a62653739393135343938656562666331353534376266656564643762333430363437383933316337313137336330343033643161323736623563323863613137222c22726174696f6e616c65223a22576520737769746368656420746f20706e706d20696e204d617263683b20746865206c6f636b66696c6520697320706e706d2d6c6f636b2e79616d6c2e227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a31313a30305a222c22657870697265735f6174223a22323032362d31322d30395431383a31313a30305a222c226e6f6e6365223a2262617365363475726c3a45524552455245524552455245524552455245524551222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a22414e53574552227d",
     "unsigned": {
       "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
       "body": {
@@ -78,8 +78,8 @@
         "rationale": "We switched to pnpm in March; the lockfile is pnpm-lock.yaml."
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
-      "created_at": "2026-11-09T18:20:00Z",
-      "expires_at": "2026-12-09T18:20:00Z",
+      "created_at": "2026-11-09T18:11:00Z",
+      "expires_at": "2026-12-09T18:11:00Z",
       "nonce": "base64url:EREREREREREREREREREREQ",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
@@ -88,50 +88,378 @@
     "verify_at": "2026-11-10T18:10:00Z"
   },
   {
-    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"bundle_size\":357,\"description\":\"Use pnpm when installing packages or running package scripts in the specified repository.\",\"provenance_summary\":\"Corrected twice locally; peer agreed.\",\"related_question\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"skill_name\":\"pnpm-repository-convention\",\"title\":\"Use pnpm, not npm, in this repository\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:30:00Z\",\"expires_at\":\"2027-02-07T18:30:00Z\",\"nonce\":\"base64url:EhISEhISEhISEhISEhISEg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"PROPOSAL\"}",
+    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"charter\":\"sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c\",\"kind\":\"amend\",\"next\":{\"carried\":[],\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]},{\"devices\":[\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"],\"member\":\"bob\",\"scopes\":[\"team/backend\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}}},\"summary\":\"Bob joins the backend team.\",\"title\":\"Admit bob\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:01:00Z\",\"expires_at\":\"2027-12-14T18:01:00Z\",\"nonce\":\"base64url:ICAgICAgICAgICAgICAgIA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"PROPOSAL\"}",
     "context": "peerharness-event-v0",
-    "event_id": "sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18",
-    "name": "PROPOSAL",
+    "event_id": "sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a",
+    "name": "PROPOSAL/amend",
     "schema": "peerharness.event/0.1",
-    "signature": "base64url:2hjmOmKHuclYCG0IFv7AkfrC9jpeID3nVYPcwsy61KqXlomRyPRGI6iVvaTraEL55zUuu4rjeAWqEwBQ4JfWCQ",
+    "signature": "base64url:xuMyCt1YF108nIqL58YRC3EFMf5laKx5bA0C5rQUnRNpuL1dhRrWKNvQVkVrYTdOFl6P9Lm3hbLOtLdphNpjCA",
+    "signed": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "charter": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+        "kind": "amend",
+        "next": {
+          "carried": [],
+          "roll": [
+            {
+              "devices": [
+                "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+              ],
+              "member": "alice",
+              "scopes": [
+                "*"
+              ]
+            },
+            {
+              "devices": [
+                "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+              ],
+              "member": "bob",
+              "scopes": [
+                "team/backend"
+              ]
+            }
+          ],
+          "rules": {
+            "amend": {
+              "den": 3,
+              "num": 2
+            },
+            "binding": true,
+            "pass": {
+              "den": 2,
+              "num": 1
+            }
+          }
+        },
+        "summary": "Bob joins the backend team.",
+        "title": "Admit bob"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:01:00Z",
+      "event_id": "sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a",
+      "expires_at": "2027-12-14T18:01:00Z",
+      "nonce": "base64url:ICAgICAgICAgICAgICAgIA",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "signature": "base64url:xuMyCt1YF108nIqL58YRC3EFMf5laKx5bA0C5rQUnRNpuL1dhRrWKNvQVkVrYTdOFl6P9Lm3hbLOtLdphNpjCA",
+      "type": "PROPOSAL"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"charter\":\"sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c\",\"kind\":\"amend\",\"next\":{\"carried\":[],\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]},{\"devices\":[\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"],\"member\":\"bob\",\"scopes\":[\"team/backend\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}}},\"summary\":\"Bob joins the backend team.\",\"title\":\"Admit bob\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:01:00Z\",\"event_id\":\"sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a\",\"expires_at\":\"2027-12-14T18:01:00Z\",\"nonce\":\"base64url:ICAgICAgICAgICAgICAgIA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:xuMyCt1YF108nIqL58YRC3EFMf5laKx5bA0C5rQUnRNpuL1dhRrWKNvQVkVrYTdOFl6P9Lm3hbLOtLdphNpjCA\",\"type\":\"PROPOSAL\"}",
+    "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b2263686172746572223a227368613235363a63613433643866653532666465643465396161333634333535383630353538333631666133313762346265636336376662383533633336646231393034633663222c226b696e64223a22616d656e64222c226e657874223a7b2263617272696564223a5b5d2c22726f6c6c223a5b7b2264657669636573223a5b22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177225d2c226d656d626572223a22616c696365222c2273636f706573223a5b222a225d7d2c7b2264657669636573223a5b22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945225d2c226d656d626572223a22626f62222c2273636f706573223a5b227465616d2f6261636b656e64225d7d5d2c2272756c6573223a7b22616d656e64223a7b2264656e223a332c226e756d223a327d2c2262696e64696e67223a747275652c2270617373223a7b2264656e223a322c226e756d223a317d7d7d2c2273756d6d617279223a22426f62206a6f696e7320746865206261636b656e64207465616d2e222c227469746c65223a2241646d697420626f62227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a30313a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a30313a30305a222c226e6f6e6365223a2262617365363475726c3a49434167494341674943416749434167494341674941222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a2250524f504f53414c227d",
+    "unsigned": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "charter": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+        "kind": "amend",
+        "next": {
+          "carried": [],
+          "roll": [
+            {
+              "devices": [
+                "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+              ],
+              "member": "alice",
+              "scopes": [
+                "*"
+              ]
+            },
+            {
+              "devices": [
+                "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+              ],
+              "member": "bob",
+              "scopes": [
+                "team/backend"
+              ]
+            }
+          ],
+          "rules": {
+            "amend": {
+              "den": 3,
+              "num": 2
+            },
+            "binding": true,
+            "pass": {
+              "den": 2,
+              "num": 1
+            }
+          }
+        },
+        "summary": "Bob joins the backend team.",
+        "title": "Admit bob"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:01:00Z",
+      "expires_at": "2027-12-14T18:01:00Z",
+      "nonce": "base64url:ICAgICAgICAgICAgICAgIA",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "type": "PROPOSAL"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"decision\":\"approve\",\"proposal_id\":\"sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:02:00Z\",\"expires_at\":\"2027-12-14T18:02:00Z\",\"nonce\":\"base64url:ISEhISEhISEhISEhISEhIQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"VOTE\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132",
+    "name": "VOTE/amend",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:NuY8NVFszA4v0CtW_F4vPtj5QE3AuvDJOKrhWxMcoVE4L3nsGvNgXIv8IKr7u3z7uFpW5lStLj5D2YyDTtiTAQ",
+    "signed": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "decision": "approve",
+        "proposal_id": "sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:02:00Z",
+      "event_id": "sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132",
+      "expires_at": "2027-12-14T18:02:00Z",
+      "nonce": "base64url:ISEhISEhISEhISEhISEhIQ",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "signature": "base64url:NuY8NVFszA4v0CtW_F4vPtj5QE3AuvDJOKrhWxMcoVE4L3nsGvNgXIv8IKr7u3z7uFpW5lStLj5D2YyDTtiTAQ",
+      "type": "VOTE"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"decision\":\"approve\",\"proposal_id\":\"sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:02:00Z\",\"event_id\":\"sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132\",\"expires_at\":\"2027-12-14T18:02:00Z\",\"nonce\":\"base64url:ISEhISEhISEhISEhISEhIQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:NuY8NVFszA4v0CtW_F4vPtj5QE3AuvDJOKrhWxMcoVE4L3nsGvNgXIv8IKr7u3z7uFpW5lStLj5D2YyDTtiTAQ\",\"type\":\"VOTE\"}",
+    "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b226465636973696f6e223a22617070726f7665222c2270726f706f73616c5f6964223a227368613235363a61356665613665623030356164633263323161396532623435383963373239666466353135393765353566396433666431613538626637363237303131333461227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a30323a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a30323a30305a222c226e6f6e6365223a2262617365363475726c3a49534568495345684953456849534568495345684951222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a22564f5445227d",
+    "unsigned": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "decision": "approve",
+        "proposal_id": "sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:02:00Z",
+      "expires_at": "2027-12-14T18:02:00Z",
+      "nonce": "base64url:ISEhISEhISEhISEhISEhIQ",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "type": "VOTE"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"approvals\":[\"sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132\"],\"proposal_id\":\"sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:03:00Z\",\"expires_at\":\"2027-12-14T18:03:00Z\",\"nonce\":\"base64url:IiIiIiIiIiIiIiIiIiIiIg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"RESULT\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911",
+    "name": "RESULT/amend",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:dU48gVkU5bmaPWBt4gAwOVDd_wRFbtDhBsyHKk9D-KFlRFdGAmR-N7db_Tn4Z4B71eX87bPakxk2ENNXYEfyCw",
+    "signed": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "approvals": [
+          "sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132"
+        ],
+        "proposal_id": "sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:03:00Z",
+      "event_id": "sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911",
+      "expires_at": "2027-12-14T18:03:00Z",
+      "nonce": "base64url:IiIiIiIiIiIiIiIiIiIiIg",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "signature": "base64url:dU48gVkU5bmaPWBt4gAwOVDd_wRFbtDhBsyHKk9D-KFlRFdGAmR-N7db_Tn4Z4B71eX87bPakxk2ENNXYEfyCw",
+      "type": "RESULT"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"approvals\":[\"sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132\"],\"proposal_id\":\"sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:03:00Z\",\"event_id\":\"sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911\",\"expires_at\":\"2027-12-14T18:03:00Z\",\"nonce\":\"base64url:IiIiIiIiIiIiIiIiIiIiIg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:dU48gVkU5bmaPWBt4gAwOVDd_wRFbtDhBsyHKk9D-KFlRFdGAmR-N7db_Tn4Z4B71eX87bPakxk2ENNXYEfyCw\",\"type\":\"RESULT\"}",
+    "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b22617070726f76616c73223a5b227368613235363a34383833333966386533666265343963393636376465623034633264333464393433383563333464653434373866646434626561623965383564376238313332225d2c2270726f706f73616c5f6964223a227368613235363a61356665613665623030356164633263323161396532623435383963373239666466353135393765353566396433666431613538626637363237303131333461227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a30333a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a30333a30305a222c226e6f6e6365223a2262617365363475726c3a49694969496949694969496949694969496949694967222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a22524553554c54227d",
+    "unsigned": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "approvals": [
+          "sha256:488339f8e3fbe49c9667deb04c2d34d94385c34de4478fdd4beab9e85d7b8132"
+        ],
+        "proposal_id": "sha256:a5fea6eb005adc2c21a9e2b4589c729fdf51597e55f9d3fd1a58bf762701134a"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:03:00Z",
+      "expires_at": "2027-12-14T18:03:00Z",
+      "nonce": "base64url:IiIiIiIiIiIiIiIiIiIiIg",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "type": "RESULT"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"body\":{\"charter\":{\"carried\":[],\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issued_at\":\"2026-11-09T18:04:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"justification\":\"sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911\",\"previous\":\"sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c\",\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]},{\"devices\":[\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"],\"member\":\"bob\",\"scopes\":[\"team/backend\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}},\"schema\":\"peerharness.charter/0.1\",\"seq\":2,\"signature\":\"base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:04:00Z\",\"expires_at\":\"2027-12-14T18:04:00Z\",\"nonce\":\"base64url:IyMjIyMjIyMjIyMjIyMjIw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"CHARTER\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:cb4ee1bcd09a5ed988b953b8909cafe9dd4393eb2794136696f0d4cd1bbe0d8b",
+    "name": "CHARTER",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:bz-sgQxTA58zdvHIOZARTzlABg1JI-2J87HRrlYfgnTr23_GTzuOZa_1DD-_huiw-8xEhxlpSg4Hwlkowq5rCA",
+    "signed": {
+      "author": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "body": {
+        "charter": {
+          "carried": [],
+          "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+          "issued_at": "2026-11-09T18:04:00Z",
+          "issuer_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+          "justification": "sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911",
+          "previous": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+          "roll": [
+            {
+              "devices": [
+                "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+              ],
+              "member": "alice",
+              "scopes": [
+                "*"
+              ]
+            },
+            {
+              "devices": [
+                "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+              ],
+              "member": "bob",
+              "scopes": [
+                "team/backend"
+              ]
+            }
+          ],
+          "rules": {
+            "amend": {
+              "den": 3,
+              "num": 2
+            },
+            "binding": true,
+            "pass": {
+              "den": 2,
+              "num": 1
+            }
+          },
+          "schema": "peerharness.charter/0.1",
+          "seq": 2,
+          "signature": "base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA"
+        }
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:04:00Z",
+      "event_id": "sha256:cb4ee1bcd09a5ed988b953b8909cafe9dd4393eb2794136696f0d4cd1bbe0d8b",
+      "expires_at": "2027-12-14T18:04:00Z",
+      "nonce": "base64url:IyMjIyMjIyMjIyMjIyMjIw",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "signature": "base64url:bz-sgQxTA58zdvHIOZARTzlABg1JI-2J87HRrlYfgnTr23_GTzuOZa_1DD-_huiw-8xEhxlpSg4Hwlkowq5rCA",
+      "type": "CHARTER"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"body\":{\"charter\":{\"carried\":[],\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issued_at\":\"2026-11-09T18:04:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"justification\":\"sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911\",\"previous\":\"sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c\",\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]},{\"devices\":[\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"],\"member\":\"bob\",\"scopes\":[\"team/backend\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}},\"schema\":\"peerharness.charter/0.1\",\"seq\":2,\"signature\":\"base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:04:00Z\",\"event_id\":\"sha256:cb4ee1bcd09a5ed988b953b8909cafe9dd4393eb2794136696f0d4cd1bbe0d8b\",\"expires_at\":\"2027-12-14T18:04:00Z\",\"nonce\":\"base64url:IyMjIyMjIyMjIyMjIyMjIw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:bz-sgQxTA58zdvHIOZARTzlABg1JI-2J87HRrlYfgnTr23_GTzuOZa_1DD-_huiw-8xEhxlpSg4Hwlkowq5rCA\",\"type\":\"CHARTER\"}",
+    "signer_public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22626f6479223a7b2263686172746572223a7b2263617272696564223a5b5d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c226973737565645f6174223a22323032362d31312d30395431383a30343a30305a222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c226a757374696669636174696f6e223a227368613235363a63326338316133383839373637326333326161663436613338303836636164656565613232373463636663363963326137353063303834343232666138393131222c2270726576696f7573223a227368613235363a63613433643866653532666465643465396161333634333535383630353538333631666133313762346265636336376662383533633336646231393034633663222c22726f6c6c223a5b7b2264657669636573223a5b22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177225d2c226d656d626572223a22616c696365222c2273636f706573223a5b222a225d7d2c7b2264657669636573223a5b22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945225d2c226d656d626572223a22626f62222c2273636f706573223a5b227465616d2f6261636b656e64225d7d5d2c2272756c6573223a7b22616d656e64223a7b2264656e223a332c226e756d223a327d2c2262696e64696e67223a747275652c2270617373223a7b2264656e223a322c226e756d223a317d7d2c22736368656d61223a22706565726861726e6573732e636861727465722f302e31222c22736571223a322c227369676e6174757265223a2262617365363475726c3a466736563241566977564d495543696973386b737a7064497151345243354b78745f414975536643496c59316475696c6a6863396c526a57326a76696c70363531462d35726972456647487947377977586e6b364241227d7d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a30343a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a30343a30305a222c226e6f6e6365223a2262617365363475726c3a49794d6a49794d6a49794d6a49794d6a49794d6a4977222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a2243484152544552227d",
+    "unsigned": {
+      "author": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "body": {
+        "charter": {
+          "carried": [],
+          "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+          "issued_at": "2026-11-09T18:04:00Z",
+          "issuer_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+          "justification": "sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911",
+          "previous": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+          "roll": [
+            {
+              "devices": [
+                "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+              ],
+              "member": "alice",
+              "scopes": [
+                "*"
+              ]
+            },
+            {
+              "devices": [
+                "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+              ],
+              "member": "bob",
+              "scopes": [
+                "team/backend"
+              ]
+            }
+          ],
+          "rules": {
+            "amend": {
+              "den": 3,
+              "num": 2
+            },
+            "binding": true,
+            "pass": {
+              "den": 2,
+              "num": 1
+            }
+          },
+          "schema": "peerharness.charter/0.1",
+          "seq": 2,
+          "signature": "base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA"
+        }
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:04:00Z",
+      "expires_at": "2027-12-14T18:04:00Z",
+      "nonce": "base64url:IyMjIyMjIyMjIyMjIyMjIw",
+      "schema": "peerharness.event/0.1",
+      "scope": "*",
+      "type": "CHARTER"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"bundle_size\":357,\"charter\":\"sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e\",\"description\":\"Use pnpm when installing packages or running package scripts in the specified repository.\",\"kind\":\"adopt\",\"related_question\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"skill_name\":\"pnpm-repository-convention\",\"summary\":\"Corrected twice locally; peer agreed.\",\"title\":\"Use pnpm, not npm, in this repository\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:30:00Z\",\"expires_at\":\"2027-12-14T18:30:00Z\",\"nonce\":\"base64url:EhISEhISEhISEhISEhISEg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"PROPOSAL\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+    "name": "PROPOSAL/adopt",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:phlBFYTyNs3YiVsX-MWN0Wxiwg-P_LCGR120pTe3KdrLxnkkdq3UZvvk6PgU2qRG2iDNzAUZmow_r2bAzKKuBg",
     "signed": {
       "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
       "body": {
         "bundle_digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
         "bundle_size": 357,
+        "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
         "description": "Use pnpm when installing packages or running package scripts in the specified repository.",
-        "provenance_summary": "Corrected twice locally; peer agreed.",
+        "kind": "adopt",
         "related_question": "sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17",
         "skill_name": "pnpm-repository-convention",
+        "summary": "Corrected twice locally; peer agreed.",
         "title": "Use pnpm, not npm, in this repository"
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:30:00Z",
-      "event_id": "sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18",
-      "expires_at": "2027-02-07T18:30:00Z",
+      "event_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+      "expires_at": "2027-12-14T18:30:00Z",
       "nonce": "base64url:EhISEhISEhISEhISEhISEg",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
-      "signature": "base64url:2hjmOmKHuclYCG0IFv7AkfrC9jpeID3nVYPcwsy61KqXlomRyPRGI6iVvaTraEL55zUuu4rjeAWqEwBQ4JfWCQ",
+      "signature": "base64url:phlBFYTyNs3YiVsX-MWN0Wxiwg-P_LCGR120pTe3KdrLxnkkdq3UZvvk6PgU2qRG2iDNzAUZmow_r2bAzKKuBg",
       "type": "PROPOSAL"
     },
-    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"bundle_size\":357,\"description\":\"Use pnpm when installing packages or running package scripts in the specified repository.\",\"provenance_summary\":\"Corrected twice locally; peer agreed.\",\"related_question\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"skill_name\":\"pnpm-repository-convention\",\"title\":\"Use pnpm, not npm, in this repository\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:30:00Z\",\"event_id\":\"sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18\",\"expires_at\":\"2027-02-07T18:30:00Z\",\"nonce\":\"base64url:EhISEhISEhISEhISEhISEg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:2hjmOmKHuclYCG0IFv7AkfrC9jpeID3nVYPcwsy61KqXlomRyPRGI6iVvaTraEL55zUuu4rjeAWqEwBQ4JfWCQ\",\"type\":\"PROPOSAL\"}",
+    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"bundle_size\":357,\"charter\":\"sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e\",\"description\":\"Use pnpm when installing packages or running package scripts in the specified repository.\",\"kind\":\"adopt\",\"related_question\":\"sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17\",\"skill_name\":\"pnpm-repository-convention\",\"summary\":\"Corrected twice locally; peer agreed.\",\"title\":\"Use pnpm, not npm, in this repository\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:30:00Z\",\"event_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\",\"expires_at\":\"2027-12-14T18:30:00Z\",\"nonce\":\"base64url:EhISEhISEhISEhISEhISEg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:phlBFYTyNs3YiVsX-MWN0Wxiwg-P_LCGR120pTe3KdrLxnkkdq3UZvvk6PgU2qRG2iDNzAUZmow_r2bAzKKuBg\",\"type\":\"PROPOSAL\"}",
     "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
-    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b2262756e646c655f646967657374223a227368613235363a62313063626163613730653831666433343531623963626336623437366564663163346265313962363264633061646535383866353231373162626232326337222c2262756e646c655f73697a65223a3335372c226465736372697074696f6e223a2255736520706e706d207768656e20696e7374616c6c696e67207061636b61676573206f722072756e6e696e67207061636b616765207363726970747320696e2074686520737065636966696564207265706f7369746f72792e222c2270726f76656e616e63655f73756d6d617279223a22436f72726563746564207477696365206c6f63616c6c793b2070656572206167726565642e222c2272656c617465645f7175657374696f6e223a227368613235363a62653739393135343938656562666331353534376266656564643762333430363437383933316337313137336330343033643161323736623563323863613137222c22736b696c6c5f6e616d65223a22706e706d2d7265706f7369746f72792d636f6e76656e74696f6e222c227469746c65223a2255736520706e706d2c206e6f74206e706d2c20696e2074686973207265706f7369746f7279227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a33303a30305a222c22657870697265735f6174223a22323032372d30322d30375431383a33303a30305a222c226e6f6e6365223a2262617365363475726c3a45684953456849534568495345684953456849534567222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a2250524f504f53414c227d",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b2262756e646c655f646967657374223a227368613235363a62313063626163613730653831666433343531623963626336623437366564663163346265313962363264633061646535383866353231373162626232326337222c2262756e646c655f73697a65223a3335372c2263686172746572223a227368613235363a66333835366332626665626530326235343061393631343838643063366161333262353463626462373535663636346134663239623433623038656562363565222c226465736372697074696f6e223a2255736520706e706d207768656e20696e7374616c6c696e67207061636b61676573206f722072756e6e696e67207061636b616765207363726970747320696e2074686520737065636966696564207265706f7369746f72792e222c226b696e64223a2261646f7074222c2272656c617465645f7175657374696f6e223a227368613235363a62653739393135343938656562666331353534376266656564643762333430363437383933316337313137336330343033643161323736623563323863613137222c22736b696c6c5f6e616d65223a22706e706d2d7265706f7369746f72792d636f6e76656e74696f6e222c2273756d6d617279223a22436f72726563746564207477696365206c6f63616c6c793b2070656572206167726565642e222c227469746c65223a2255736520706e706d2c206e6f74206e706d2c20696e2074686973207265706f7369746f7279227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a33303a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a33303a30305a222c226e6f6e6365223a2262617365363475726c3a45684953456849534568495345684953456849534567222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a2250524f504f53414c227d",
     "unsigned": {
       "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
       "body": {
         "bundle_digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
         "bundle_size": 357,
+        "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
         "description": "Use pnpm when installing packages or running package scripts in the specified repository.",
-        "provenance_summary": "Corrected twice locally; peer agreed.",
+        "kind": "adopt",
         "related_question": "sha256:be79915498eebfc15547bfeedd7b3406478931c71173c0403d1a276b5c28ca17",
         "skill_name": "pnpm-repository-convention",
+        "summary": "Corrected twice locally; peer agreed.",
         "title": "Use pnpm, not npm, in this repository"
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:30:00Z",
-      "expires_at": "2027-02-07T18:30:00Z",
+      "expires_at": "2027-12-14T18:30:00Z",
       "nonce": "base64url:EhISEhISEhISEhISEhISEg",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
@@ -140,43 +468,83 @@
     "verify_at": "2026-11-10T18:10:00Z"
   },
   {
-    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"decision\":\"approve\",\"proposal_id\":\"sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:40:00Z\",\"expires_at\":\"2027-02-07T18:40:00Z\",\"nonce\":\"base64url:ExMTExMTExMTExMTExMTEw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"VOTE\"}",
+    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"decision\":\"approve\",\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:31:00Z\",\"expires_at\":\"2027-12-14T18:31:00Z\",\"nonce\":\"base64url:ExMTExMTExMTExMTExMTEw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"VOTE\"}",
     "context": "peerharness-event-v0",
-    "event_id": "sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f",
-    "name": "VOTE",
+    "event_id": "sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1",
+    "name": "VOTE/adopt-alice",
     "schema": "peerharness.event/0.1",
-    "signature": "base64url:xl6kdwhuAZLFZIS1nU9yUfp1Xg-1vHX_kmHUDowEeJeR_EUyJkaZh-_LDX4Amxh3B4XZDHgmsMn-X39Rk43zDQ",
+    "signature": "base64url:smBaEN6UddKPl4p6FzVr0o7i1fqxwLfw99ZmpVb7oi3b45K56e1Eqe1rmWJdBVvXmkGSE3K4sdiOdk59u1a8Bw",
     "signed": {
-      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
       "body": {
-        "bundle_digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
         "decision": "approve",
-        "proposal_id": "sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18"
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82"
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
-      "created_at": "2026-11-09T18:40:00Z",
-      "event_id": "sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f",
-      "expires_at": "2027-02-07T18:40:00Z",
+      "created_at": "2026-11-09T18:31:00Z",
+      "event_id": "sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1",
+      "expires_at": "2027-12-14T18:31:00Z",
       "nonce": "base64url:ExMTExMTExMTExMTExMTEw",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
-      "signature": "base64url:xl6kdwhuAZLFZIS1nU9yUfp1Xg-1vHX_kmHUDowEeJeR_EUyJkaZh-_LDX4Amxh3B4XZDHgmsMn-X39Rk43zDQ",
+      "signature": "base64url:smBaEN6UddKPl4p6FzVr0o7i1fqxwLfw99ZmpVb7oi3b45K56e1Eqe1rmWJdBVvXmkGSE3K4sdiOdk59u1a8Bw",
       "type": "VOTE"
     },
-    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"decision\":\"approve\",\"proposal_id\":\"sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:40:00Z\",\"event_id\":\"sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f\",\"expires_at\":\"2027-02-07T18:40:00Z\",\"nonce\":\"base64url:ExMTExMTExMTExMTExMTEw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:xl6kdwhuAZLFZIS1nU9yUfp1Xg-1vHX_kmHUDowEeJeR_EUyJkaZh-_LDX4Amxh3B4XZDHgmsMn-X39Rk43zDQ\",\"type\":\"VOTE\"}",
+    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"decision\":\"approve\",\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:31:00Z\",\"event_id\":\"sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1\",\"expires_at\":\"2027-12-14T18:31:00Z\",\"nonce\":\"base64url:ExMTExMTExMTExMTExMTEw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:smBaEN6UddKPl4p6FzVr0o7i1fqxwLfw99ZmpVb7oi3b45K56e1Eqe1rmWJdBVvXmkGSE3K4sdiOdk59u1a8Bw\",\"type\":\"VOTE\"}",
+    "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b226465636973696f6e223a22617070726f7665222c2270726f706f73616c5f6964223a227368613235363a65316662633562623136316632663466326363393631386164643436383961663165653333653864313032316438616439346235656235303765363237643832227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a33313a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a33313a30305a222c226e6f6e6365223a2262617365363475726c3a45784d5445784d5445784d5445784d5445784d544577222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a22564f5445227d",
+    "unsigned": {
+      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "body": {
+        "decision": "approve",
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:31:00Z",
+      "expires_at": "2027-12-14T18:31:00Z",
+      "nonce": "base64url:ExMTExMTExMTExMTExMTEw",
+      "schema": "peerharness.event/0.1",
+      "scope": "team/backend",
+      "type": "VOTE"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"decision\":\"approve\",\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:40:00Z\",\"expires_at\":\"2027-12-14T18:40:00Z\",\"nonce\":\"base64url:FBQUFBQUFBQUFBQUFBQUFA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"VOTE\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387",
+    "name": "VOTE/adopt-bob",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:WqquoO6AY_k4VuMay8pHcSvLgjECxOtc5Llg_QXsMzmqkonxE_MhEDQk2MMBnAx2X-R95tJF8Detoa-XZmmmBg",
+    "signed": {
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "body": {
+        "decision": "approve",
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-09T18:40:00Z",
+      "event_id": "sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387",
+      "expires_at": "2027-12-14T18:40:00Z",
+      "nonce": "base64url:FBQUFBQUFBQUFBQUFBQUFA",
+      "schema": "peerharness.event/0.1",
+      "scope": "team/backend",
+      "signature": "base64url:WqquoO6AY_k4VuMay8pHcSvLgjECxOtc5Llg_QXsMzmqkonxE_MhEDQk2MMBnAx2X-R95tJF8Detoa-XZmmmBg",
+      "type": "VOTE"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"decision\":\"approve\",\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:40:00Z\",\"event_id\":\"sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387\",\"expires_at\":\"2027-12-14T18:40:00Z\",\"nonce\":\"base64url:FBQUFBQUFBQUFBQUFBQUFA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:WqquoO6AY_k4VuMay8pHcSvLgjECxOtc5Llg_QXsMzmqkonxE_MhEDQk2MMBnAx2X-R95tJF8Detoa-XZmmmBg\",\"type\":\"VOTE\"}",
     "signer_public_key": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
-    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b2262756e646c655f646967657374223a227368613235363a62313063626163613730653831666433343531623963626336623437366564663163346265313962363264633061646535383866353231373162626232326337222c226465636973696f6e223a22617070726f7665222c2270726f706f73616c5f6964223a227368613235363a32313962663637323732363537373265653639356234633866316532376334393333393237346164303866393962356630303833396138653030343665653138227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a34303a30305a222c22657870697265735f6174223a22323032372d30322d30375431383a34303a30305a222c226e6f6e6365223a2262617365363475726c3a45784d5445784d5445784d5445784d5445784d544577222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a22564f5445227d",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b226465636973696f6e223a22617070726f7665222c2270726f706f73616c5f6964223a227368613235363a65316662633562623136316632663466326363393631386164643436383961663165653333653864313032316438616439346235656235303765363237643832227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a34303a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a34303a30305a222c226e6f6e6365223a2262617365363475726c3a46425155464251554642515546425155464251554641222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a22564f5445227d",
     "unsigned": {
       "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
       "body": {
-        "bundle_digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
         "decision": "approve",
-        "proposal_id": "sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18"
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82"
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:40:00Z",
-      "expires_at": "2027-02-07T18:40:00Z",
-      "nonce": "base64url:ExMTExMTExMTExMTExMTEw",
+      "expires_at": "2027-12-14T18:40:00Z",
+      "nonce": "base64url:FBQUFBQUFBQUFBQUFBQUFA",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
       "type": "VOTE"
@@ -184,62 +552,108 @@
     "verify_at": "2026-11-10T18:10:00Z"
   },
   {
-    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"approvals\":[\"sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f\"],\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"proposal_id\":\"sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18\",\"skill_name\":\"pnpm-repository-convention\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:50:00Z\",\"expires_at\":\"2027-11-09T18:50:00Z\",\"nonce\":\"base64url:FBQUFBQUFBQUFBQUFBQUFA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"RELEASE\"}",
+    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"approvals\":[\"sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387\",\"sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1\"],\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:50:00Z\",\"expires_at\":\"2027-12-14T18:50:00Z\",\"nonce\":\"base64url:FRUVFRUVFRUVFRUVFRUVFQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"RESULT\"}",
     "context": "peerharness-event-v0",
-    "event_id": "sha256:6f9ccf0d2bd43c82a98449f52f18d4ecc7119bb3ae7e81a24ed95d624722b95c",
-    "name": "RELEASE",
+    "event_id": "sha256:0b6f920e2af310b0da11b4c7054c82cbad9d049d52f08bfa9d46686b03862074",
+    "name": "RESULT/adopt",
     "schema": "peerharness.event/0.1",
-    "signature": "base64url:RnDJip6o_4vHZ6EHW-rFNX3KEGDhOQoCNFf57zfng08IqMbJidTdnAWKmmYy8pVmCkIHTKtaffXjq6nvMLVvBA",
+    "signature": "base64url:GImY7jyw7mCXzrltxlHPOziufjUryt_n6eBPEonqO6IpA2bLXu92HaawgP_oSxdLzdVtnSu2mqkrwMae4a7yBg",
     "signed": {
-      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
       "body": {
         "approvals": [
-          "sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f"
+          "sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387",
+          "sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1"
         ],
-        "bundle_digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
-        "proposal_id": "sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18",
-        "skill_name": "pnpm-repository-convention"
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82"
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:50:00Z",
-      "event_id": "sha256:6f9ccf0d2bd43c82a98449f52f18d4ecc7119bb3ae7e81a24ed95d624722b95c",
-      "expires_at": "2027-11-09T18:50:00Z",
-      "nonce": "base64url:FBQUFBQUFBQUFBQUFBQUFA",
+      "event_id": "sha256:0b6f920e2af310b0da11b4c7054c82cbad9d049d52f08bfa9d46686b03862074",
+      "expires_at": "2027-12-14T18:50:00Z",
+      "nonce": "base64url:FRUVFRUVFRUVFRUVFRUVFQ",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
-      "signature": "base64url:RnDJip6o_4vHZ6EHW-rFNX3KEGDhOQoCNFf57zfng08IqMbJidTdnAWKmmYy8pVmCkIHTKtaffXjq6nvMLVvBA",
-      "type": "RELEASE"
+      "signature": "base64url:GImY7jyw7mCXzrltxlHPOziufjUryt_n6eBPEonqO6IpA2bLXu92HaawgP_oSxdLzdVtnSu2mqkrwMae4a7yBg",
+      "type": "RESULT"
     },
-    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"approvals\":[\"sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f\"],\"bundle_digest\":\"sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7\",\"proposal_id\":\"sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18\",\"skill_name\":\"pnpm-repository-convention\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:50:00Z\",\"event_id\":\"sha256:6f9ccf0d2bd43c82a98449f52f18d4ecc7119bb3ae7e81a24ed95d624722b95c\",\"expires_at\":\"2027-11-09T18:50:00Z\",\"nonce\":\"base64url:FBQUFBQUFBQUFBQUFBQUFA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:RnDJip6o_4vHZ6EHW-rFNX3KEGDhOQoCNFf57zfng08IqMbJidTdnAWKmmYy8pVmCkIHTKtaffXjq6nvMLVvBA\",\"type\":\"RELEASE\"}",
-    "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
-    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b22617070726f76616c73223a5b227368613235363a65653839306238653739373538636531346664363533373734366639376562303134386531366231343930636534303133376439343733303163363633663166225d2c2262756e646c655f646967657374223a227368613235363a62313063626163613730653831666433343531623963626336623437366564663163346265313962363264633061646535383866353231373162626232326337222c2270726f706f73616c5f6964223a227368613235363a32313962663637323732363537373265653639356234633866316532376334393333393237346164303866393962356630303833396138653030343665653138222c22736b696c6c5f6e616d65223a22706e706d2d7265706f7369746f72792d636f6e76656e74696f6e227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a35303a30305a222c22657870697265735f6174223a22323032372d31312d30395431383a35303a30305a222c226e6f6e6365223a2262617365363475726c3a46425155464251554642515546425155464251554641222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a2252454c45415345227d",
+    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"approvals\":[\"sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387\",\"sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1\"],\"proposal_id\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:50:00Z\",\"event_id\":\"sha256:0b6f920e2af310b0da11b4c7054c82cbad9d049d52f08bfa9d46686b03862074\",\"expires_at\":\"2027-12-14T18:50:00Z\",\"nonce\":\"base64url:FRUVFRUVFRUVFRUVFRUVFQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:GImY7jyw7mCXzrltxlHPOziufjUryt_n6eBPEonqO6IpA2bLXu92HaawgP_oSxdLzdVtnSu2mqkrwMae4a7yBg\",\"type\":\"RESULT\"}",
+    "signer_public_key": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b22617070726f76616c73223a5b227368613235363a61326132306632666534636661383364633931663733353266643862313430393466326232613132636165613438343637656132336631396233303637333837222c227368613235363a64623537323663346134636533313239653432643564336135656265326264376336316366333361353964386562336538353339643363663438363766636331225d2c2270726f706f73616c5f6964223a227368613235363a65316662633562623136316632663466326363393631386164643436383961663165653333653864313032316438616439346235656235303765363237643832227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a35303a30305a222c22657870697265735f6174223a22323032372d31322d31345431383a35303a30305a222c226e6f6e6365223a2262617365363475726c3a46525556465255564652555646525556465255564651222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a22524553554c54227d",
     "unsigned": {
-      "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
       "body": {
         "approvals": [
-          "sha256:ee890b8e79758ce14fd6537746f97eb0148e16b1490ce40137d947301c663f1f"
+          "sha256:a2a20f2fe4cfa83dc91f7352fd8b14094f2b2a12caea48467ea23f19b3067387",
+          "sha256:db5726c4a4ce3129e42d5d3a5ebe2bd7c61cf33a59d8eb3e8539d3cf4867fcc1"
         ],
-        "bundle_digest": "sha256:b10cbaca70e81fd3451b9cbc6b476edf1c4be19b62dc0ade588f52171bbb22c7",
-        "proposal_id": "sha256:219bf6727265772ee695b4c8f1e27c49339274ad08f99b5f00839a8e0046ee18",
-        "skill_name": "pnpm-repository-convention"
+        "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82"
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:50:00Z",
-      "expires_at": "2027-11-09T18:50:00Z",
-      "nonce": "base64url:FBQUFBQUFBQUFBQUFBQUFA",
+      "expires_at": "2027-12-14T18:50:00Z",
+      "nonce": "base64url:FRUVFRUVFRUVFRUVFRUVFQ",
       "schema": "peerharness.event/0.1",
       "scope": "team/backend",
-      "type": "RELEASE"
+      "type": "RESULT"
     },
     "verify_at": "2026-11-10T18:10:00Z"
   },
   {
-    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"acceptance\":{\"accepted_at\":\"2026-11-09T18:05:00Z\",\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"credential_digest\":\"sha256:73f7a3e42138f04568e8273ead88dbe36717db055e13d92b679bd3b41c9af373\",\"schema\":\"peerharness.acceptance/0.1\",\"signature\":\"base64url:_hM4GanG4DITTNm3aQKIJTEuBqov42OS7CHooyQP48UrxJFXGvGhRzHLyp0CLuHAhQWMT6Neo8n2_nENpIgDDw\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"},\"credential\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"issued_at\":\"2026-11-09T18:00:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"roles\":[\"member\"],\"schema\":\"peerharness.membership/0.1\",\"scopes\":[\"team/backend\"],\"signature\":\"base64url:O51ke3tZJS5AcQTTwBHgBg-P6V0thcc8iKh3D95nU6WHR_cZEBAyMbDL-T5f0xLw88wjSfpH9uKWl7-cJaKlDg\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:05:00Z\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"nonce\":\"base64url:FRUVFRUVFRUVFRUVFRUVFQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"MEMBERSHIP\"}",
+    "canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"charter\":\"sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e\",\"kind\":\"repeal\",\"summary\":\"The repository moved to bun.\",\"target\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\",\"title\":\"Drop the pnpm rule\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T08:00:00Z\",\"expires_at\":\"2027-12-15T08:00:00Z\",\"nonce\":\"base64url:FhYWFhYWFhYWFhYWFhYWFg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"type\":\"PROPOSAL\"}",
     "context": "peerharness-event-v0",
-    "event_id": "sha256:78dfcd52266a0d52567a175f57eb881c90bb4ad12534edbb4b4ebc49ab94aad6",
+    "event_id": "sha256:8b45e3fa3dae22ad0fb38701cbafc9d9f405e16e334707c45662e21b09ac3677",
+    "name": "PROPOSAL/repeal",
+    "schema": "peerharness.event/0.1",
+    "signature": "base64url:fOrAxNMCF9X67T3u7C2aOkOAKUHvjQjP_BlQIF8fvFySHQwsySDZu3ZblEuvZm_fQ82KLAfZQS8iP4KmYSw9BQ",
+    "signed": {
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "body": {
+        "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
+        "kind": "repeal",
+        "summary": "The repository moved to bun.",
+        "target": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+        "title": "Drop the pnpm rule"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-10T08:00:00Z",
+      "event_id": "sha256:8b45e3fa3dae22ad0fb38701cbafc9d9f405e16e334707c45662e21b09ac3677",
+      "expires_at": "2027-12-15T08:00:00Z",
+      "nonce": "base64url:FhYWFhYWFhYWFhYWFhYWFg",
+      "schema": "peerharness.event/0.1",
+      "scope": "team/backend",
+      "signature": "base64url:fOrAxNMCF9X67T3u7C2aOkOAKUHvjQjP_BlQIF8fvFySHQwsySDZu3ZblEuvZm_fQ82KLAfZQS8iP4KmYSw9BQ",
+      "type": "PROPOSAL"
+    },
+    "signed_canonical": "{\"author\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\",\"body\":{\"charter\":\"sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e\",\"kind\":\"repeal\",\"summary\":\"The repository moved to bun.\",\"target\":\"sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82\",\"title\":\"Drop the pnpm rule\"},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T08:00:00Z\",\"event_id\":\"sha256:8b45e3fa3dae22ad0fb38701cbafc9d9f405e16e334707c45662e21b09ac3677\",\"expires_at\":\"2027-12-15T08:00:00Z\",\"nonce\":\"base64url:FhYWFhYWFhYWFhYWFhYWFg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"team/backend\",\"signature\":\"base64url:fOrAxNMCF9X67T3u7C2aOkOAKUHvjQjP_BlQIF8fvFySHQwsySDZu3ZblEuvZm_fQ82KLAfZQS8iP4KmYSw9BQ\",\"type\":\"PROPOSAL\"}",
+    "signer_public_key": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945222c22626f6479223a7b2263686172746572223a227368613235363a66333835366332626665626530326235343061393631343838643063366161333262353463626462373535663636346134663239623433623038656562363565222c226b696e64223a2272657065616c222c2273756d6d617279223a22546865207265706f7369746f7279206d6f76656420746f2062756e2e222c22746172676574223a227368613235363a65316662633562623136316632663466326363393631386164643436383961663165653333653864313032316438616439346235656235303765363237643832222c227469746c65223a2244726f702074686520706e706d2072756c65227d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d31305430383a30303a30305a222c22657870697265735f6174223a22323032372d31322d31355430383a30303a30305a222c226e6f6e6365223a2262617365363475726c3a46685957466859574668595746685957466859574667222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a227465616d2f6261636b656e64222c2274797065223a2250524f504f53414c227d",
+    "unsigned": {
+      "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "body": {
+        "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
+        "kind": "repeal",
+        "summary": "The repository moved to bun.",
+        "target": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+        "title": "Drop the pnpm rule"
+      },
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "created_at": "2026-11-10T08:00:00Z",
+      "expires_at": "2027-12-15T08:00:00Z",
+      "nonce": "base64url:FhYWFhYWFhYWFhYWFhYWFg",
+      "schema": "peerharness.event/0.1",
+      "scope": "team/backend",
+      "type": "PROPOSAL"
+    },
+    "verify_at": "2026-11-10T18:10:00Z"
+  },
+  {
+    "canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"acceptance\":{\"accepted_at\":\"2026-11-09T18:05:00Z\",\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"credential_digest\":\"sha256:73f7a3e42138f04568e8273ead88dbe36717db055e13d92b679bd3b41c9af373\",\"schema\":\"peerharness.acceptance/0.1\",\"signature\":\"base64url:_hM4GanG4DITTNm3aQKIJTEuBqov42OS7CHooyQP48UrxJFXGvGhRzHLyp0CLuHAhQWMT6Neo8n2_nENpIgDDw\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"},\"credential\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"issued_at\":\"2026-11-09T18:00:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"roles\":[\"member\"],\"schema\":\"peerharness.membership/0.1\",\"scopes\":[\"team/backend\"],\"signature\":\"base64url:O51ke3tZJS5AcQTTwBHgBg-P6V0thcc8iKh3D95nU6WHR_cZEBAyMbDL-T5f0xLw88wjSfpH9uKWl7-cJaKlDg\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:05:00Z\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"nonce\":\"base64url:FxcXFxcXFxcXFxcXFxcXFw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"MEMBERSHIP\"}",
+    "context": "peerharness-event-v0",
+    "event_id": "sha256:f1e4a25a64a89fe298abc723fb06b8776a92226c8cc2eff8b34830422897fa80",
     "name": "MEMBERSHIP",
     "schema": "peerharness.event/0.1",
-    "signature": "base64url:yzYJsEz_oqwQzBu4OMAf3R6Ugvgfe3LV_kYd-4r_8DQxl5aViS42N-i0guiHG4RyrQ-BrY-WPMjr0CJII8JYBA",
+    "signature": "base64url:Ua33_mqWvMcyXmv-izAU0F54S_txT2axJXXeCCL_1j5m15B2yvxGmupHazLQRjNu2WVBStqNIFIYAyIPnNbSBg",
     "signed": {
       "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
       "body": {
@@ -269,17 +683,17 @@
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:05:00Z",
-      "event_id": "sha256:78dfcd52266a0d52567a175f57eb881c90bb4ad12534edbb4b4ebc49ab94aad6",
+      "event_id": "sha256:f1e4a25a64a89fe298abc723fb06b8776a92226c8cc2eff8b34830422897fa80",
       "expires_at": "2026-12-09T18:00:00Z",
-      "nonce": "base64url:FRUVFRUVFRUVFRUVFRUVFQ",
+      "nonce": "base64url:FxcXFxcXFxcXFxcXFxcXFw",
       "schema": "peerharness.event/0.1",
       "scope": "*",
-      "signature": "base64url:yzYJsEz_oqwQzBu4OMAf3R6Ugvgfe3LV_kYd-4r_8DQxl5aViS42N-i0guiHG4RyrQ-BrY-WPMjr0CJII8JYBA",
+      "signature": "base64url:Ua33_mqWvMcyXmv-izAU0F54S_txT2axJXXeCCL_1j5m15B2yvxGmupHazLQRjNu2WVBStqNIFIYAyIPnNbSBg",
       "type": "MEMBERSHIP"
     },
-    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"acceptance\":{\"accepted_at\":\"2026-11-09T18:05:00Z\",\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"credential_digest\":\"sha256:73f7a3e42138f04568e8273ead88dbe36717db055e13d92b679bd3b41c9af373\",\"schema\":\"peerharness.acceptance/0.1\",\"signature\":\"base64url:_hM4GanG4DITTNm3aQKIJTEuBqov42OS7CHooyQP48UrxJFXGvGhRzHLyp0CLuHAhQWMT6Neo8n2_nENpIgDDw\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"},\"credential\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"issued_at\":\"2026-11-09T18:00:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"roles\":[\"member\"],\"schema\":\"peerharness.membership/0.1\",\"scopes\":[\"team/backend\"],\"signature\":\"base64url:O51ke3tZJS5AcQTTwBHgBg-P6V0thcc8iKh3D95nU6WHR_cZEBAyMbDL-T5f0xLw88wjSfpH9uKWl7-cJaKlDg\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:05:00Z\",\"event_id\":\"sha256:78dfcd52266a0d52567a175f57eb881c90bb4ad12534edbb4b4ebc49ab94aad6\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"nonce\":\"base64url:FRUVFRUVFRUVFRUVFRUVFQ\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:yzYJsEz_oqwQzBu4OMAf3R6Ugvgfe3LV_kYd-4r_8DQxl5aViS42N-i0guiHG4RyrQ-BrY-WPMjr0CJII8JYBA\",\"type\":\"MEMBERSHIP\"}",
+    "signed_canonical": "{\"author\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\",\"body\":{\"acceptance\":{\"accepted_at\":\"2026-11-09T18:05:00Z\",\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"credential_digest\":\"sha256:73f7a3e42138f04568e8273ead88dbe36717db055e13d92b679bd3b41c9af373\",\"schema\":\"peerharness.acceptance/0.1\",\"signature\":\"base64url:_hM4GanG4DITTNm3aQKIJTEuBqov42OS7CHooyQP48UrxJFXGvGhRzHLyp0CLuHAhQWMT6Neo8n2_nENpIgDDw\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"},\"credential\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"issued_at\":\"2026-11-09T18:00:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"roles\":[\"member\"],\"schema\":\"peerharness.membership/0.1\",\"scopes\":[\"team/backend\"],\"signature\":\"base64url:O51ke3tZJS5AcQTTwBHgBg-P6V0thcc8iKh3D95nU6WHR_cZEBAyMbDL-T5f0xLw88wjSfpH9uKWl7-cJaKlDg\",\"subject_device_key\":\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-09T18:05:00Z\",\"event_id\":\"sha256:f1e4a25a64a89fe298abc723fb06b8776a92226c8cc2eff8b34830422897fa80\",\"expires_at\":\"2026-12-09T18:00:00Z\",\"nonce\":\"base64url:FxcXFxcXFxcXFxcXFxcXFw\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:Ua33_mqWvMcyXmv-izAU0F54S_txT2axJXXeCCL_1j5m15B2yvxGmupHazLQRjNu2WVBStqNIFIYAyIPnNbSBg\",\"type\":\"MEMBERSHIP\"}",
     "signer_public_key": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
-    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b22616363657074616e6365223a7b2261636365707465645f6174223a22323032362d31312d30395431383a30353a30305a222c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c2263726564656e7469616c5f646967657374223a227368613235363a37336637613365343231333866303435363865383237336561643838646265333637313764623035356531336439326236373962643362343163396166333733222c22736368656d61223a22706565726861726e6573732e616363657074616e63652f302e31222c227369676e6174757265223a2262617365363475726c3a5f684d3447616e4734444954544e6d3361514b494a54457542716f7634324f533743486f6f79515034385572784a465847764768527a484c797030434c7548416851574d54364e656f386e325f6e454e704967444477222c227375626a6563745f6465766963655f6b6579223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177227d2c2263726564656e7469616c223a7b22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22657870697265735f6174223a22323032362d31322d30395431383a30303a30305a222c226973737565645f6174223a22323032362d31312d30395431383a30303a30305a222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22726f6c6573223a5b226d656d626572225d2c22736368656d61223a22706565726861726e6573732e6d656d626572736869702f302e31222c2273636f706573223a5b227465616d2f6261636b656e64225d2c227369676e6174757265223a2262617365363475726c3a4f35316b6533745a4a533541635154547742486742672d503656307468636338694b68334439356e55365748525f635a454241794d62444c2d54356630784c773838776a5366704839754b576c372d634a614b6c4467222c227375626a6563745f6465766963655f6b6579223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177227d7d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a30353a30305a222c22657870697265735f6174223a22323032362d31322d30395431383a30303a30305a222c226e6f6e6365223a2262617365363475726c3a46525556465255564652555646525556465255564651222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a224d454d42455253484950227d",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177222c22626f6479223a7b22616363657074616e6365223a7b2261636365707465645f6174223a22323032362d31312d30395431383a30353a30305a222c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c2263726564656e7469616c5f646967657374223a227368613235363a37336637613365343231333866303435363865383237336561643838646265333637313764623035356531336439326236373962643362343163396166333733222c22736368656d61223a22706565726861726e6573732e616363657074616e63652f302e31222c227369676e6174757265223a2262617365363475726c3a5f684d3447616e4734444954544e6d3361514b494a54457542716f7634324f533743486f6f79515034385572784a465847764768527a484c797030434c7548416851574d54364e656f386e325f6e454e704967444477222c227375626a6563745f6465766963655f6b6579223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177227d2c2263726564656e7469616c223a7b22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22657870697265735f6174223a22323032362d31322d30395431383a30303a30305a222c226973737565645f6174223a22323032362d31312d30395431383a30303a30305a222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22726f6c6573223a5b226d656d626572225d2c22736368656d61223a22706565726861726e6573732e6d656d626572736869702f302e31222c2273636f706573223a5b227465616d2f6261636b656e64225d2c227369676e6174757265223a2262617365363475726c3a4f35316b6533745a4a533541635154547742486742672d503656307468636338694b68334439356e55365748525f635a454241794d62444c2d54356630784c773838776a5366704839754b576c372d634a614b6c4467222c227375626a6563745f6465766963655f6b6579223a22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177227d7d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d30395431383a30353a30305a222c22657870697265735f6174223a22323032362d31322d30395431383a30303a30305a222c226e6f6e6365223a2262617365363475726c3a46786358467863584678635846786358467863584677222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a224d454d42455253484950227d",
     "unsigned": {
       "author": "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
       "body": {
@@ -310,7 +724,7 @@
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-09T18:05:00Z",
       "expires_at": "2026-12-09T18:00:00Z",
-      "nonce": "base64url:FRUVFRUVFRUVFRUVFRUVFQ",
+      "nonce": "base64url:FxcXFxcXFxcXFxcXFxcXFw",
       "schema": "peerharness.event/0.1",
       "scope": "*",
       "type": "MEMBERSHIP"
@@ -318,12 +732,12 @@
     "verify_at": "2026-11-10T18:10:00Z"
   },
   {
-    "canonical": "{\"author\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"body\":{\"revocation\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"nonce\":\"base64url:MDAwMDAwMDAwMDAwMDAwMA\",\"reason\":\"device lost\",\"revoked_at\":\"2026-11-10T09:00:00Z\",\"schema\":\"peerharness.revocation/0.1\",\"signature\":\"base64url:VDI-81F7WlqH5tt3XjMuNzwb00O2loUnea6fb5u7dHt1ErSDb5V7abA549pcBPva3wpWrTxLd-SmqKlS2sR-Dw\",\"subject_device_key\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T09:00:00Z\",\"expires_at\":\"2027-11-10T09:00:00Z\",\"nonce\":\"base64url:FhYWFhYWFhYWFhYWFhYWFg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"REVOCATION\"}",
+    "canonical": "{\"author\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"body\":{\"revocation\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"nonce\":\"base64url:MDAwMDAwMDAwMDAwMDAwMA\",\"reason\":\"device lost\",\"revoked_at\":\"2026-11-10T09:00:00Z\",\"schema\":\"peerharness.revocation/0.1\",\"signature\":\"base64url:VDI-81F7WlqH5tt3XjMuNzwb00O2loUnea6fb5u7dHt1ErSDb5V7abA549pcBPva3wpWrTxLd-SmqKlS2sR-Dw\",\"subject_device_key\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T09:00:00Z\",\"expires_at\":\"2027-12-15T09:00:00Z\",\"nonce\":\"base64url:GBgYGBgYGBgYGBgYGBgYGA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"type\":\"REVOCATION\"}",
     "context": "peerharness-event-v0",
-    "event_id": "sha256:0a74ab3748ef9f0cd2aea8173a9db91ab235d44ebb108170dc4087061bc6a82b",
+    "event_id": "sha256:f31cde3e86808174b2d1d1133fdd722dd544394465a7a684b04d8ae8743ffa95",
     "name": "REVOCATION",
     "schema": "peerharness.event/0.1",
-    "signature": "base64url:QuQCWu1nhegLoe48Etda8YArfTRxb-zMhIj5Kx7xSPAn30dqhHOHrsPLjV2ih_AhkJPUsMu7w_pfnS8iCsMFDA",
+    "signature": "base64url:rIeGC4WXmNAXGqd5T4Pjes1eiwRPy8eKGawF1u-pnwcBO8enpvchXZjYJ6h2EusMqACJrZQ0dWY9PpjGPo8XDg",
     "signed": {
       "author": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
       "body": {
@@ -340,17 +754,17 @@
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-10T09:00:00Z",
-      "event_id": "sha256:0a74ab3748ef9f0cd2aea8173a9db91ab235d44ebb108170dc4087061bc6a82b",
-      "expires_at": "2027-11-10T09:00:00Z",
-      "nonce": "base64url:FhYWFhYWFhYWFhYWFhYWFg",
+      "event_id": "sha256:f31cde3e86808174b2d1d1133fdd722dd544394465a7a684b04d8ae8743ffa95",
+      "expires_at": "2027-12-15T09:00:00Z",
+      "nonce": "base64url:GBgYGBgYGBgYGBgYGBgYGA",
       "schema": "peerharness.event/0.1",
       "scope": "*",
-      "signature": "base64url:QuQCWu1nhegLoe48Etda8YArfTRxb-zMhIj5Kx7xSPAn30dqhHOHrsPLjV2ih_AhkJPUsMu7w_pfnS8iCsMFDA",
+      "signature": "base64url:rIeGC4WXmNAXGqd5T4Pjes1eiwRPy8eKGawF1u-pnwcBO8enpvchXZjYJ6h2EusMqACJrZQ0dWY9PpjGPo8XDg",
       "type": "REVOCATION"
     },
-    "signed_canonical": "{\"author\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"body\":{\"revocation\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"nonce\":\"base64url:MDAwMDAwMDAwMDAwMDAwMA\",\"reason\":\"device lost\",\"revoked_at\":\"2026-11-10T09:00:00Z\",\"schema\":\"peerharness.revocation/0.1\",\"signature\":\"base64url:VDI-81F7WlqH5tt3XjMuNzwb00O2loUnea6fb5u7dHt1ErSDb5V7abA549pcBPva3wpWrTxLd-SmqKlS2sR-Dw\",\"subject_device_key\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T09:00:00Z\",\"event_id\":\"sha256:0a74ab3748ef9f0cd2aea8173a9db91ab235d44ebb108170dc4087061bc6a82b\",\"expires_at\":\"2027-11-10T09:00:00Z\",\"nonce\":\"base64url:FhYWFhYWFhYWFhYWFhYWFg\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:QuQCWu1nhegLoe48Etda8YArfTRxb-zMhIj5Kx7xSPAn30dqhHOHrsPLjV2ih_AhkJPUsMu7w_pfnS8iCsMFDA\",\"type\":\"REVOCATION\"}",
+    "signed_canonical": "{\"author\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"body\":{\"revocation\":{\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"nonce\":\"base64url:MDAwMDAwMDAwMDAwMDAwMA\",\"reason\":\"device lost\",\"revoked_at\":\"2026-11-10T09:00:00Z\",\"schema\":\"peerharness.revocation/0.1\",\"signature\":\"base64url:VDI-81F7WlqH5tt3XjMuNzwb00O2loUnea6fb5u7dHt1ErSDb5V7abA549pcBPva3wpWrTxLd-SmqKlS2sR-Dw\",\"subject_device_key\":\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"}},\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"created_at\":\"2026-11-10T09:00:00Z\",\"event_id\":\"sha256:f31cde3e86808174b2d1d1133fdd722dd544394465a7a684b04d8ae8743ffa95\",\"expires_at\":\"2027-12-15T09:00:00Z\",\"nonce\":\"base64url:GBgYGBgYGBgYGBgYGBgYGA\",\"schema\":\"peerharness.event/0.1\",\"scope\":\"*\",\"signature\":\"base64url:rIeGC4WXmNAXGqd5T4Pjes1eiwRPy8eKGawF1u-pnwcBO8enpvchXZjYJ6h2EusMqACJrZQ0dWY9PpjGPo8XDg\",\"type\":\"REVOCATION\"}",
     "signer_public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
-    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22626f6479223a7b227265766f636174696f6e223a7b22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c226e6f6e6365223a2262617365363475726c3a4d4441774d4441774d4441774d4441774d4441774d41222c22726561736f6e223a22646576696365206c6f7374222c227265766f6b65645f6174223a22323032362d31312d31305430393a30303a30305a222c22736368656d61223a22706565726861726e6573732e7265766f636174696f6e2f302e31222c227369676e6174757265223a2262617365363475726c3a5644492d38314637576c714835747433586a4d754e7a776230304f326c6f556e6561366662357537644874314572534462355637616241353439706342507661337770577254784c642d536d714b6c533273522d4477222c227375626a6563745f6465766963655f6b6579223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945227d7d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d31305430393a30303a30305a222c22657870697265735f6174223a22323032372d31312d31305430393a30303a30305a222c226e6f6e6365223a2262617365363475726c3a46685957466859574668595746685957466859574667222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a225245564f434154494f4e227d",
+    "signing_input_hex": "706565726861726e6573732d6576656e742d7630007b22617574686f72223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22626f6479223a7b227265766f636174696f6e223a7b22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c226e6f6e6365223a2262617365363475726c3a4d4441774d4441774d4441774d4441774d4441774d41222c22726561736f6e223a22646576696365206c6f7374222c227265766f6b65645f6174223a22323032362d31312d31305430393a30303a30305a222c22736368656d61223a22706565726861726e6573732e7265766f636174696f6e2f302e31222c227369676e6174757265223a2262617365363475726c3a5644492d38314637576c714835747433586a4d754e7a776230304f326c6f556e6561366662357537644874314572534462355637616241353439706342507661337770577254784c642d536d714b6c533273522d4477222c227375626a6563745f6465766963655f6b6579223a22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945227d7d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c22637265617465645f6174223a22323032362d31312d31305430393a30303a30305a222c22657870697265735f6174223a22323032372d31322d31355430393a30303a30305a222c226e6f6e6365223a2262617365363475726c3a47426759474267594742675947426759474267594741222c22736368656d61223a22706565726861726e6573732e6576656e742f302e31222c2273636f7065223a222a222c2274797065223a225245564f434154494f4e227d",
     "unsigned": {
       "author": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
       "body": {
@@ -367,8 +781,8 @@
       },
       "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
       "created_at": "2026-11-10T09:00:00Z",
-      "expires_at": "2027-11-10T09:00:00Z",
-      "nonce": "base64url:FhYWFhYWFhYWFhYWFhYWFg",
+      "expires_at": "2027-12-15T09:00:00Z",
+      "nonce": "base64url:GBgYGBgYGBgYGBgYGBgYGA",
       "schema": "peerharness.event/0.1",
       "scope": "*",
       "type": "REVOCATION"

@@ -8,10 +8,11 @@ use ph_protocol::signing::{self, Context};
 use ph_protocol::wire::{Request, Response};
 use ph_protocol::{
     validate_stateless, validate_stateless_value, verify_acceptance, verify_credential,
-    verify_invite, verify_revocation, Acceptance, Authorization, EnvelopeBuilder, EventBody,
-    EventType, Invite, MembershipBody, MembershipCredential, ProposalBody, ProtocolError,
-    QuestionBody, Revocation, RevocationBody, SignedEnvelope, SigningKey, UnsignedAcceptance,
-    UnsignedEnvelope, UnsignedInvite, UnsignedMembershipCredential, UnsignedRevocation,
+    verify_invite, verify_revocation, Acceptance, AdoptAction, Authorization, EnvelopeBuilder,
+    EventBody, EventType, Invite, MembershipBody, MembershipCredential, ProposalAction,
+    ProposalBody, ProtocolError, QuestionBody, Revocation, RevocationBody, SignedEnvelope,
+    SigningKey, UnsignedAcceptance, UnsignedEnvelope, UnsignedInvite, UnsignedMembershipCredential,
+    UnsignedRevocation,
 };
 use serde_json::{json, Value};
 
@@ -227,14 +228,17 @@ fn every_envelope_member_is_bound_by_event_id_and_signature() {
             "type",
             UnsignedEnvelope {
                 body: EventBody::Proposal(ProposalBody {
-                    skill_name: "pnpm".into(),
-                    description: "d".into(),
+                    charter: Digest::sha256(b"charter"),
                     title: "t".into(),
-                    bundle_digest: Digest::sha256(b"b"),
-                    bundle_size: 1,
-                    related_question: None,
-                    supersedes: None,
-                    provenance_summary: String::new(),
+                    summary: String::new(),
+                    action: ProposalAction::Adopt(AdoptAction {
+                        skill_name: "pnpm".into(),
+                        description: "d".into(),
+                        bundle_digest: Digest::sha256(b"b"),
+                        bundle_size: 1,
+                        related_question: None,
+                        supersedes: None,
+                    }),
                 }),
                 ..base.clone()
             },
@@ -385,12 +389,16 @@ fn authorization_requirements() {
     let expected = [
         (EventType::Question, Authorization::Capability(Ask)),
         (EventType::Answer, Authorization::Capability(Answer)),
-        (EventType::Proposal, Authorization::Capability(Propose)),
-        (EventType::Vote, Authorization::Capability(Vote)),
-        (EventType::Release, Authorization::Capability(Publish)),
+        // Decision events are authorized by the roll of the charter they name, never
+        // by a credential capability.
+        (EventType::Proposal, Authorization::Roll),
+        (EventType::Vote, Authorization::Roll),
+        (EventType::Result, Authorization::Roll),
+        (EventType::Charter, Authorization::CircleRoot),
         (EventType::Membership, Authorization::EmbeddedCredential),
         (EventType::Revocation, Authorization::CircleRoot),
     ];
+    assert_eq!(expected.len(), EventType::ALL.len());
     for (t, a) in expected {
         assert_eq!(t.authorization(), a, "{t}");
     }

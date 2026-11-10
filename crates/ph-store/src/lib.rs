@@ -16,7 +16,8 @@
 //!   canonical strings, signed protocol objects as canonical (JCS) JSON text.
 //! * Integrity: the store verifies cheap, time-independent invariants (credential and
 //!   revocation signatures, acceptance binding, bundle digest vs. manifest, circle id
-//!   vs. root key, envelope signatures for [`Store::insert_signed_event`]). It does
+//!   vs. root key, charter signatures and chain links, envelope signatures for
+//!   [`Store::insert_signed_event`]). It does
 //!   **not** authorize anything: time rules, membership, scope, capability and
 //!   revocation checks belong to ph-protocol / ph-identity / ph-governance and must run
 //!   before data is stored or served.
@@ -34,7 +35,9 @@
 //! | table | methods |
 //! |---|---|
 //! | `identity_metadata` | [`Store::identity`], [`Store::set_identity`] |
-//! | `circles` | [`Store::insert_circle`], [`Store::circle`], [`Store::circle_by_name`], [`Store::circles`], [`Store::set_circle_policy`] |
+//! | `circles` | [`Store::insert_circle`], [`Store::circle`], [`Store::circle_by_name`], [`Store::circles`], [`Store::set_circle_adoption`] |
+//! | `charters` | [`Store::insert_charter`], [`Store::current_charter`], [`Store::charter_by_digest`], [`Store::charters`] |
+//! | `rule_optouts` | [`Store::set_rule_opt_out`], [`Store::clear_rule_opt_out`], [`Store::is_rule_opted_out`], [`Store::rule_opt_outs`] |
 //! | `memberships` | [`Store::upsert_membership_proof`], [`Store::upsert_membership`], [`Store::membership`], [`Store::memberships_for_circle`], [`Store::memberships_for_subject`], [`Store::self_membership`], [`Store::self_membership_proofs`], [`Store::all_membership_proofs`] |
 //! | `issued_invites` | [`Store::insert_issued_invite`], [`Store::issued_invites`] |
 //! | `revocations` | [`Store::insert_revocation`], [`Store::revocations_for_circle`], [`Store::all_revocations`], [`Store::revocation`], [`Store::is_revoked`], [`Store::revocation_epoch`] |
@@ -42,7 +45,7 @@
 //! | `observations` | [`Store::insert_observation`], [`Store::observation`], [`Store::recent_observations`], [`Store::purge_expired_observations`], [`Store::observation_count`] |
 //! | `candidates` | [`Store::insert_or_merge_candidate`], [`Store::candidate`], [`Store::candidate_by_concept`], [`Store::candidates`], [`Store::update_candidate_status`], `set_candidate_*` |
 //! | `questions` | [`Store::insert_question`], [`Store::question`], [`Store::inbox`], [`Store::local_questions`], [`Store::set_question_status`], [`Store::count_questions_by_author_since`], [`Store::count_questions_by_circle_since`], [`Store::question_text_exists`] |
-//! | `events` | [`Store::insert_event`], [`Store::insert_signed_event`], [`Store::insert_local_event_with_outbox`], [`Store::event`], [`Store::list_events`], [`Store::event_ids_for_circle`], [`Store::missing_for_peer`], [`Store::votes_for_proposal`], [`Store::proposals`], [`Store::proposals_with_bundle`], [`Store::answers_for_question`], [`Store::releases_for_proposal`] |
+//! | `events` | [`Store::insert_event`], [`Store::insert_signed_event`], [`Store::insert_local_event_with_outbox`], [`Store::event`], [`Store::list_events`], [`Store::event_ids_for_circle`], [`Store::missing_for_peer`], [`Store::votes_for_proposal`], [`Store::proposals`], [`Store::proposals_with_bundle`], [`Store::answers_for_question`], [`Store::results_for_proposal`], [`Store::repeals_of`] |
 //! | `outbox` | [`Store::enqueue_outbox`], [`Store::pending_for_peer`], [`Store::mark_delivered`], [`Store::bump_outbox_attempts`], [`Store::pending_outbox_count`], [`Store::peers_with_pending`], [`Store::drop_expired_outbox`] |
 //! | `bundles` | [`Store::insert_bundle`], [`Store::bundle`], [`Store::bundles`] |
 //! | `skills` | [`Store::insert_skill`], [`Store::skill`], [`Store::skill_by_name`], [`Store::skills_by_name`], [`Store::skills`], [`Store::set_skill_status`] |
@@ -54,6 +57,7 @@
 #![warn(missing_docs)]
 
 pub mod candidates;
+pub mod charters;
 pub mod circles;
 pub mod error;
 pub mod events;
@@ -74,7 +78,7 @@ pub use candidates::{
     CandidateId, CandidateRow, MAX_CANDIDATE_EVIDENCE, MAX_CANDIDATE_TEXT_BYTES,
     MAX_SKILL_DRAFT_BYTES,
 };
-pub use circles::{CircleRow, MAX_POLICY_JSON_BYTES};
+pub use circles::{CircleRow, ADOPTION_MODES};
 pub use error::{Result, StoreError};
 pub use events::{
     EventFilter, InsertOutcome, MissingEvents, MissingQuery, StoredEvent, DEFAULT_SYNC_MAX_BYTES,

@@ -80,12 +80,31 @@ fn circles() {
             Err(StoreError::Invalid { .. })
         ));
     }
-    let h = Digest::sha256(b"p2");
-    s.set_circle_policy(&circle(), "{}", &h).unwrap();
-    assert_eq!(s.circle(&circle()).unwrap().unwrap().policy_hash, h);
+    // The owner's adoption mode and the charter they accepted.
+    let row = s.circle(&circle()).unwrap().unwrap();
+    assert_eq!(
+        (row.adoption_mode.as_str(), row.accepted_charter),
+        ("ask", None)
+    );
+    let h = charter_digest();
+    s.set_circle_adoption(&circle(), "follow", &h).unwrap();
+    let row = s.circle(&circle()).unwrap().unwrap();
+    assert_eq!(row.adoption_mode, "follow");
+    assert_eq!(row.accepted_charter, Some(h));
     assert!(matches!(
-        s.set_circle_policy(&ph_core::CircleId::derive(&pk(5)), "{}", &h),
+        s.set_circle_adoption(&circle(), "always", &h),
+        Err(StoreError::Invalid { .. })
+    ));
+    assert!(matches!(
+        s.set_circle_adoption(&ph_core::CircleId::derive(&pk(5)), "ask", &h),
         Err(StoreError::NotFound { .. })
+    ));
+    let mut bad = circle_row();
+    bad.adoption_mode = "yolo".into();
+    bad.name = "gamma".into();
+    assert!(matches!(
+        s.insert_circle(&bad),
+        Err(StoreError::Invalid { .. })
     ));
 }
 

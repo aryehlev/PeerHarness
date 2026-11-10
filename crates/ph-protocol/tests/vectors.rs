@@ -17,11 +17,13 @@ use ph_protocol::bundle::{bundle_digest, manifest_for_files, BundleManifest};
 use ph_protocol::jcs::{self, ParseLimits};
 use ph_protocol::signing::{self, Context};
 use ph_protocol::{
-    validate_stateless, verify_acceptance, verify_credential, verify_invite, verify_revocation,
-    Acceptance, AnswerBody, AnswerChoice, EnvelopeBuilder, EventBody, Invite, JcsError,
-    MembershipBody, MembershipCredential, ProposalBody, QuestionBody, ReleaseBody, Revocation,
-    RevocationBody, SignedEnvelope, SigningKey, UnsignedAcceptance, UnsignedInvite,
-    UnsignedMembershipCredential, UnsignedRevocation, VoteBody, VoteDecision,
+    validate_stateless, verify_acceptance, verify_charter_signature, verify_credential,
+    verify_invite, verify_revocation, Acceptance, AdoptAction, AnswerBody, AnswerChoice, Charter,
+    CharterBody, CharterContent, Electorate, EnvelopeBuilder, EventBody, Invite, JcsError,
+    MembershipBody, MembershipCredential, ProposalAction, ProposalBody, QuestionBody, ResultBody,
+    Revocation, RevocationBody, RollEntry, SignedEnvelope, SigningKey, UnsignedAcceptance,
+    UnsignedCharter, UnsignedInvite, UnsignedMembershipCredential, UnsignedRevocation, VoteBody,
+    VoteDecision,
 };
 use serde_json::{json, Value};
 
@@ -146,119 +148,215 @@ fn bundle() -> BundleManifest {
     manifest_for_files(&[("SKILL.md", SKILL_MD.as_bytes())])
 }
 
-fn events() -> Vec<(SignedEnvelope, DeviceKey)> {
-    let question = EnvelopeBuilder::new(
-        circle(),
-        scope(),
+/// The founding charter: the device ("alice") is the only member.
+fn charter_1() -> Charter {
+    UnsignedCharter::founding(
+        pk(&root()),
+        CharterContent::founding(RollEntry::new(
+            "alice",
+            vec![pk(&device())],
+            vec![Scope::all()],
+        )),
+        ts("2026-11-09T18:00:00Z"),
+    )
+    .sign(&root())
+    .unwrap()
+}
+
+/// What the amendment in the vectors proposes: admit the peer as "bob".
+fn charter_2_content() -> CharterContent {
+    let mut next = charter_1().content.clone();
+    next.roll
+        .push(RollEntry::new("bob", vec![pk(&peer())], vec![scope()]));
+    next.normalize();
+    next
+}
+
+/// One named event vector: `(name, envelope, signer)`.
+type EventVector = (&'static str, SignedEnvelope, DeviceKey);
+
+/// The whole story, in order: a question and its answer; alice amends the charter to
+/// admit bob (one member, so her approval is the majority); the root notarizes charter
+/// 2; a rule is proposed under charter 2 and both members approve it; a repeal is
+/// proposed; plus one MEMBERSHIP and one REVOCATION event.
+fn story() -> (Vec<EventVector>, Charter) {
+    let sign = |body: EventBody, scope: Scope, at: &str, n: u8, key: &SigningKey| {
+        EnvelopeBuilder::new(circle(), scope, body)
+            .created_at(ts(at))
+            .nonce(nonce(n))
+            .sign(key, created())
+            .unwrap()
+    };
+    let vote = |proposal: &SignedEnvelope, scope: Scope, at: &str, n: u8, key: &SigningKey| {
+        sign(
+            EventBody::Vote(VoteBody {
+                proposal_id: proposal.event_id,
+                decision: VoteDecision::Approve,
+                rationale: None,
+            }),
+            scope,
+            at,
+            n,
+            key,
+        )
+    };
+
+    let question = sign(
         EventBody::Question(QuestionBody {
             question: "Should this repository use pnpm rather than npm?".into(),
             topic: "package-manager".into(),
             related_candidate: Some(Digest::sha256(b"local-candidate-1")),
         }),
-    )
-    .created_at(created())
-    .nonce(nonce(0x10))
-    .sign(&device(), created())
-    .unwrap();
-
-    let answer = EnvelopeBuilder::new(
-        circle(),
         scope(),
+        "2026-11-09T18:10:00Z",
+        0x10,
+        &device(),
+    );
+    let answer = sign(
         EventBody::Answer(AnswerBody {
             question_id: question.event_id,
             answer: AnswerChoice::Agree,
             rationale: Some("We switched to pnpm in March; the lockfile is pnpm-lock.yaml.".into()),
         }),
-    )
-    .created_at(ts("2026-11-09T18:20:00Z"))
-    .nonce(nonce(0x11))
-    .sign(&peer(), created())
-    .unwrap();
-
-    let manifest = bundle();
-    let proposal = EnvelopeBuilder::new(
-        circle(),
         scope(),
+        "2026-11-09T18:11:00Z",
+        0x11,
+        &peer(),
+    );
+
+    // Charter 1 -> charter 2: admit bob.
+    let c1 = charter_1();
+    let amend = sign(
         EventBody::Proposal(ProposalBody {
-            skill_name: "pnpm-repository-convention".into(),
-            description: "Use pnpm when installing packages or running package scripts in the specified repository.".into(),
-            title: "Use pnpm, not npm, in this repository".into(),
-            bundle_digest: bundle_digest(&manifest).unwrap(),
-            bundle_size: manifest.total_size(),
-            related_question: Some(question.event_id),
-            supersedes: None,
-            provenance_summary: "Corrected twice locally; peer agreed.".into(),
+            charter: c1.digest().unwrap(),
+            title: "Admit bob".into(),
+            summary: "Bob joins the backend team.".into(),
+            action: ProposalAction::Amend {
+                next: charter_2_content(),
+            },
         }),
-    )
-    .created_at(ts("2026-11-09T18:30:00Z"))
-    .nonce(nonce(0x12))
-    .sign(&device(), created())
-    .unwrap();
-
-    let vote = EnvelopeBuilder::new(
-        circle(),
-        scope(),
-        EventBody::Vote(VoteBody {
-            proposal_id: proposal.event_id,
-            bundle_digest: bundle_digest(&manifest).unwrap(),
-            decision: VoteDecision::Approve,
-            rationale: None,
-        }),
-    )
-    .created_at(ts("2026-11-09T18:40:00Z"))
-    .nonce(nonce(0x13))
-    .sign(&peer(), created())
-    .unwrap();
-
-    let release = EnvelopeBuilder::new(
-        circle(),
-        scope(),
-        EventBody::Release(ReleaseBody {
-            proposal_id: proposal.event_id,
-            bundle_digest: bundle_digest(&manifest).unwrap(),
-            skill_name: "pnpm-repository-convention".into(),
-            approvals: vec![vote.event_id],
-        }),
-    )
-    .created_at(ts("2026-11-09T18:50:00Z"))
-    .nonce(nonce(0x14))
-    .sign(&device(), created())
-    .unwrap();
-
-    let membership = EnvelopeBuilder::new(
-        circle(),
         Scope::all(),
+        "2026-11-09T18:01:00Z",
+        0x20,
+        &device(),
+    );
+    let amend_vote = vote(
+        &amend,
+        Scope::all(),
+        "2026-11-09T18:02:00Z",
+        0x21,
+        &device(),
+    );
+    let amend_result = sign(
+        EventBody::Result(ResultBody::new(amend.event_id, vec![amend_vote.event_id])),
+        Scope::all(),
+        "2026-11-09T18:03:00Z",
+        0x22,
+        &device(),
+    );
+    let c2 = UnsignedCharter::successor(
+        &c1,
+        charter_2_content(),
+        amend_result.event_id,
+        ts("2026-11-09T18:04:00Z"),
+    )
+    .unwrap()
+    .sign(&root())
+    .unwrap();
+    let charter_event = sign(
+        EventBody::Charter(CharterBody {
+            charter: c2.clone(),
+        }),
+        Scope::all(),
+        "2026-11-09T18:04:00Z",
+        0x23,
+        &root(),
+    );
+
+    // A rule proposed and passed under charter 2 (two members, both must approve).
+    let manifest = bundle();
+    let adopt = sign(
+        EventBody::Proposal(ProposalBody {
+            charter: c2.digest().unwrap(),
+            title: "Use pnpm, not npm, in this repository".into(),
+            summary: "Corrected twice locally; peer agreed.".into(),
+            action: ProposalAction::Adopt(AdoptAction {
+                skill_name: "pnpm-repository-convention".into(),
+                description: "Use pnpm when installing packages or running package scripts in the specified repository.".into(),
+                bundle_digest: bundle_digest(&manifest).unwrap(),
+                bundle_size: manifest.total_size(),
+                related_question: Some(question.event_id),
+                supersedes: None,
+            }),
+        }),
+        scope(),
+        "2026-11-09T18:30:00Z",
+        0x12,
+        &device(),
+    );
+    let vote_alice = vote(&adopt, scope(), "2026-11-09T18:31:00Z", 0x13, &device());
+    let vote_bob = vote(&adopt, scope(), "2026-11-09T18:40:00Z", 0x14, &peer());
+    let adopt_result = sign(
+        EventBody::Result(ResultBody::new(
+            adopt.event_id,
+            vec![vote_alice.event_id, vote_bob.event_id],
+        )),
+        scope(),
+        "2026-11-09T18:50:00Z",
+        0x15,
+        &peer(),
+    );
+    let repeal = sign(
+        EventBody::Proposal(ProposalBody {
+            charter: c2.digest().unwrap(),
+            title: "Drop the pnpm rule".into(),
+            summary: "The repository moved to bun.".into(),
+            action: ProposalAction::Repeal {
+                target: adopt.event_id,
+            },
+        }),
+        scope(),
+        "2026-11-10T08:00:00Z",
+        0x16,
+        &peer(),
+    );
+
+    let membership = sign(
         EventBody::Membership(MembershipBody {
             credential: credential(),
             acceptance: acceptance(),
         }),
-    )
-    .created_at(ts("2026-11-09T18:05:00Z"))
-    .nonce(nonce(0x15))
-    .sign(&device(), created())
-    .unwrap();
-
-    let revocation_event = EnvelopeBuilder::new(
-        circle(),
         Scope::all(),
+        "2026-11-09T18:05:00Z",
+        0x17,
+        &device(),
+    );
+    let revocation_event = sign(
         EventBody::Revocation(RevocationBody {
             revocation: revocation(),
         }),
-    )
-    .created_at(ts("2026-11-10T09:00:00Z"))
-    .nonce(nonce(0x16))
-    .sign(&root(), created())
-    .unwrap();
+        Scope::all(),
+        "2026-11-10T09:00:00Z",
+        0x18,
+        &root(),
+    );
 
-    vec![
-        (question, pk(&device())),
-        (answer, pk(&peer())),
-        (proposal, pk(&device())),
-        (vote, pk(&peer())),
-        (release, pk(&device())),
-        (membership, pk(&device())),
-        (revocation_event, pk(&root())),
-    ]
+    let events = vec![
+        ("QUESTION", question, pk(&device())),
+        ("ANSWER", answer, pk(&peer())),
+        ("PROPOSAL/amend", amend, pk(&device())),
+        ("VOTE/amend", amend_vote, pk(&device())),
+        ("RESULT/amend", amend_result, pk(&device())),
+        ("CHARTER", charter_event, pk(&root())),
+        ("PROPOSAL/adopt", adopt, pk(&device())),
+        ("VOTE/adopt-alice", vote_alice, pk(&device())),
+        ("VOTE/adopt-bob", vote_bob, pk(&peer())),
+        ("RESULT/adopt", adopt_result, pk(&peer())),
+        ("PROPOSAL/repeal", repeal, pk(&peer())),
+        ("MEMBERSHIP", membership, pk(&device())),
+        ("REVOCATION", revocation_event, pk(&root())),
+    ];
+    (events, c2)
 }
 
 fn jcs_vectors() -> Value {
@@ -359,9 +457,35 @@ fn error_code(e: &JcsError) -> &'static str {
     }
 }
 
+/// A copy of `v` whose object members are inserted in byte-wise key order at every
+/// level. serde_json's default `Map` is a `BTreeMap` (already in that order), but if
+/// Cargo ever unified the `preserve_order` feature into this build (any crate in the
+/// graph enabling it), `Map` would become an insertion-ordered `IndexMap` and
+/// `to_string_pretty` would follow `json!`/serializer field order instead. Rebuilding
+/// in sorted order gives the same bytes under both representations.
+fn sorted_keys(v: &Value) -> Value {
+    match v {
+        Value::Object(m) => {
+            let mut members: Vec<(&String, &Value)> = m.iter().collect();
+            members.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+            let mut out = serde_json::Map::new();
+            for (k, v) in members {
+                out.insert(k.clone(), sorted_keys(v));
+            }
+            Value::Object(out)
+        }
+        Value::Array(a) => Value::Array(a.iter().map(sorted_keys).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Pretty JSON with sorted keys (see [`sorted_keys`]) and a trailing newline.
+fn pretty(v: &Value) -> String {
+    serde_json::to_string_pretty(&sorted_keys(v)).unwrap() + "\n"
+}
+
 fn generate() -> BTreeMap<&'static str, String> {
     let mut out = BTreeMap::new();
-    let pretty = |v: &Value| serde_json::to_string_pretty(v).unwrap() + "\n";
 
     let keys = json!({
         "description": "Ed25519 seeds (RFC 8032 secret keys) used by every vector.",
@@ -386,11 +510,12 @@ fn generate() -> BTreeMap<&'static str, String> {
     out.insert("keys.json", pretty(&keys));
     out.insert("jcs.json", pretty(&jcs_vectors()));
 
-    let evs: Vec<Value> = events()
+    let (story_events, c2) = story();
+    let evs: Vec<Value> = story_events
         .into_iter()
-        .map(|(e, signer)| {
+        .map(|(name, e, signer)| {
             signed_vector(
-                e.event_type().as_str(),
+                name,
                 Context::Event,
                 &signer,
                 e.envelope.to_value().unwrap(),
@@ -414,6 +539,41 @@ fn generate() -> BTreeMap<&'static str, String> {
     });
     out.insert("credentials.json", pretty(&creds));
 
+    let c1 = charter_1();
+    let charter_vector = |name: &str, c: &Charter| {
+        let mut v = signed_vector(
+            name,
+            Context::Charter,
+            &pk(&root()),
+            c.unsigned.to_value().unwrap(),
+            c.to_value().unwrap(),
+            verify_at,
+        );
+        let whole: Vec<&str> = c
+            .content
+            .electorate(&Electorate::WholeRoll)
+            .map(|m| m.member.as_str())
+            .collect();
+        let backend_scope = scope();
+        let backend_electorate = Electorate::Scope(&backend_scope);
+        let backend: Vec<&str> = c
+            .content
+            .electorate(&backend_electorate)
+            .map(|m| m.member.as_str())
+            .collect();
+        v["electorates"] = json!({
+            "amend": {"members": whole, "need_pass": c.content.rules.pass.need(whole.len()), "need_amend": c.content.rules.amend.need(whole.len())},
+            "scope team/backend": {"members": backend, "need_pass": c.content.rules.pass.need(backend.len())},
+        });
+        v
+    };
+    let charters = json!({
+        "description": "The charter chain used by events.json. 'digest' is what a PROPOSAL names in its 'charter' member. charter_2.previous is charter_1.digest and charter_2.justification is the event_id of RESULT/amend. need(n, num/den) = floor(n*num/den) + 1.",
+        "charter_1": charter_vector("charter_1", &c1),
+        "charter_2": charter_vector("charter_2", &c2),
+    });
+    out.insert("charters.json", pretty(&charters));
+
     let m = bundle();
     let b = json!({
         "context": "peerharness-bundle-v0",
@@ -425,6 +585,25 @@ fn generate() -> BTreeMap<&'static str, String> {
     });
     out.insert("bundle.json", pretty(&b));
     out
+}
+
+#[test]
+fn pretty_output_is_independent_of_member_order() {
+    // Build the same object with members inserted in two different orders; under
+    // `preserve_order` the raw maps would serialize differently.
+    let mut a = serde_json::Map::new();
+    a.insert("b".into(), json!({"y": 1, "x": [ {"d": 1, "c": 2} ]}));
+    a.insert("a".into(), json!(null));
+    let mut b = serde_json::Map::new();
+    b.insert("a".into(), json!(null));
+    b.insert("b".into(), json!({"x": [ {"c": 2, "d": 1} ], "y": 1}));
+    let (a, b) = (Value::Object(a), Value::Object(b));
+    assert_eq!(pretty(&a), pretty(&b));
+    let text = pretty(&a);
+    let pos = |needle: &str| text.find(needle).unwrap();
+    assert!(pos("\"a\"") < pos("\"b\""));
+    assert!(pos("\"x\"") < pos("\"y\""));
+    assert!(pos("\"c\"") < pos("\"d\""));
 }
 
 #[test]
@@ -512,7 +691,16 @@ fn vectors_verify_with_public_api() {
 
     let events = load("events.json");
     let events = events.as_array().unwrap();
-    assert_eq!(events.len(), 7);
+    assert_eq!(events.len(), 13);
+    let names: Vec<&str> = events.iter().map(|v| v["name"].as_str().unwrap()).collect();
+    for t in ph_protocol::EventType::ALL {
+        assert!(
+            names
+                .iter()
+                .any(|n| n.split('/').next() == Some(t.as_str())),
+            "no vector for {t}"
+        );
+    }
     for v in events {
         let at = check_common(v, Context::Event);
         let raw = v["signed_canonical"].as_str().unwrap();
@@ -521,7 +709,19 @@ fn vectors_verify_with_public_api() {
             verified.event_id().to_string(),
             v["event_id"].as_str().unwrap()
         );
-        assert_eq!(verified.event_type().as_str(), v["name"].as_str().unwrap());
+        assert_eq!(
+            verified.event_type().as_str(),
+            v["name"].as_str().unwrap().split('/').next().unwrap()
+        );
+        assert_eq!(v["unsigned"]["type"], verified.event_type().as_str());
+        // Permanent records verify at any later time; the others do not.
+        let much_later = at.plus_days(3650);
+        assert_eq!(
+            validate_stateless(raw.as_bytes(), much_later).is_ok(),
+            verified.event_type().is_permanent(),
+            "{}",
+            v["name"]
+        );
         assert_eq!(verified.canonical_json(), raw);
         assert_eq!(
             verified.envelope.to_canonical_json().unwrap(),
@@ -566,6 +766,76 @@ fn vectors_verify_with_public_api() {
     let at = check_common(i, Context::Invite);
     let inv = Invite::from_json_bytes(i["signed_canonical"].as_str().unwrap().as_bytes()).unwrap();
     verify_invite(&inv, at).unwrap();
+
+    // The charter chain, and how the events refer to it.
+    let charters = load("charters.json");
+    let load_charter = |key: &str| -> Charter {
+        let v = &charters[key];
+        check_common(v, Context::Charter);
+        let c =
+            Charter::from_json_bytes(v["signed_canonical"].as_str().unwrap().as_bytes()).unwrap();
+        verify_charter_signature(&c).unwrap();
+        assert_eq!(
+            c.digest().unwrap().to_string(),
+            v["digest"].as_str().unwrap()
+        );
+        c
+    };
+    let c1 = load_charter("charter_1");
+    let c2 = load_charter("charter_2");
+    assert_eq!((c1.seq, c2.seq), (1, 2));
+    assert_eq!(c2.previous, Some(c1.digest().unwrap()));
+    let event = |name: &str| -> &Value { events.iter().find(|v| v["name"] == name).unwrap() };
+    let body = |name: &str| -> &Value { &event(name)["unsigned"]["body"] };
+    // The amendment was proposed under charter 1 and proposes exactly charter 2's content.
+    assert_eq!(
+        body("PROPOSAL/amend")["charter"],
+        c1.digest().unwrap().to_string()
+    );
+    let proposed: CharterContent =
+        serde_json::from_value(body("PROPOSAL/amend")["next"].clone()).unwrap();
+    assert_eq!(proposed, c2.content);
+    // Charter 2 is justified by the result of that amendment, which the CHARTER event carries.
+    assert_eq!(
+        c2.justification.unwrap().to_string(),
+        event("RESULT/amend")["event_id"].as_str().unwrap()
+    );
+    assert_eq!(body("CHARTER")["charter"], c2.to_value().unwrap());
+    assert_eq!(
+        body("RESULT/amend")["proposal_id"],
+        event("PROPOSAL/amend")["event_id"]
+    );
+    assert_eq!(
+        body("RESULT/amend")["approvals"],
+        json!([event("VOTE/amend")["event_id"]])
+    );
+    // One member under charter 1: her approval alone is the majority.
+    assert_eq!(c1.content.rules.pass.need(c1.content.roll.len()), 1);
+    // The rule was proposed under charter 2, where both members must approve.
+    assert_eq!(
+        body("PROPOSAL/adopt")["charter"],
+        c2.digest().unwrap().to_string()
+    );
+    assert_eq!(c2.content.rules.pass.need(c2.content.roll.len()), 2);
+    let approvals = body("RESULT/adopt")["approvals"].as_array().unwrap();
+    assert_eq!(approvals.len(), 2);
+    for vote in ["VOTE/adopt-alice", "VOTE/adopt-bob"] {
+        assert!(approvals.contains(&event(vote)["event_id"]));
+        assert_eq!(
+            body(vote)["proposal_id"],
+            event("PROPOSAL/adopt")["event_id"]
+        );
+        let signer: DeviceKey = event(vote)["signer_public_key"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(c2.content.member_of(&signer).is_some());
+    }
+    assert_eq!(
+        body("PROPOSAL/repeal")["target"],
+        event("PROPOSAL/adopt")["event_id"]
+    );
 
     let b = load("bundle.json");
     let files = b["files"].as_array().unwrap();

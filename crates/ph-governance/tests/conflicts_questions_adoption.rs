@@ -1,22 +1,35 @@
-//! Conflicts and supersede lineage, the question guard, and adoption readiness.
+//! Conflicts and supersede lineage, the question guard, and the adoption gate.
 
 mod common;
 
 use common::*;
 use ph_governance::{
-    adoption_readiness, evaluate_proposal, find_conflicts, normalize_question_text,
-    question_dedup_key, supersede_links, superseded_by, CirclePolicy, DropReason, GuardDecision,
-    LocalPolicy, NotReadyReason, ProposalView, QuestionContext, QuestionGuard, Readiness,
-    SupersedeKind,
+    adoption_step, find_conflicts, local_policy_met, normalize_question_text, question_dedup_key,
+    rules_in_force, supersede_links, superseded_by, tally, AdoptionMode, AdoptionStep, AskReason,
+    BundleChecks, DropReason, GuardDecision, LocalPolicy, OwnerChoice, Passed, ProposalView,
+    QuestionContext, QuestionGuard, RefuseReason, Rule, SupersedeKind,
 };
-use ph_protocol::{EventBody, VoteDecision};
+use ph_protocol::{Charter, EventBody, ProposalAction};
 
 const S: &str = "team/frontend";
-const SKILL: &str = "pnpm-repository-convention";
+
+fn team() -> Charter {
+    founding(vec![
+        entry("alice", &[1], &[S]),
+        entry("bob", &[2], &[S, "team/backend"]),
+        entry("carol", &[3], &[S]),
+    ])
+}
+
+fn proposal(seed: u8, scope_s: &str, d: ph_core::Digest) -> ProposalView {
+    adopt(seed, &team(), scope_s, d)
+}
 
 fn superseding(seed: u8, old: &ProposalView, d: ph_core::Digest, skill: &str) -> ProposalView {
-    let mut body = proposal_body(skill, d);
-    body.supersedes = Some(old.event_id());
+    let mut body = adopt_body(&team(), skill, d);
+    if let ProposalAction::Adopt(a) = &mut body.action {
+        a.supersedes = Some(old.event_id());
+    }
     ProposalView::from_envelope(&sign_at(
         &sk(seed),
         circle(),
@@ -50,27 +63,24 @@ fn conflicting_proposals_coexist_as_alternatives() {
     // Same digest only: no conflict.
     assert!(find_conflicts(&[a.clone(), a_again]).is_empty());
     assert!(find_conflicts(&[]).is_empty());
+    // Repeals and amendments are not alternatives of anything.
+    let c = team();
+    let r = repeal(2, &c, &a);
+    let am = amend(1, &c, c.content.clone());
+    assert!(find_conflicts(&[a, r, am]).is_empty());
 }
 
 #[test]
-fn votes_never_transfer_to_a_superseding_proposal() {
-    let o = TestOracle::new();
-    for seed in 1..=3 {
-        enroll(&o, seed, &[S]);
-    }
+fn approvals_never_transfer_to_a_superseding_proposal() {
+    let c = team();
     let old = proposal(1, S, digest(b"A"));
     let new = superseding(1, &old, digest(b"B"), SKILL);
-    let votes = [
-        vote(1, &old, VoteDecision::Approve),
-        vote(2, &old, VoteDecision::Approve),
-    ];
-    let policy = CirclePolicy::default();
-    let local = LocalPolicy::default();
-    let st_new = evaluate_proposal(&new, &votes, &o, &policy, &local, now());
-    assert!(!st_new.eligible);
-    assert!(st_new.approvers.is_empty());
-    // The superseded proposal keeps its own votes (superseding is not a veto).
-    assert!(evaluate_proposal(&old, &votes, &o, &policy, &local, now()).eligible);
+    let votes = [approve(1, &old), approve(2, &old)];
+    let t_new = tally(&new, &c, &votes, &nobody_revoked).unwrap();
+    assert!(!t_new.passed());
+    assert!(t_new.approvals().is_empty());
+    // The superseded proposal keeps its own approvals (superseding is not a veto).
+    assert!(tally(&old, &c, &votes, &nobody_revoked).unwrap().passed());
 
     let other_author = superseding(2, &old, digest(b"C"), SKILL);
     let renamed = superseding(1, &old, digest(b"D"), "other-skill");
@@ -184,41 +194,187 @@ fn question_guard_dedup_mute_block() {
     );
 }
 
-#[test]
-fn adoption_requires_every_check_and_the_human() {
-    let o = TestOracle::new();
-    for seed in 1..=2 {
-        enroll(&o, seed, &[S]);
-    }
+/// A rule in force, with the tally that passed it.
+fn passed_rule() -> (Rule, ph_governance::Tally) {
+    let c = team();
     let p = proposal(1, S, digest(b"A"));
-    let votes = [
-        vote(1, &p, VoteDecision::Approve),
-        vote(2, &p, VoteDecision::Approve),
+    let votes = [approve(1, &p), approve(2, &p)];
+    let t = tally(&p, &c, &votes, &nobody_revoked).unwrap();
+    let rs = rules_in_force(&c, &[Passed::by_vote(&p, &t, &c).unwrap()]);
+    (rs.get(SKILL).unwrap().clone(), t)
+}
+
+const CLEAN: BundleChecks = BundleChecks {
+    digest_verified: true,
+    skill_valid: true,
+    high_risk: false,
+};
+
+#[test]
+fn a_binding_circle_installs_a_passed_rule_and_an_advisory_one_asks() {
+    let (rule, _) = passed_rule();
+    let none = OwnerChoice::default();
+    assert_eq!(AdoptionMode::default_for(true), AdoptionMode::Follow);
+    assert_eq!(AdoptionMode::default_for(false), AdoptionMode::Ask);
+    assert_eq!(
+        adoption_step(&rule, AdoptionMode::Follow, CLEAN, none, true),
+        AdoptionStep::Install
+    );
+    assert_eq!(
+        adoption_step(&rule, AdoptionMode::Ask, CLEAN, none, true),
+        AdoptionStep::AskOwner(AskReason::AskMode)
+    );
+    // In ask mode the owner's confirmation installs it.
+    let confirmed = OwnerChoice {
+        confirmed: true,
+        ..none
+    };
+    assert_eq!(
+        adoption_step(&rule, AdoptionMode::Ask, CLEAN, confirmed, true),
+        AdoptionStep::Install
+    );
+}
+
+#[test]
+fn no_vote_and_no_confirmation_installs_a_bundle_that_fails_its_checks() {
+    let (rule, _) = passed_rule();
+    let eager = OwnerChoice {
+        opted_out: false,
+        confirmed: true,
+    };
+    for mode in [AdoptionMode::Follow, AdoptionMode::Ask] {
+        let bad_digest = BundleChecks {
+            digest_verified: false,
+            ..CLEAN
+        };
+        assert_eq!(
+            adoption_step(&rule, mode, bad_digest, eager, true),
+            AdoptionStep::Refuse(RefuseReason::BundleDigestUnverified)
+        );
+        let invalid = BundleChecks {
+            skill_valid: false,
+            ..CLEAN
+        };
+        assert_eq!(
+            adoption_step(&rule, mode, invalid, eager, true),
+            AdoptionStep::Refuse(RefuseReason::SkillInvalid)
+        );
+    }
+}
+
+#[test]
+fn high_risk_content_always_asks_even_in_a_binding_circle() {
+    let (rule, _) = passed_rule();
+    let risky = BundleChecks {
+        high_risk: true,
+        ..CLEAN
+    };
+    assert_eq!(
+        adoption_step(
+            &rule,
+            AdoptionMode::Follow,
+            risky,
+            OwnerChoice::default(),
+            true
+        ),
+        AdoptionStep::AskOwner(AskReason::HighRisk)
+    );
+    // Only the owner's explicit confirmation installs it.
+    let confirmed = OwnerChoice {
+        opted_out: false,
+        confirmed: true,
+    };
+    assert_eq!(
+        adoption_step(&rule, AdoptionMode::Follow, risky, confirmed, true),
+        AdoptionStep::Install
+    );
+}
+
+#[test]
+fn an_opt_out_keeps_a_passed_rule_off_this_machine() {
+    let (rule, _) = passed_rule();
+    let out = OwnerChoice {
+        opted_out: true,
+        confirmed: false,
+    };
+    assert_eq!(
+        adoption_step(&rule, AdoptionMode::Follow, CLEAN, out, true),
+        AdoptionStep::OptedOut
+    );
+    // Opting out wins over a stale confirmation.
+    let both = OwnerChoice {
+        opted_out: true,
+        confirmed: true,
+    };
+    assert_eq!(
+        adoption_step(&rule, AdoptionMode::Follow, CLEAN, both, true),
+        AdoptionStep::OptedOut
+    );
+}
+
+#[test]
+fn a_local_policy_can_hold_a_rule_back_but_not_change_whether_it_passed() {
+    let (rule, t) = passed_rule();
+    assert!(t.passed());
+    let empty = LocalPolicy::default();
+    assert!(local_policy_met(&empty, Some(&t)));
+    assert!(local_policy_met(&empty, None));
+
+    // "Only follow what bob approved": met, since alice and bob approved.
+    let needs_bob = LocalPolicy {
+        required_members: vec!["bob".into()],
+        min_approvals: None,
+    };
+    assert!(local_policy_met(&needs_bob, Some(&t)));
+    // "Only follow what carol approved": not met, so the owner is asked.
+    let needs_carol = LocalPolicy {
+        required_members: vec!["carol".into()],
+        min_approvals: None,
+    };
+    assert!(!local_policy_met(&needs_carol, Some(&t)));
+    let met = local_policy_met(&needs_carol, Some(&t));
+    assert_eq!(
+        adoption_step(
+            &rule,
+            AdoptionMode::Follow,
+            CLEAN,
+            OwnerChoice::default(),
+            met
+        ),
+        AdoptionStep::AskOwner(AskReason::LocalPolicy)
+    );
+    // "At least three approvals": two is not enough for this node.
+    let three = LocalPolicy {
+        required_members: Vec::new(),
+        min_approvals: Some(3),
+    };
+    assert!(!local_policy_met(&three, Some(&t)));
+    assert!(local_policy_met(
+        &LocalPolicy {
+            required_members: Vec::new(),
+            min_approvals: Some(2)
+        },
+        Some(&t)
+    ));
+    // A carried rule has no tally to check a non-empty policy against: ask.
+    assert!(!local_policy_met(&needs_bob, None));
+    // None of this changed the outcome of the vote.
+    assert!(t.passed());
+}
+
+#[test]
+fn adoption_step_codes_are_distinct() {
+    let all = [
+        AdoptionStep::Install,
+        AdoptionStep::AskOwner(AskReason::HighRisk),
+        AdoptionStep::AskOwner(AskReason::LocalPolicy),
+        AdoptionStep::AskOwner(AskReason::AskMode),
+        AdoptionStep::OptedOut,
+        AdoptionStep::Refuse(RefuseReason::BundleDigestUnverified),
+        AdoptionStep::Refuse(RefuseReason::SkillInvalid),
     ];
-    let policy = CirclePolicy::default();
-    let local = LocalPolicy::default();
-    let ok = evaluate_proposal(&p, &votes, &o, &policy, &local, now());
-    let not_ok = evaluate_proposal(&p, &votes[..1], &o, &policy, &local, now());
-    assert_eq!(adoption_readiness(&ok, true, true, true), Readiness::Ready);
-    assert!(adoption_readiness(&ok, true, true, true).is_ready());
-    assert_eq!(
-        adoption_readiness(&ok, true, true, false).reasons(),
-        &[NotReadyReason::AwaitingHumanConfirmation]
-    );
-    assert_eq!(
-        adoption_readiness(&not_ok, false, false, false),
-        Readiness::NotReady(vec![
-            NotReadyReason::ProposalNotEligible,
-            NotReadyReason::BundleDigestUnverified,
-            NotReadyReason::SkillInvalid,
-            NotReadyReason::AwaitingHumanConfirmation,
-        ])
-    );
-    // A status forged to claim eligibility while carrying blockers is still refused.
-    let mut forged = not_ok.clone();
-    forged.eligible = true;
-    assert_eq!(
-        adoption_readiness(&forged, true, true, true).reasons(),
-        &[NotReadyReason::ProposalNotEligible]
-    );
+    let codes: std::collections::HashSet<_> = all.iter().map(|s| s.code()).collect();
+    assert_eq!(codes.len(), all.len());
+    assert_eq!(AdoptionMode::Follow.as_str(), "follow");
+    assert_eq!(AdoptionMode::Ask.as_str(), "ask");
 }
