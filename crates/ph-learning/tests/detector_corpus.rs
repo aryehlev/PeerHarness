@@ -129,6 +129,10 @@ const POSITIVES: &[(&str, Pair)] = &[
         "Here is the log:\n```\nnpm ERR! use yarn instead of npm\n```\nNo, use pnpm, not npm.",
         (Some("pnpm"), Some("npm")),
     ),
+    // These two were negatives while a one-sided correction needed "in this repo". At
+    // the start of a prompt they are corrections (see the module docs of the detector).
+    ("Never use pip.", (None, Some("pip"))),
+    ("always use uv", (Some("uv"), None)),
 ];
 
 const NEGATIVES: &[&str] = &[
@@ -172,8 +176,6 @@ const NEGATIVES: &[&str] = &[
     "what if we use pnpm instead of npm",
     "use pnpm, not npm?",
     "do people prefer ruff over flake8",
-    "Never use pip.",
-    "always use uv",
     "use pnpm",
     "pnpm, not npm",
     "We tried using pnpm, not npm, and it broke",

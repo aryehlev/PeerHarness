@@ -4,43 +4,103 @@
 //! # Heuristics of the deterministic detector
 //!
 //! The detector looks only at [`ObservationKind::UserPrompt`] observations. Their text is
-//! ASCII-lowercased (which keeps byte offsets stable) and matched against a small set of
-//! correction patterns. `X` is the preferred option, `Y` the avoided one:
+//! ASCII-lowercased (which keeps byte offsets stable) and matched against a set of
+//! correction patterns. `X` is the preferred option, `Y` the avoided one.
+//!
+//! ## Corrections that name both sides
+//!
+//! These carry their own contrast, so they may stand anywhere in a prompt (subject to
+//! the filters below):
 //!
 //! | pattern | result |
 //! |---|---|
-//! | `don't use Y, use X` / `do not use Y; use X` / `never use Y. Use X` (an optional `in this repo` after `Y`, optional `but`/`instead` before the second `use`) | prefer X, avoid Y |
-//! | `use X instead of Y` / `using X instead of Y` | prefer X, avoid Y |
-//! | `use X, not Y` / `using X, not Y` (a comma or dash is required), which also covers `no, use X, not Y` and `we use X, not Y` | prefer X, avoid Y |
-//! | `we use X not Y` / `we're using X not Y` (no comma needed after `we`) | prefer X, avoid Y |
-//! | `prefer X over Y` | prefer X, avoid Y |
+//! | `don't use Y, use X` / `do not use Y; use X` / `never use Y. Use X` / `stop using Y, use X` (also `quit using`, `avoid using`; an optional `here`, `for ...` or `in this repo` after `Y`; the second half may be `we use X`, `we're using X`, `just use X`, `this repo uses X`) | prefer X, avoid Y |
+//! | `use X, don't use Y` / `use X. never use Y` / `use X and stop using Y` | prefer X, avoid Y |
+//! | `use X instead of Y` / `use X rather than Y` (also `using`, `go with`, `stick with`, `switch to`) | prefer X, avoid Y |
+//! | `use X, not Y` / `use X, never Y` / `use X not Y` (also `using`), which covers `no, use X, not Y` and `we use X here, not Y` | prefer X, avoid Y |
+//! | `prefer X over Y` / `prefer X to Y` / `prefer X rather than Y` | prefer X, avoid Y |
 //! | `this repo uses X, not Y` (`repo`, `repository`, `project`, `codebase`, `monorepo`, `workspace`) | prefer X, avoid Y |
+//! | `switch from Y to X` / `switch to X from Y` | prefer X, avoid Y |
+//!
+//! ## Corrections that name one side
+//!
+//! With a scope or as a plain statement, anywhere in a prompt:
+//!
+//! | pattern | result |
+//! |---|---|
 //! | `always use X (for\|in) (this\|the\|our) repo` | prefer X |
 //! | `never use Y (for\|in) this repo` / `don't use Y in this repo` | avoid Y |
+//! | `this repo uses X` / `we use X here` / `we use X in this repo`, when the clause ends there | prefer X |
+//! | `we don't use Y here` / `we never use Y in this repo`, when the clause ends there | avoid Y |
+//!
+//! Without a scope, only when the correction **opens the prompt**. A sentence such as
+//! "don't use recursion" in the middle of a task description is a constraint on that
+//! task; at the very start of a prompt it is a reaction to what the agent just did.
+//! "Opens" means that nothing comes before it but lead-ins such as `no`, `please`,
+//! `again`, `ok`, `from now on`, `i told you`:
+//!
+//! | pattern | result |
+//! |---|---|
+//! | `no, use X` / `nope, use X` / `wrong, we use X` / `no we use X` | prefer X |
+//! | `use X instead` (not `instead of`) | prefer X |
+//! | `switch to X` / `switch back to X` | prefer X |
+//! | `always use X` / `we always use X` | prefer X |
+//! | `don't use Y` / `never use Y` / `stop using Y` / `quit using Y` / `we don't use Y` | avoid Y |
+//!
+//! In every one-sided shape except the two `(for\|in) this repo` rows, the option must
+//! be named bare: `no, use pnpm`, not `no, use the helper` or `use a loop instead`. With
+//! an article the words point at something in the conversation, not at a tool or
+//! convention. `switch to main` and `switch to the staging branch` are navigation, not
+//! corrections (see `SWITCH_DENY`).
+//!
+//! A single matching prompt is enough for a candidate, as it always was: it comes out
+//! with [`Confidence::Low`] and waits for a human (see "Grouping and confidence").
+//!
+//! ## What is not recognized
+//!
+//! A correction that is a whole sentence with nothing to prefer or avoid ("always run
+//! the tests before you say you're done", "never commit directly to main") has no
+//! `preferred`/`avoided` pair and is left alone: a detected candidate is built from
+//! extracted tokens and fixed templates only, never from the prompt's own words (see
+//! the crate docs, "Privacy"). Such a rule is written down with `peerharness note`.
+//! Shapes without a verb (`no, tabs`, `not npm, pnpm`, `pnpm, not npm`) and corrections
+//! spread over two sentences are not recognized either.
+//!
+//! ## Filters
 //!
 //! Precision matters more than recall, so a match is **discarded** when any of these hold:
 //!
 //! * the sentence containing it ends with `?` (a question, not a correction);
-//! * the clause before the match (back to the previous sentence end, comma, semicolon,
-//!   colon, parenthesis or dash) has more than six words, starts with a question or
-//!   auxiliary word (`should`, `can`, `do`, `is`, ...), or contains a first or third
-//!   person subject (`I`, `my`, `they`, `people`, ...), a hedge (`maybe`, `can`,
-//!   `usually`, ...), a negation (`don't`, `not`, `never`, ...), a conditional or
-//!   interrogative (`if`, `when`, `why`, `whether`, ...), reported speech (`said`,
-//!   `told`, `say`, ...) or permission (`fine`, `free`, `allowed`, `ok`, ...), as in
-//!   `feel free to use npm`. `you` is accepted only when followed by `should`, `must`, `need`,
-//!   `have`, `gotta` or `ought` (`you should use X, not Y`);
+//! * for a shape that may stand anywhere: the clause before the match (back to the
+//!   previous sentence end, comma, semicolon, colon, parenthesis or dash) has more than
+//!   six words, starts with a question or auxiliary word (`should`, `can`, `do`, `is`,
+//!   ...), or contains a first or third person subject (`I`, `my`, `they`, `people`,
+//!   ...), a hedge (`maybe`, `can`, `usually`, ...), a negation (`don't`, `not`,
+//!   `never`, ...), a conditional or interrogative (`if`, `when`, `why`, `whether`,
+//!   ...), reported speech (`said`, `told`, `say`, ...) or permission (`fine`, `free`,
+//!   `allowed`, `ok`, ...), as in `feel free to use npm`. `you` is accepted only when
+//!   followed by `should`, `must`, `need`, `have`, `gotta` or `ought`
+//!   (`you should use X, not Y`);
 //! * the sentence contains a word typical of pasted tool output (`deprecated`, `warn`,
-//!   `warning`, `error`, `err`, `fatal`, `hint`, `traceback`, `exception`);
+//!   `warning`, `error`, `err`, `fatal`, `hint`, `help`, `traceback`, `exception`);
 //! * a hedge or condition follows the match in the same sentence (`if`, `unless`,
-//!   `whether`, `maybe`, `perhaps`, `probably`, `guess`, `lol`, `jk`, ...);
+//!   `whether`, `maybe`, `perhaps`, `probably`, `guess`, `lol`, `jk`, ...), or the
+//!   sentence says that it is meant for once (`for now`, `this time`, `temporarily`,
+//!   `in this file`, ...). After a one-sided shape, `when`, `while`, `until`, `before`,
+//!   `after`, `during`, `except`, `without` and `yet` count too ("don't use caching
+//!   when ...", "never use force push without asking"): the rule that would come out
+//!   has no room for the condition;
 //! * the match is inside a fenced code block (```` ``` ```` or `~~~`) or a Markdown
 //!   blockquote line (`>`), i.e. quoted text rather than the user's own words;
 //! * a token is not a short tool or identifier (see below), or `X == Y`.
 //!
-//! So `No, use pnpm, not npm.` and `We use pnpm, not npm, for this repo.` trigger, while
-//! `Should we use pnpm instead of npm?`, `use npm install to add deps` and
-//! `I use vim, not emacs` do not.
+//! When two matches overlap, the one that names both sides wins, and a one-sided
+//! correction is dropped when the same prompt already says it with both sides.
+//!
+//! So `No, use pnpm, not npm.`, `We use pnpm, not npm, for this repo.` and `no, use pnpm`
+//! trigger, while `Should we use pnpm instead of npm?`, `use npm install to add deps`,
+//! `I use vim, not emacs`, `use the function above` and `can you use a loop here?` do
+//! not.
 //!
 //! # Tokens
 //!
@@ -48,7 +108,8 @@
 //! Surrounding quotes and backticks are allowed and stripped, as are trailing `.`, `-`
 //! and `/`. A leading article (`the`, `a`, `an`) is dropped, and the token is cut at the
 //! first stop word (`for`, `in`, `to`, `instead`, `here`, filler such as `going`,
-//! `thanks`, `lol`, and generic adjectives such as `new`, `old`, `right`, `other`), so
+//! `thanks`, `lol`, quantifiers such as `more`, `every`, and generic or pointing words
+//! such as `new`, `old`, `right`, `other`, `above`, `first`), so
 //! `use pnpm, not npm for installs` yields `npm` and `use the new api, not the old one`
 //! yields nothing. A token is rejected if it becomes empty, has no ASCII letter, starts
 //! with something other than a letter, digit or `@`, contains `..` or `//`, contains
@@ -317,9 +378,89 @@ enum Shape {
     AvoidOnly,
 }
 
+/// Where in a prompt a pattern may match.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Place {
+    /// Anywhere, when the clause before the match passes [`prefix_words_ok`].
+    Clause,
+    /// Only where the prompt opens: nothing before the match but lead-ins
+    /// ([`opens_prompt`]).
+    Opening,
+}
+
+/// One correction pattern: the regex source and how its matches are judged.
+struct Spec {
+    src: String,
+    shape: Shape,
+    place: Place,
+    /// The clause must end right after the match ("this repo uses pnpm."): a statement
+    /// that goes on ("this repo uses typescript and react, add ...") is context.
+    closed: bool,
+    /// The option must be named without an article.
+    bare: bool,
+    /// A `switch to X` shape: tokens with a word from [`SWITCH_DENY`] are navigation.
+    switch: bool,
+    /// The word after the match must not be this one (`use X instead` + `of`).
+    not_before: Option<&'static str>,
+}
+
+impl Spec {
+    /// A shape that names both sides, valid anywhere.
+    fn both(src: String) -> Self {
+        Self {
+            src,
+            shape: Shape::Both,
+            place: Place::Clause,
+            closed: false,
+            bare: false,
+            switch: false,
+            not_before: None,
+        }
+    }
+
+    /// A one-sided shape that carries its own scope (`... in this repo`), valid anywhere.
+    fn scoped(src: String, shape: Shape) -> Self {
+        Self {
+            shape,
+            ..Self::both(src)
+        }
+    }
+
+    /// A one-sided statement (`this repo uses X`), valid anywhere when the clause ends
+    /// with it.
+    fn statement(src: String, shape: Shape) -> Self {
+        Self {
+            shape,
+            closed: true,
+            bare: true,
+            ..Self::both(src)
+        }
+    }
+
+    /// A one-sided shape with no scope, valid only where the prompt opens.
+    fn opening(src: String, shape: Shape) -> Self {
+        Self {
+            shape,
+            place: Place::Opening,
+            bare: true,
+            ..Self::both(src)
+        }
+    }
+
+    fn switch(mut self) -> Self {
+        self.switch = true;
+        self
+    }
+
+    fn not_before(mut self, word: &'static str) -> Self {
+        self.not_before = Some(word);
+        self
+    }
+}
+
 struct Pattern {
     re: Regex,
-    shape: Shape,
+    spec: Spec,
 }
 
 const QUOTE: &str = r#"[`'"\x{201C}\x{201D}\x{2018}\x{2019}]?"#;
@@ -329,61 +470,118 @@ const REPO: &str = r"(?:this|the|our)\s+(?:repo|repository|project|codebase|mono
 const APOS: &str = r"['\x{2019}]";
 const DASH: &str = r"(?:--?|\x{2014}|\x{2013})";
 
+/// A token: an optional article (captured as `<name>a`, so `the \`logging\` module`
+/// works), optional quotes, and 1-3 words.
 fn tok(name: &str) -> String {
-    format!("{QUOTE}(?P<{name}>{WORD}(?:[ \t]+{WORD}){{0,2}}){QUOTE}")
+    format!(
+        "(?:(?P<{name}a>the|an|a)[ \t]+)?{QUOTE}(?P<{name}>{WORD}(?:[ \t]+{WORD}){{0,2}}){QUOTE}"
+    )
 }
 
-static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
+fn pattern_specs() -> Vec<Spec> {
     let x = tok("x");
     let y = tok("y");
-    let neg = format!(r"(?:do\s+not|don{APOS}?t|never)");
-    let specs: Vec<(String, Shape)> = vec![
-        // don't use Y, use X / do not use Y; use X / never use Y in this repo, use X
-        (
-            format!(
-                r"\b{neg}\s+use\s+{y}(?:\s+(?:for|in)\s+{REPO})?\s*(?:[,;:.!]|{DASH})?\s*(?:(?:but|and|instead)\s*,?\s+)?(?:(?:just|please|always)\s+)?use\s+{x}"
-            ),
-            Shape::Both,
-        ),
-        // use X instead of Y
-        (
-            format!(r"\b(?:use|using)\s+{x}\s+instead\s+of\s+{y}"),
-            Shape::Both,
-        ),
-        // use X, not Y (also "no, use X, not Y" and "we use X, not Y")
-        (
-            format!(r"\b(?:use|using)\s+{x}\s*(?:,|{DASH})\s*(?:(?:and|but)\s+)?not\s+{y}"),
-            Shape::Both,
-        ),
-        // we use X not Y
-        (
-            format!(r"\bwe(?:\s+use|\s+are\s+using|{APOS}re\s+using)\s+{x}\s+not\s+{y}"),
-            Shape::Both,
-        ),
-        // prefer X over Y
-        (format!(r"\bprefer\s+{x}\s+over\s+{y}"), Shape::Both),
+    // "don't use", "never use", "stop using": what introduces the avoided option.
+    let neg_use = format!(
+        r"(?:(?:do\s+not|don{APOS}?t|never)\s+(?:ever\s+)?use|(?:stop|quit|avoid)\s+using)"
+    );
+    // Filler between a token and what follows it. An unquoted token takes up to two
+    // more words itself ("pnpm to install"); a quoted one cannot ("`print` for logging").
+    let fill = format!(
+        r"(?:[ \t]+(?:here|now|please|pls|plz|always|only|everywhere|too|anymore)|[ \t]+(?:for|in|to|on|with)[ \t]+{WORD}(?:[ \t]+{WORD})?)?"
+    );
+    // The second half of "don't use Y, use X".
+    let then_use = format!(
+        r"(?:(?:but|and|instead)\s*,?\s+)?(?:(?:we{APOS}re|we\s+are|we|you)\s+)?(?:(?:just|please|always|only|should|must)\s+)?(?:use|using)\s+{x}"
+    );
+    let after_y = format!(r"(?:\s+(?:for|in)\s+{REPO})?{fill}\s*(?:[,;:.!]|{DASH})?\s*");
+    let switch = r"\bswitch(?:\s+(?:back|over))?";
+    let scope = format!(r"\s+(?:here|(?:for|in)\s+{REPO})");
+    vec![
+        // don't use Y, use X / do not use Y; use X / stop using Y here, we use X
+        Spec::both(format!(r"\b{neg_use}\s+{y}{after_y}{then_use}")),
+        // don't use Y, this repo uses X
+        Spec::both(format!(r"\b{neg_use}\s+{y}{after_y}{REPO}\s+uses\s+{x}")),
+        // use X, don't use Y / use X. never use Y / use X and stop using Y
+        Spec::both(format!(
+            r"\b(?:use|using)\s+{x}{fill}(?:\s*(?:[,;.!]|{DASH})\s*(?:(?:and|but)\s+)?|\s+(?:and|but)\s+){neg_use}\s+{y}"
+        )),
+        // use X instead of Y / use X rather than Y
+        Spec::both(format!(
+            r"\b(?:use|using|go\s+with|stick\s+(?:with|to))\s+{x}{fill}\s+(?:instead\s+of|rather\s+than)\s+{y}"
+        )),
+        Spec::both(format!(
+            r"{switch}\s+to\s+{x}{fill}\s+(?:instead\s+of|rather\s+than)\s+{y}"
+        ))
+        .switch(),
+        // use X, not Y / use X, never Y (also "no, use X, not Y" and "we use X, not Y")
+        Spec::both(format!(
+            r"\b(?:use|using)\s+{x}{fill}\s*(?:,|{DASH})\s*(?:(?:and|but)\s+)?(?:not|never)\s+{y}"
+        )),
+        // use X not Y
+        Spec::both(format!(r"\b(?:use|using)\s+{x}{fill}\s+not\s+{y}")),
+        // prefer X over Y / prefer X to Y
+        Spec::both(format!(
+            r"\bprefer\s+{x}{fill}\s+(?:over|to|rather\s+than|instead\s+of)\s+{y}"
+        )),
         // this repo uses X, not Y
-        (
-            format!(r"\b{REPO}\s+uses\s+{x}\s*(?:,|{DASH})?\s*(?:(?:and|but)\s+)?not\s+{y}"),
-            Shape::Both,
-        ),
+        Spec::both(format!(
+            r"\b{REPO}\s+uses\s+{x}{fill}\s*(?:,|{DASH})?\s*(?:(?:and|but)\s+)?not\s+{y}"
+        )),
+        // switch from Y to X / switch to X from Y
+        Spec::both(format!(r"{switch}\s+from\s+{y}\s+to\s+{x}")).switch(),
+        Spec::both(format!(r"{switch}\s+to\s+{x}\s+from\s+{y}")).switch(),
         // always use X for this repo
-        (
+        Spec::scoped(
             format!(r"\balways\s+use\s+{x}\s+(?:for|in)\s+{REPO}"),
             Shape::PreferOnly,
         ),
         // never use Y in this repo
-        (
+        Spec::scoped(
             format!(
                 r"\b(?:never|do\s+not|don{APOS}?t)\s+(?:ever\s+)?use\s+{y}\s+(?:for|in)\s+{REPO}"
             ),
             Shape::AvoidOnly,
         ),
-    ];
-    specs
+        // this repo uses X.
+        Spec::statement(format!(r"\b{REPO}\s+uses\s+{x}"), Shape::PreferOnly),
+        // we use X here. / we always use X in this repo.
+        Spec::statement(
+            format!(r"\bwe\s+(?:always\s+)?use\s+{x}{scope}"),
+            Shape::PreferOnly,
+        ),
+        // we don't use Y here. / we never use Y in this repo.
+        Spec::statement(
+            format!(r"\bwe\s+(?:do\s+not|don{APOS}?t|never)\s+use\s+{y}{scope}"),
+            Shape::AvoidOnly,
+        ),
+        // no, use X / nope, use X / wrong, we use X / no we use X. Without punctuation
+        // after "no" one of we/you/just/please is required ("it's no use trying").
+        Spec::opening(
+            format!(
+                r"\b(?:no+|nope|nah|wrong)(?:\s*(?:[,.!:;]+|{DASH})\s*(?:(?:we|you|just|please|always|should|must)\s+){{0,2}}|\s+(?:(?:we|you|just|please)\s+){{1,2}})use\s+{x}"
+            ),
+            Shape::PreferOnly,
+        ),
+        // use X instead
+        Spec::opening(format!(r"\buse\s+{x}\s+instead\b"), Shape::PreferOnly).not_before("of"),
+        // switch to X
+        Spec::opening(format!(r"{switch}\s+to\s+{x}"), Shape::PreferOnly).switch(),
+        // always use X / we always use X
+        Spec::opening(
+            format!(r"\b(?:we\s+)?always\s+use\s+{x}"),
+            Shape::PreferOnly,
+        ),
+        // don't use Y / never use Y / stop using Y / we don't use Y
+        Spec::opening(format!(r"\b(?:we\s+)?{neg_use}\s+{y}"), Shape::AvoidOnly),
+    ]
+}
+
+static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
+    pattern_specs()
         .into_iter()
-        .filter_map(|(src, shape)| match Regex::new(&src) {
-            Ok(re) => Some(Pattern { re, shape }),
+        .filter_map(|spec| match Regex::new(&spec.src) {
+            Ok(re) => Some(Pattern { re, spec }),
             Err(_) => {
                 // The patterns are static and covered by tests; never panic at runtime.
                 tracing::error!("ph-learning: a built-in correction pattern failed to compile");
@@ -511,9 +709,179 @@ const STOP_WORDS: &[&str] = &[
     "else",
     "existing",
     "current",
+    // quantifiers: "don't use more than 2 workers" names no tool
+    "more",
+    "less",
+    "fewer",
+    "many",
+    "much",
+    "most",
+    "some",
+    "few",
+    "several",
+    "each",
+    "every",
+    "another",
+    "such",
+    "very",
+    "even",
+    "still",
+    "up",
+    // pointing at something in the conversation: "use the function above"
+    "above",
+    "below",
+    "previous",
+    "earlier",
+    "first",
+    "second",
+    "third",
+    "last",
+    "original",
+    "following",
+    "latter",
+    "former",
+    "what",
+    "how",
+    "why",
+    "who",
+    "where",
+    // the start of a condition or circumstance: "npm until the registry is back"
+    "until",
+    "before",
+    "after",
+    "during",
+    "except",
+    "without",
 ];
 
 const ARTICLES: &[&str] = &["the", "a", "an"];
+
+/// Words that make `switch to X` a navigation request rather than a correction:
+/// branches, environments and parts of the screen.
+const SWITCH_DENY: &[&str] = &[
+    "branch",
+    "branches",
+    "main",
+    "master",
+    "develop",
+    "dev",
+    "trunk",
+    "staging",
+    "prod",
+    "production",
+    "release",
+    "head",
+    "commit",
+    "tag",
+    "tab",
+    "window",
+    "pane",
+    "terminal",
+    "mode",
+    "view",
+    "page",
+    "screen",
+    "file",
+    "folder",
+    "directory",
+    "dir",
+    "account",
+    "profile",
+    "user",
+    "task",
+    "step",
+    "topic",
+    "plan",
+    "approach",
+    "model",
+];
+
+/// What may come before a correction that opens the prompt, as word sequences (longest
+/// first where one starts another). `no`, `noo`, ... are accepted separately.
+const LEAD_INS: &[&[&str]] = &[
+    &["i", "already", "told", "you"],
+    &["for", "the", "last", "time"],
+    &["i", "told", "you"],
+    &["i", "already", "said"],
+    &["like", "i", "said"],
+    &["as", "i", "said"],
+    &["from", "now", "on"],
+    &["one", "more", "time"],
+    &["in", "the", "future"],
+    &["i", "said"],
+    &["going", "forward"],
+    &["once", "again"],
+    &["in", "future"],
+    &["next", "time"],
+    &["come", "on"],
+    &["nope"],
+    &["nah"],
+    &["wrong"],
+    &["stop"],
+    &["wait"],
+    &["hey"],
+    &["ok"],
+    &["okay"],
+    &["please"],
+    &["pls"],
+    &["plz"],
+    &["again"],
+    &["also"],
+    &["and"],
+    &["but"],
+    &["so"],
+    &["ugh"],
+    &["hmm"],
+    &["well"],
+    &["actually"],
+    &["seriously"],
+    &["look"],
+    &["listen"],
+    &["dude"],
+    &["man"],
+    &["remember"],
+    &["reminder"],
+    &["fyi"],
+    &["btw"],
+    &["just"],
+    &["then"],
+    &["yeah"],
+    &["yes"],
+    &["right"],
+    &["oh"],
+    &["sorry"],
+    &["always"],
+    &["note"],
+    &["rule"],
+    &["important"],
+];
+
+/// Most words a prompt may have before a correction that still "opens" it.
+const MAX_LEAD_WORDS: usize = 8;
+
+/// Words that may follow a one-sided statement before its clause ends
+/// ("this repo uses pnpm, thanks").
+const CLOSERS: &[&str] = &[
+    "please",
+    "pls",
+    "plz",
+    "thanks",
+    "thank",
+    "you",
+    "thx",
+    "ok",
+    "okay",
+    "btw",
+    "remember",
+    "period",
+    "only",
+    "now",
+    "too",
+    "here",
+    "everywhere",
+    "always",
+    "though",
+];
 
 /// A clause starting with one of these is a question or a statement about ability.
 const LEAD_DENY: &[&str] = &[
@@ -644,6 +1012,7 @@ const SENTENCE_DENY: &[&str] = &[
     "err",
     "fatal",
     "hint",
+    "help",
     "traceback",
     "exception",
 ];
@@ -655,6 +1024,38 @@ const SUFFIX_DENY: &[&str] = &[
     "idk", "dunno",
 ];
 
+/// Further words that, after a one-sided shape, make it a rule for one situation
+/// rather than for the repository ("don't use the cache when running the tests").
+const ONE_SIDED_SUFFIX_DENY: &[&str] = &[
+    "when",
+    "while",
+    "until",
+    "before",
+    "after",
+    "during",
+    "except",
+    "without",
+    "yet",
+    "sometimes",
+    "today",
+];
+
+/// Phrases anywhere in the sentence that say the instruction is meant for once.
+const ONE_OFF: &[&[&str]] = &[
+    &["for", "now"],
+    &["this", "time"],
+    &["this", "once"],
+    &["just", "once"],
+    &["for", "the", "moment"],
+    &["for", "today"],
+    &["for", "this", "one"],
+    &["in", "this", "case"],
+    &["in", "this", "file"],
+    &["in", "this", "function"],
+    &["in", "this", "test"],
+    &["temporarily"],
+];
+
 const YOU_MODALS: &[&str] = &["should", "must", "need", "needs", "have", "gotta", "ought"];
 
 const MAX_PREFIX_WORDS: usize = 6;
@@ -664,17 +1065,37 @@ const MAX_PREFIX_WORDS: usize = 6;
 /// order of appearance.
 pub fn extract_corrections(text: &str) -> Vec<Correction> {
     let lower = mask_quoted(&text.to_ascii_lowercase());
+    let mut sentences = SentenceCache::new();
     // (start, end, correction)
     let mut found: Vec<(usize, usize, Correction)> = Vec::new();
     for pattern in PATTERNS.iter() {
+        let spec = &pattern.spec;
         for caps in pattern.re.captures_iter(&lower) {
             let Some(m) = caps.get(0) else { continue };
+            if let Some(word) = spec.not_before {
+                let next = lower
+                    .get(m.end()..)
+                    .and_then(|rest| plain_words(rest).next());
+                if next == Some(word) {
+                    continue;
+                }
+            }
             let gx = caps.name("x");
             let gy = caps.name("y");
-            let nx =
-                gx.and_then(|g| normalize_token_span(g.as_str()).map(|(t, u)| (t, g.start() + u)));
-            let ny =
-                gy.and_then(|g| normalize_token_span(g.as_str()).map(|(t, u)| (t, g.start() + u)));
+            // (token, end offset of its last kept word)
+            let token = |name: &str, article: &str| -> Option<(String, usize)> {
+                let g = caps.name(name)?;
+                if spec.bare && (caps.name(article).is_some() || starts_with_article(g.as_str())) {
+                    return None;
+                }
+                let (t, used) = normalize_token_span(g.as_str())?;
+                if spec.switch && t.split(' ').any(|w| SWITCH_DENY.contains(&w)) {
+                    return None;
+                }
+                Some((t, g.start() + used))
+            };
+            let nx = token("x", "xa");
+            let ny = token("y", "ya");
             // The effective end: when a token closes the match, only the words actually
             // kept count, so trailing stop words ("jest and ...") cannot shadow a
             // following match.
@@ -686,12 +1107,10 @@ pub fn extract_corrections(text: &str) -> Vec<Correction> {
             } else {
                 m.end()
             };
-            if !context_ok(&lower, m.start(), eff_end.max(m.start())) {
-                continue;
-            }
             let x = nx.map(|(t, _)| t);
             let y = ny.map(|(t, _)| t);
-            let correction = match pattern.shape {
+            // Tokens first: they are cheap to judge, the context is not.
+            let correction = match spec.shape {
                 Shape::Both => match (x, y) {
                     (Some(x), Some(y)) if x != y => Correction {
                         preferred: Some(x),
@@ -714,11 +1133,23 @@ pub fn extract_corrections(text: &str) -> Vec<Correction> {
                     None => continue,
                 },
             };
+            let end = eff_end.max(m.start());
+            if !context_ok(&lower, m.start(), end, spec, &mut sentences) {
+                continue;
+            }
             found.push((m.start(), eff_end.max(m.start() + 1), correction));
         }
     }
-    // Earliest first, longest first; then drop matches overlapping an already kept one.
-    found.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    // Matches that name both sides first, then earliest first, longest first; then drop
+    // matches overlapping an already kept one. So "no, use pnpm, not npm" is the pair
+    // and not the shorter "no, use pnpm".
+    let one_sided = |c: &Correction| c.preferred.is_none() || c.avoided.is_none();
+    found.sort_by(|a, b| {
+        one_sided(&a.2)
+            .cmp(&one_sided(&b.2))
+            .then(a.0.cmp(&b.0))
+            .then(b.1.cmp(&a.1))
+    });
     let mut kept: Vec<(usize, usize, Correction)> = Vec::new();
     for (s, e, c) in found {
         if kept.iter().any(|(ks, ke, _)| s < *ke && *ks < e) {
@@ -726,13 +1157,75 @@ pub fn extract_corrections(text: &str) -> Vec<Correction> {
         }
         kept.push((s, e, c));
     }
+    kept.sort_by_key(|(s, _, _)| *s);
+    // A one-sided correction adds nothing when the prompt also says it with both sides
+    // ("no, use pnpm. we use pnpm, not npm").
+    let pairs: Vec<Correction> = kept
+        .iter()
+        .filter(|(_, _, c)| !one_sided(c))
+        .map(|(_, _, c)| c.clone())
+        .collect();
+    let subsumed = |c: &Correction| {
+        one_sided(c)
+            && pairs.iter().any(|p| {
+                (c.preferred.is_some() && p.preferred == c.preferred)
+                    || (c.avoided.is_some() && p.avoided == c.avoided)
+            })
+    };
     let mut out: Vec<Correction> = Vec::new();
     for (_, _, c) in kept {
-        if !out.contains(&c) {
+        if !subsumed(&c) && !out.contains(&c) {
             out.push(c);
         }
     }
     out
+}
+
+/// Whether a raw token starts with an article ("the helper", "a loop").
+fn starts_with_article(raw: &str) -> bool {
+    raw.split_whitespace()
+        .next()
+        .map(|w| w.trim_matches(is_quote))
+        .is_some_and(|w| ARTICLES.contains(&w))
+}
+
+/// Whether `words` contains `phrase` as consecutive words.
+fn contains_phrase(words: &[&str], phrase: &[&str]) -> bool {
+    !phrase.is_empty() && words.windows(phrase.len()).any(|w| w == phrase)
+}
+
+/// Whether a match opens the prompt: `before` (everything in front of it) holds nothing
+/// but lead-ins (`no`, `please`, `from now on`, `i told you`, ...), at most
+/// [`MAX_LEAD_WORDS`] words of them.
+fn opens_prompt(before: &str) -> bool {
+    let words = clause_words_capped(before, MAX_LEAD_WORDS + 1);
+    if words.len() > MAX_LEAD_WORDS {
+        return false;
+    }
+    let mut i = 0;
+    while let Some(word) = words.get(i) {
+        // "no", "noo", "nooo"
+        let is_no = word.len() >= 2
+            && word.starts_with('n')
+            && word.get(1..).is_some_and(|o| o.bytes().all(|b| b == b'o'));
+        let step = if is_no {
+            Some(1)
+        } else {
+            LEAD_INS
+                .iter()
+                .find(|phrase| {
+                    words
+                        .get(i..i + phrase.len())
+                        .is_some_and(|w| w.iter().zip(phrase.iter()).all(|(a, b)| a == b))
+                })
+                .map(|phrase| phrase.len())
+        };
+        match step {
+            Some(n) => i += n,
+            None => return false,
+        }
+    }
+    true
 }
 
 /// Whether byte `i` of `s` ends a sentence.
@@ -769,7 +1262,10 @@ fn mask_quoted(lower: &str) -> String {
 
 /// Splits `s` into lowercase words with surrounding punctuation removed (apostrophes
 /// inside words are kept and normalized to `'`).
-fn clause_words(s: &str) -> Vec<String> {
+///
+/// At most `cap` words are returned: every caller only asks whether there are more
+/// words than some small limit, and need not read a long text to its end for that.
+fn clause_words_capped(s: &str, cap: usize) -> Vec<String> {
     s.split_whitespace()
         .map(|w| {
             w.replace('\u{2019}', "'")
@@ -778,12 +1274,46 @@ fn clause_words(s: &str) -> Vec<String> {
                 .to_owned()
         })
         .filter(|w| !w.is_empty())
+        .take(cap)
         .collect()
+}
+
+/// The words of `s` with surrounding punctuation removed, without copying. Unlike
+/// [`clause_words_capped`] a typographic apostrophe inside a word is left as it is, so
+/// this is for comparing against word lists that have no apostrophes.
+fn plain_words(s: &str) -> impl Iterator<Item = &str> {
+    s.split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !(c.is_alphanumeric() || c == '\''))
+                .trim_matches('\'')
+        })
+        .filter(|w| !w.is_empty())
+}
+
+/// Whether a sentence may hold a correction at all, by its byte range: `false` when it
+/// looks like pasted tool output or says that it is meant for once. Kept per call of
+/// [`extract_corrections`], so that many matches in one long sentence read it once.
+type SentenceCache = HashMap<(usize, usize), bool>;
+
+fn sentence_ok(sentence: &str) -> bool {
+    let words: Vec<&str> = plain_words(sentence).collect();
+    // Pasted tool output ("npm WARN deprecated ...: use X instead of Y").
+    if words.iter().any(|w| SENTENCE_DENY.contains(w)) {
+        return false;
+    }
+    // Meant for once ("use pnpm instead of npm for now").
+    !ONE_OFF.iter().any(|p| contains_phrase(&words, p))
 }
 
 /// Checks the sentence and clause around a match (see the module docs). `end` is the
 /// effective end of the match (after the last kept token word).
-fn context_ok(lower: &str, start: usize, end: usize) -> bool {
+fn context_ok(
+    lower: &str,
+    start: usize,
+    end: usize,
+    spec: &Spec,
+    sentences: &mut SentenceCache,
+) -> bool {
     let bytes = lower.as_bytes();
     // Sentence end; a question is not a correction.
     let mut se = end;
@@ -806,19 +1336,36 @@ fn context_ok(lower: &str, start: usize, end: usize) -> bool {
     else {
         return false;
     };
-    // Pasted tool output ("npm WARN deprecated ...: use X instead of Y").
-    if clause_words(sentence)
-        .iter()
-        .any(|w| SENTENCE_DENY.contains(&w.as_str()))
+    if !*sentences
+        .entry((ss, se))
+        .or_insert_with(|| sentence_ok(sentence))
     {
         return false;
     }
     // Hedges and conditions after the match.
-    if clause_words(suffix)
-        .iter()
-        .any(|w| SUFFIX_DENY.contains(&w.as_str()))
-    {
+    if plain_words(suffix).any(|w| SUFFIX_DENY.contains(&w)) {
         return false;
+    }
+    if spec.shape != Shape::Both {
+        // "don't use the cache when ...", and the muddle "don't use npm instead of pnpm".
+        if plain_words(suffix).any(|w| ONE_SIDED_SUFFIX_DENY.contains(&w))
+            || plain_words(suffix).next() == Some("instead")
+        {
+            return false;
+        }
+    }
+    if spec.closed {
+        // The clause must end here: only closing filler up to the next separator.
+        let rest = suffix
+            .split([',', ';', ':', '(', '\u{2014}', '\u{2013}'])
+            .next()
+            .unwrap_or(suffix);
+        if plain_words(rest).any(|w| !CLOSERS.contains(&w)) {
+            return false;
+        }
+    }
+    if spec.place == Place::Opening {
+        return lower.get(..start).is_some_and(opens_prompt);
     }
     // Clause prefix: after the last clause separator.
     let clause = sentence_prefix
@@ -832,7 +1379,8 @@ fn context_ok(lower: &str, start: usize, end: usize) -> bool {
         })
         .unwrap_or(sentence_prefix);
     let clause = clause.rsplit(" - ").next().unwrap_or(clause);
-    prefix_words_ok(&clause_words(clause))
+    // One word more than the limit is enough to know that the clause is too long.
+    prefix_words_ok(&clause_words_capped(clause, MAX_PREFIX_WORDS + 1))
 }
 
 fn prefix_words_ok(words: &[String]) -> bool {
@@ -915,9 +1463,10 @@ fn normalize_token_span(raw: &str) -> Option<(String, usize)> {
     {
         words.remove(0);
     }
+    // An article after the first word starts something else ("npm the old way").
     if let Some(pos) = words
         .iter()
-        .position(|(w, _)| STOP_WORDS.contains(&w.as_str()))
+        .position(|(w, _)| STOP_WORDS.contains(&w.as_str()) || ARTICLES.contains(&w.as_str()))
     {
         words.truncate(pos);
     }
@@ -1061,7 +1610,7 @@ mod tests {
 
     #[test]
     fn all_patterns_compile() {
-        assert_eq!(PATTERNS.len(), 8);
+        assert_eq!(PATTERNS.len(), pattern_specs().len());
     }
 
     #[test]
@@ -1101,5 +1650,84 @@ mod tests {
         assert!(!prefix_words_ok(&w("i")));
         assert!(!prefix_words_ok(&w("should we")));
         assert!(!prefix_words_ok(&w("a b c d e f g")));
+    }
+
+    #[test]
+    fn one_sided_shapes() {
+        assert_eq!(one("no, use pnpm"), Some((Some("pnpm".into()), None)));
+        assert_eq!(one("use pnpm instead"), Some((Some("pnpm".into()), None)));
+        assert_eq!(one("switch to pnpm"), Some((Some("pnpm".into()), None)));
+        assert_eq!(one("always use uv"), Some((Some("uv".into()), None)));
+        assert_eq!(one("stop using npm"), Some((None, Some("npm".into()))));
+        assert_eq!(one("don't use npm"), Some((None, Some("npm".into()))));
+        assert_eq!(
+            one("this repo uses pnpm"),
+            Some((Some("pnpm".into()), None))
+        );
+        // Not at the start of the prompt, with an article, or as navigation.
+        assert_eq!(one("fix the test, don't use npm"), None);
+        assert_eq!(one("no, use the helper"), None);
+        assert_eq!(one("switch to main"), None);
+    }
+
+    #[test]
+    fn lead_ins() {
+        for opens in [
+            "",
+            "  \n\n",
+            "no,",
+            "nooo.",
+            "ok. please",
+            "i told you,",
+            "Like I said:".to_ascii_lowercase().as_str(),
+            "hey, from now on",
+            "no no no no no no no no",
+        ] {
+            assert!(opens_prompt(opens), "{opens:?}");
+        }
+        for not in [
+            "i",
+            "you",
+            "fix the test,",
+            "i told",
+            "maybe",
+            "the docs say to",
+            "n",
+            "not",
+            "no no no no no no no no no",
+        ] {
+            assert!(!opens_prompt(not), "{not:?}");
+        }
+    }
+
+    #[test]
+    fn words_and_phrases() {
+        let words: Vec<&str> = plain_words(" (Use `pnpm`, for now!) ").collect();
+        assert_eq!(words, vec!["Use", "pnpm", "for", "now"]);
+        assert!(contains_phrase(&words, &["for", "now"]));
+        assert!(!contains_phrase(&words, &["now", "for"]));
+        assert!(!contains_phrase(&words, &[]));
+        assert_eq!(
+            clause_words_capped("don\u{2019}t 'use' it, ok?", 3),
+            vec!["don't", "use", "it"]
+        );
+        assert!(sentence_ok("use pnpm, not npm"));
+        assert!(!sentence_ok(
+            "npm warn deprecated: use got instead of request"
+        ));
+        assert!(!sentence_ok("= help: use `expect` instead of `unwrap`"));
+        assert!(!sentence_ok("use pnpm instead of npm for now"));
+    }
+
+    #[test]
+    fn a_token_ends_at_an_article_or_a_condition() {
+        assert_eq!(normalize_token("npm the old way").as_deref(), Some("npm"));
+        assert_eq!(
+            normalize_token("npm until the registry").as_deref(),
+            Some("npm")
+        );
+        assert_eq!(normalize_token("the pnpm cli").as_deref(), Some("pnpm cli"));
+        assert_eq!(normalize_token("more than 2"), None);
+        assert_eq!(normalize_token("function above"), Some("function".into()));
     }
 }

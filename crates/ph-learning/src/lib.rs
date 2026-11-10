@@ -4,8 +4,10 @@
 //!
 //! * [`detector`]: the [`CandidateDetector`] trait and the offline
 //!   [`DeterministicDetector`], which finds correction patterns such as
-//!   "No, use pnpm, not npm" in user prompts and groups them into
-//!   [`ph_core::SkillCandidate`]s by `(concept_key, repo_key)`.
+//!   "No, use pnpm, not npm", "no, use pnpm" or "stop using npm" in user prompts and
+//!   groups them into [`ph_core::SkillCandidate`]s by `(concept_key, repo_key)`. It
+//!   recognizes corrections that name what to use or what to avoid, not rules that are
+//!   whole sentences.
 //! * [`dedup`]: [`filter_known`] to avoid raising a known concept again.
 //! * [`draft`]: [`draft_skill`] (an instruction-only `SKILL.md` draft) and
 //!   [`draft_question`] (the sanitized question text), built only from extracted tokens.

@@ -1,9 +1,10 @@
 //! Rules written down as free text: by the person (`peerharness note "..."`) or reported
 //! by their coding agent when it notices that it was corrected.
 //!
-//! The pattern detector in [`crate::detector`] only understands "use X, not Y". Most
-//! real corrections are sentences ("run the tests before you say a task is done"), so a
-//! note carries the sentence itself.
+//! The pattern detector in [`crate::detector`] only understands corrections that name
+//! what to use or what to avoid ("use X, not Y", "no, use X", "stop using Y"). Many real
+//! corrections are sentences ("run the tests before you say a task is done"), so a note
+//! carries the sentence itself.
 //!
 //! A note is still only a **candidate**. Whoever wrote it, it enters the same review as a
 //! detected candidate, and nothing here decides anything: an agent's report is advisory
