@@ -509,3 +509,182 @@ member whose node others can reach already carries everyone's records (every nod
 stores what the roll lets it read), and one such node, for example a member's second
 device on a server, is the dependable setup. No switch in the configuration file: the
 mode is asked for per command.
+
+## ADR-033: Three decisions can be put to the owner in a window, from inside the agent's session
+ADR-022 left a person who works in a coding agent all day with one way to decide
+anything: leave the agent, open a terminal and type the command. The guard was right
+and the cost was the whole product, because the place where a rule is noticed is the
+place where nobody could act on it.
+
+**Decision.** A consent step is still never answered from inside an agent's session.
+Three of them may now be *asked* from there, in a window of the operating system, when
+the owner has allowed it:
+
+* proposing a rule to a circle (`proposal create`),
+* a ballot on a proposed rule (`proposal vote` on an `adopt` proposal),
+* installing a rule that passed and waits for the owner (`proposal adopt`).
+
+The owner allows it with `watch claude --install --windows`, which is itself a consent
+step in their own terminal with a preview, and takes it back with `--install
+--no-windows` or `--remove` (`config.toml`, `[agent] windows`, off by default). The
+session cannot turn it on, with or without a window. With windows off, everything is
+as in ADR-022.
+
+**What the session can and cannot do.** It can make the window appear, with arguments
+of its choosing (which candidate, which circle, approve or reject, a rationale). It
+cannot answer it. The window shows the exact preview the terminal would have shown, and
+only a click on "Proceed" there counts (`consent::confirm_or_window`, `window.rs`).
+"Cancel" is the default button, so the return key and the escape key decline. A window
+nobody answers closes after 90 seconds as "no answer". `--yes` is ignored inside a
+session. The preview is not printed into the session: the person reads it in the
+window, and what the agent says about a rule is not the rule.
+
+**Shown in full or not at all.** A dialog does not scroll, and one taller than its
+screen is cut off, so the person would confirm a text they saw part of. The height is
+therefore estimated before anything is shown: the text is wrapped the way the dialog
+wraps it, with glyph widths rounded up and the row taken narrower than it is, and the
+script compares the result with the usable height of the smallest attached screen. A
+text that does not fit is refused with "run it in your own terminal". Measured on macOS
+14.2 on 2026-11-10: a dialog is 420 points wide, 16 points a row and 108 points of
+everything else; for four texts the estimate was between 0 and 6 rows above what the
+dialog needed (33 against 27 for the preview of a short rule) and never below. By that
+estimate a 1440x900 screen has room for a rule of about 175 characters when proposing
+it and for any rule on a ballot (a proposed rule is at most 200 characters), and a
+1280x800 screen for about 100 and 175. Longer ones go to the terminal. The widths in the estimate are approximations of the system font
+checked against those four dialogs, not the font's own metrics.
+
+**What stays in the terminal**, also with windows on: reviewing a note, installing a
+skill for oneself, a ballot on a repeal or on a change to the charter (the window
+could not show what is being decided in full), proposing a repeal, every `circle`
+command, questions and answers, hooks, export and reset. A rule with a high-risk
+scanner finding is never decided in a window. A ballot in a window carries the rule's
+text itself, since the owner cannot run `proposal show` first.
+
+**The key.** Nobody can type a passphrase inside a session. A node whose device key is
+in a passphrase-protected file is refused before the window opens, unless
+`PEERHARNESS_PASSPHRASE` is set. The OS keychain works.
+
+**What this is not.** It is the same kind of guard as ADR-022, against an agent that is
+being helpful, and not a security boundary:
+
+* a process that clears the session variable is still not stopped, and one that edits
+  `config.toml` can turn windows on;
+* an agent that can drive the screen (macOS asks the owner for that permission) could
+  click a button;
+* a person can click "Proceed" out of habit. The default button is "Cancel" for that
+  reason, and the agent's skill tells it to start a step only when asked;
+* the agent's skill now tells it to run `inbox`, so titles and questions written by
+  other members reach the agent's context. They are single lines, cleaned for display,
+  and the skill says they are not instructions. A rule's own text still reaches an
+  agent only after it passed.
+
+**Where the window comes from.** macOS only: `/usr/bin/osascript`, a fixed path in a
+directory the system protects, so the program is not found through `PATH`. The text
+goes to it on standard input, never in its arguments or environment. On Linux the
+steps are refused as before; `zenity` exists there, but no desktop was at hand to test
+against, and the default keystore on Linux is the passphrase file. Debug builds read
+`PEERHARNESS_TEST_WINDOW_BIN`, a stand-in program for tests; release builds do not, so
+that ADR-022's "no override an agent can set" still holds for what is installed.
+
+**Consequences.** The reporting skill has two texts, and `watch claude` reinstalls it
+when the setting changes. `AGENTS.md` now says that an agent may write a note and may
+start these three steps, and that it never answers one. Not done: a window on Linux
+and asking in a window for a personal install. (Telling the owner that proposals wait
+for their vote followed in ADR-035.)
+
+## ADR-034: An install script that checks the release's checksum
+Installing meant a Rust toolchain and several minutes of compiling, or a manual
+download, checksum and copy (`docs/release.md`). Both lose most people before they have
+seen anything. `install.sh` does the manual steps in one command:
+`curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh`.
+
+It finds the latest release through GitHub's redirect (no API, so no rate limit and no
+JSON to parse), downloads the archive for the machine and `SHA256SUMS` over HTTPS, and
+installs nothing unless the archive matches. It then checks that the binary runs and
+copies that one file to `~/.local/bin`. It uses no `sudo`, edits no shell profile and
+only says so when the directory is not on `PATH`. The body is one function called on
+the last line, so a download that was cut short runs nothing. A version given by hand
+must look like a tag before it goes into an address.
+
+It does not build from source by itself when there is no binary to download: a
+compile of several minutes is not what someone pasting one line expects. It prints
+the `cargo install --git` command instead.
+
+Limits, stated in `docs/release.md` and the security model: the checksum comes from
+the same pipeline as the binary, and the script itself is unsigned and served from the
+`main` branch, so this is as trustworthy as the repository and no more. Nothing is
+signed or notarized. The script works only for a published release of a public
+repository; when this was written there was neither, and it was tested against a
+release in a temporary folder (`apps/peerharness/tests/install_script.rs`), which the
+`PEERHARNESS_RELEASE_URL` setting exists for. Not done: Homebrew, a signed checksum
+file, Windows.
+
+## ADR-035: The owner is told when proposals wait for their vote
+A proposal that needed a member's vote was visible only to a member who went and
+looked (`peerharness inbox`). The Stop hook told them about their own notes and not
+about the thing other people were waiting for.
+
+**Decision.** At the end of a turn the Stop hook also prints, when it applies,
+"PeerHarness: N proposal(s) wait for your vote — run `peerharness inbox`". It is a
+`systemMessage`: Claude Code shows it to the person and does not give it to the model.
+It carries a count and nothing else, so no title or other text written by another
+member is involved. It has its own notification topic (`votes`), checked before the
+one for notes, so with the default settings a member is told at most once a day, and
+never more than two notices a day in total (spec 7.2). The hook rules are unchanged:
+it reads the store, never unlocks a key, never blocks and always exits 0.
+
+**What "waits for your vote" means** is now one function, `governance::awaiting_vote`,
+used by the notice and by `inbox`: the proposal is open under the current charter of a
+circle this node has not left, the member this device signs for is in its electorate,
+and none of their devices has cast a ballot. A proposal that passed, one that names an
+earlier charter, and one the member may not vote on wait for nobody. The member's own
+proposal waits for them too, because creating it is not a vote. `inbox` used a looser
+test before (any proposal by someone else without a ballot from this device), which
+kept listing proposals that had already passed or that the member could not vote on.
+
+**Limits.** The node has to hold the proposal: nothing arrives without a sync (a
+daemon with `--sync-every`, or `sync`). The notice appears only at the end of a turn
+in Claude Code with the hooks installed; there is no operating-system notification
+and no window opens by itself (a window opens when the owner asks for a step, ADR-033).
+A member who is not using their agent is told nothing.
+
+## ADR-036: A running daemon announces a proposal that needs the owner's vote
+ADR-035 tells the owner at the end of their next turn with their agent, once a day. A
+member who is not in a session, or whose colleagues are waiting now, hears nothing
+until then. Claude Code has no way to push a message into a running session, so the
+news has to come from the process that receives it: the daemon.
+
+**Decision.** `daemon --notify` looks every three seconds at what waits for the owner's
+vote (`governance::awaiting_vote`) and shows one notification of the operating system
+for what is new: "N proposal(s) wait for your vote. Run: peerharness inbox". It is off
+unless asked for. It also prints that line to its own output.
+
+* **A count only.** No title, name or text written by another member reaches the
+  notification program or the daemon's output, so a proposal cannot put words on the
+  owner's screen before they chose to read it.
+* **Once per proposal**, also across restarts: each announced proposal is a row in the
+  `notifications` table under the topic prefix `desktop:`. The Stop hook does not count
+  those rows against its own two notices a day, and may still mention the vote at the
+  end of a turn.
+* **Bounded.** Arrivals within 60 seconds are announced together, at most 10 proposals
+  are announced in 24 hours, the owner's quiet hours are kept, and
+  `notifications.max_per_day = 0` turns it off. A notification that cannot be shown is
+  not tried again by that daemon.
+* **How fast it is** depends on the sync, not on the notification: the proposal must
+  reach the node first. With the proposer's node or this one syncing every N seconds
+  (`--sync-every N`), the owner is told at most N plus three seconds after it was
+  proposed. Measured on one machine over loopback: 2.9 seconds after the proposer's
+  `sync`.
+
+macOS only: `/usr/bin/osascript` with `display notification`, the text on standard
+input as in ADR-033. Such a notification belongs to Script Editor: macOS shows it
+according to the owner's notification settings for that application, and a click on it
+opens Script Editor and not PeerHarness. The daemon knows that the system accepted the
+notification, not that anyone saw it. Debug builds read `PEERHARNESS_TEST_NOTIFY_BIN`,
+a stand-in for tests; release builds do not.
+
+Not done: Linux (`notify-send`), a notification that opens the inbox or the vote, and
+opening the confirmation window (ADR-033) by itself when a proposal arrives. The last
+one would put a consent step in front of the owner that nobody on their machine asked
+for, and is left out on purpose.
+

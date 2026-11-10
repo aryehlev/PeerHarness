@@ -386,6 +386,48 @@ fn an_agent_can_write_a_note_and_can_decide_nothing() {
 }
 
 #[test]
+fn a_rule_too_long_for_a_proposal_is_refused_before_anything_is_saved() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path());
+    node.run(&["circle", "create", "team"]);
+    // A note may be 500 characters; a proposal's title may be 200.
+    let long = format!("Run the tests{}.", " and then run them again".repeat(12));
+    assert!(long.len() > 200 && long.len() < 500);
+    let cand = node.run(&["note", &long])["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (code, msg) = node.fail(
+        By::Person,
+        &["proposal", "create", &cand, "--circle", "team", "--yes"],
+    );
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("at most 200 characters"), "{msg}");
+    assert!(msg.contains("--edit"), "{msg}");
+    // Nothing moved: the note still waits, the library is empty, nothing was proposed.
+    let inbox = node.candidates();
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(inbox[0]["id"], cand.as_str());
+    assert_eq!(
+        node.run(&["skills", "list"])["skills"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        node.run(&["proposal", "list"])["proposals"],
+        serde_json::json!([])
+    );
+
+    // Shortened, it goes through.
+    node.run(&["review", &cand, "--edit", RULE]);
+    let proposed = node.run(&["proposal", "create", &cand, "--circle", "team", "--yes"]);
+    assert!(proposed["proposal_id"].is_string());
+    let listed = node.run(&["proposal", "list"]);
+    assert_eq!(listed["proposals"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["proposals"][0]["title"], RULE);
+}
+
+#[test]
 fn agent_notes_are_bounded_and_notes_are_checked() {
     let tmp = TempDir::new().unwrap();
     let node = Node::new(tmp.path());

@@ -85,6 +85,25 @@ impl Node {
         self.skills.join(SKILL).join("SKILL.md").is_file()
     }
 
+    /// The proposals that wait for this member's vote, as their inbox lists them.
+    fn awaiting(&self) -> Vec<String> {
+        let inbox = self.run(&["inbox"]);
+        let listed = inbox["proposals_awaiting_vote"].as_array().unwrap();
+        assert_eq!(inbox["proposals_awaiting_vote_total"], listed.len());
+        listed
+            .iter()
+            .map(|p| p["proposal_id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// What Claude Code would show this member at the end of a turn: the output of the
+    /// Stop hook. It always exits 0.
+    fn stop_notice(&self) -> String {
+        let out = self.cmd(&["hook", "stop"]).output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    }
+
     fn export(&self, root: &Path, tag: &str) -> String {
         let path = root.join(format!("{}-{tag}.jsonl", self.name));
         let p = path.to_str().unwrap().to_owned();
@@ -236,10 +255,19 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     ]);
     assert_eq!(proposed["skill_name"], SKILL);
     let rule = proposed["proposal_id"].as_str().unwrap().to_owned();
+    // Nothing has reached Bob yet, so nothing waits for him and he is told nothing.
+    assert!(bob.awaiting().is_empty());
+    assert_eq!(bob.stop_notice(), "");
 
     // Creating a proposal is not a vote, and one approval of three is not enough.
+    assert_eq!(
+        alice.awaiting(),
+        [rule.as_str()],
+        "her own ballot is missing too"
+    );
     let voted = alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
     assert_eq!(voted["passed"], false);
+    assert!(alice.awaiting().is_empty());
     assert_eq!(
         (
             voted["need"].as_u64(),
@@ -256,6 +284,16 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     bob.run(&["events", "import", &from_alice]);
     carol.run(&["events", "import", &from_alice]);
 
+    // The proposal now waits for Bob and Carol. At the end of Bob's next turn with his
+    // agent he is told so, once: a count, and where to look.
+    assert_eq!(bob.awaiting(), [rule.as_str()]);
+    assert_eq!(carol.awaiting(), [rule.as_str()]);
+    assert_eq!(
+        bob.stop_notice().trim_end(),
+        r#"{"systemMessage":"PeerHarness: 1 proposal waits for your vote — run `peerharness inbox`"}"#
+    );
+    assert_eq!(bob.stop_notice(), "", "not again the same day");
+
     // Carol rejects, with a reason. It is recorded and it blocks nothing.
     let voted = carol.run(&[
         "proposal",
@@ -268,6 +306,7 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     ]);
     assert_eq!(voted["passed"], false);
     assert_eq!(voted["dissent"][0]["member"], "carol");
+    assert!(carol.awaiting().is_empty(), "a reject is a ballot");
     bob.run(&["events", "import", &carol.export(root, "1")]);
 
     // Bob approves: two of three. It passes on his node and is installed there.
@@ -276,6 +315,7 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     assert_eq!(names(&voted["approvals"]), ["alice", "bob"]);
     assert_eq!(voted["dissent"][0]["member"], "carol");
     assert!(bob.has_skill());
+    assert!(bob.awaiting().is_empty());
 
     // The others learn of it from Bob's file and reach the same count themselves.
     let from_bob = bob.export(root, "2");
@@ -329,6 +369,7 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     );
 
     bob.run(&["events", "import", &alice.export(root, "4")]);
+    assert_eq!(bob.awaiting(), [removal_id.as_str()]);
     let voted = bob.run(&["proposal", "vote", &removal_id, "approve", "--yes"]);
     assert_eq!(voted["passed"], true);
     let imported = alice.run(&["events", "import", &bob.export(root, "3")]);
@@ -362,6 +403,9 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     assert!(!carol.has_skill());
     assert_eq!(carol.run(&["circle", "members"])["charter"]["seq"], 4);
     assert_eq!(carol.run(&["rule", "list"])["rules"][0]["binds_you"], false);
+    // The vote that removed her passed without her and asks nothing of her now.
+    assert!(carol.awaiting().is_empty());
+    assert_eq!(carol.stop_notice(), "");
     assert_eq!(
         carol.fail(&["rule", "repeal", SKILL, "--circle", "team", "--yes"]),
         3,
@@ -468,6 +512,9 @@ fn a_member_who_joins_later_gets_the_rules_passed_before_they_joined() {
     let rules = bob.run(&["rule", "list"]);
     assert_eq!(rules["rules"][0]["skill_name"], SKILL);
     assert_eq!(rules["rules"][0]["binds_you"], true);
+    // What was decided before his time does not wait for his vote.
+    assert!(bob.awaiting().is_empty());
+    assert_eq!(bob.stop_notice(), "");
     assert!(bob.has_skill());
     let shown = bob.run(&["proposal", "show", &rule]);
     assert_eq!(shown["standing"], "carried");

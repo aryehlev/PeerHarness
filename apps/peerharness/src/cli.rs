@@ -160,6 +160,10 @@ pub struct DaemonArgs {
     /// this node looks for. They never see a circle or anything said in one.
     #[arg(long)]
     pub internet: bool,
+    /// Show a notification on this desktop when a proposal that needs your vote reaches
+    /// this node: a count, never its text. macOS only.
+    #[arg(long)]
+    pub notify: bool,
 }
 
 #[derive(Debug, Args)]
@@ -204,6 +208,14 @@ pub struct WatchClaudeArgs {
     /// With --install: do not install the skill that asks the agent to report corrections.
     #[arg(long, requires = "install")]
     pub no_agent_notes: bool,
+    /// With --install: let your agent put three decisions in front of you in a window on
+    /// your screen (proposing a rule, your ballot on a proposed rule, installing a rule
+    /// that passed). Only your click in that window decides. macOS only.
+    #[arg(long, requires = "install", conflicts_with = "no_windows")]
+    pub windows: bool,
+    /// With --install: turn those windows off again.
+    #[arg(long, requires = "install")]
+    pub no_windows: bool,
     /// Show whether the hooks are installed (default).
     #[arg(long)]
     pub status: bool,

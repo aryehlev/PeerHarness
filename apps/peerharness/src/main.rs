@@ -21,9 +21,11 @@ mod installs;
 mod internet;
 mod library;
 mod node;
+mod notify;
 mod output;
 mod peer;
 mod runtime;
+mod window;
 
 use clap::Parser;
 

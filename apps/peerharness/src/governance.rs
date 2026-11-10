@@ -107,6 +107,49 @@ pub fn count(store: &Store, proposal: &ProposalView) -> Result<(Charter, Tally)>
     Ok((charter, t))
 }
 
+/// The proposals that wait for the ballot of the member `device` signs for: open under
+/// the current charter of a circle this node has not left, with that member in the
+/// electorate and no ballot from any of their devices. A proposal that passed, one that
+/// names an earlier charter, and one the member is not entitled to vote on wait for
+/// nobody here. The member's own proposals count: creating one is not a vote.
+///
+/// Reads the store only. It is also called from the Stop hook, so it never unlocks a
+/// key, and a circle or proposal that cannot be read is left out, not reported.
+pub fn awaiting_vote(store: &Store, device: &DeviceKey) -> Result<Vec<(CircleRow, ProposalView)>> {
+    let mut waiting = Vec::new();
+    for circle in store.circles()? {
+        if store.circle_left_at(&circle.circle_id)?.is_some() {
+            continue;
+        }
+        let Ok(charter) = current_charter(store, &circle.circle_id) else {
+            continue;
+        };
+        let Some(member) = charter.content.member_of(device).map(|e| e.member.clone()) else {
+            continue;
+        };
+        let Ok(current) = charter.digest() else {
+            continue;
+        };
+        for ev in store.proposals(&circle.circle_id)? {
+            let Ok(proposal) = proposal_view(store, &ev.event_id) else {
+                continue;
+            };
+            if proposal.charter() != current
+                || charter.content.carried.contains(&proposal.event_id())
+            {
+                continue;
+            }
+            let Ok((_, tally)) = count(store, &proposal) else {
+                continue;
+            };
+            if !tally.passed() && tally.silent().contains(&member) {
+                waiting.push((circle.clone(), proposal));
+            }
+        }
+    }
+    Ok(waiting)
+}
+
 /// The circle's current charter.
 pub fn current_charter(store: &Store, circle: &CircleId) -> Result<Charter> {
     store
@@ -1496,6 +1539,77 @@ mod tests {
             now,
         )
         .unwrap()
+    }
+
+    /// The ids of the proposals that wait for the member with this device, sorted:
+    /// proposals made in the same second have no order of their own.
+    fn waiting(store: &Store, seed: u8) -> Vec<String> {
+        let mut ids: Vec<String> = awaiting_vote(store, &device(seed))
+            .unwrap()
+            .iter()
+            .map(|(_, p)| p.event_id().to_string())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn sorted(proposals: &[&ProposalView]) -> Vec<String> {
+        let mut ids: Vec<String> = proposals.iter().map(|p| p.event_id().to_string()).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn a_proposal_waits_for_the_members_who_can_still_decide_it() {
+        let (store, circle, now) = node();
+        let approve = |seed: u8, p: &ProposalView| {
+            cast_vote(&store, &key(seed), p, VoteDecision::Approve, None, now).unwrap();
+        };
+        assert!(waiting(&store, 1).is_empty());
+
+        // Alice proposes for the frontend: alice and bob may vote, carol may not.
+        // Creating it is not a vote, so it waits for alice too.
+        let front = adopt(&store, &circle, "team/frontend", now);
+        assert_eq!(waiting(&store, 1), sorted(&[&front]));
+        assert_eq!(waiting(&store, 2), sorted(&[&front]));
+        assert!(waiting(&store, 3).is_empty(), "outside its electorate");
+        assert!(waiting(&store, 9).is_empty(), "a device on no roll");
+
+        // A ballot, whatever it says, ends the wait for that member only.
+        approve(1, &front);
+        assert!(waiting(&store, 1).is_empty());
+        assert_eq!(waiting(&store, 2), sorted(&[&front]));
+
+        // One for the backend: all three may vote.
+        let back = adopt(&store, &circle, "team/backend", now);
+        assert_eq!(waiting(&store, 1), sorted(&[&back]));
+        assert_eq!(waiting(&store, 2), sorted(&[&front, &back]));
+        assert_eq!(waiting(&store, 3), sorted(&[&back]));
+        cast_vote(
+            &store,
+            &key(3),
+            &back,
+            VoteDecision::Reject,
+            Some("no"),
+            now,
+        )
+        .unwrap();
+        assert!(waiting(&store, 3).is_empty(), "a reject is a ballot");
+
+        // Two of three approve: it has passed, and waits for nobody.
+        let third = adopt(&store, &circle, "*", now);
+        approve(1, &third);
+        assert_eq!(waiting(&store, 3), sorted(&[&third]));
+        approve(2, &third);
+        assert!(count(&store, &third).unwrap().1.passed());
+        assert!(waiting(&store, 3).is_empty(), "passed without her ballot");
+        assert_eq!(waiting(&store, 2), sorted(&[&front, &back]));
+
+        // A circle the owner left asks nothing of them.
+        store.set_circle_left(&circle, Some(now)).unwrap();
+        assert!(waiting(&store, 2).is_empty());
+        store.set_circle_left(&circle, None).unwrap();
+        assert_eq!(waiting(&store, 2).len(), 2);
     }
 
     fn stance(

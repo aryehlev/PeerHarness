@@ -256,6 +256,125 @@ impl Node {
     }
 }
 
+/// The notifications a daemon showed, as its stand-in notification program recorded
+/// them (`PEERHARNESS_TEST_NOTIFY_BIN`, read by debug builds only).
+#[cfg(debug_assertions)]
+fn notifications(file: &Path) -> Vec<String> {
+    std::fs::read_to_string(file)
+        .unwrap_or_default()
+        .split("\n--shown--\n")
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_daemon_announces_a_proposal_that_needs_its_owners_vote_once() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    let mut bob = Node::new(root, "bob");
+
+    // Bob's notifications go to a file instead of his screen.
+    let shown = root.join("bob-notifications");
+    let program = root.join("notify.sh");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\ncat >> '{0}'\nprintf '\\n--shown--\\n' >> '{0}'\n",
+            shown.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bob.env
+        .push(("PEERHARNESS_TEST_NOTIFY_BIN", program.display().to_string()));
+
+    let created = alice.run(&["circle", "create", "team"]);
+    let fingerprint = created["root_fingerprint"].as_str().unwrap().to_owned();
+    alice.run(&[
+        "circle",
+        "invite",
+        &bob.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+        "--out",
+        root.join("unused.jsonl").to_str().unwrap(),
+    ]);
+    bob.join(&alice, root, &fingerprint);
+
+    // Bob's node runs and tells him when something needs his vote. Nothing does yet.
+    let daemon = bob.daemon_with(&["--listen", LISTEN, "--notify"]);
+
+    // Alice proposes a rule, approves it and sends it to Bob's node.
+    let cand = alice.run(&["note", RULE])["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rule = alice.run(&["proposal", "create", &cand, "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    assert!(
+        notifications(&shown).is_empty(),
+        "nothing has reached Bob's node yet"
+    );
+    let synced = alice.run(&["sync", &daemon.addr]);
+    assert_eq!(synced["sent"], 2, "the proposal and her ballot");
+
+    // Within a few seconds Bob is told: a count and where to look, and none of the
+    // proposal's text.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while notifications(&shown).is_empty() {
+        assert!(Instant::now() < deadline, "Bob's daemon announced nothing");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        notifications(&shown),
+        ["1 proposal waits for your vote. Run: peerharness inbox"]
+    );
+    let inbox = bob.run(&["inbox"]);
+    assert_eq!(
+        inbox["proposals_awaiting_vote"][0]["proposal_id"],
+        rule.as_str()
+    );
+
+    // The daemon keeps looking every three seconds while the proposal still waits. It
+    // has said it once and does not say it again.
+    std::thread::sleep(Duration::from_secs(7));
+    assert_eq!(notifications(&shown).len(), 1);
+
+    // Nor after a restart: what was announced is in the store.
+    drop(daemon);
+    let _daemon = bob.daemon_with(&["--listen", LISTEN, "--notify"]);
+    std::thread::sleep(Duration::from_secs(7));
+    assert_eq!(notifications(&shown).len(), 1);
+    assert_eq!(
+        bob.run(&["inbox"])["proposals_awaiting_vote_total"],
+        1,
+        "it still waits for him"
+    );
+}
+
+/// Without a notification program, `--notify` is refused when the daemon starts.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn notify_is_refused_where_no_notification_can_be_shown() {
+    let tmp = TempDir::new().unwrap();
+    let alice = Node::new(tmp.path(), "alice");
+    let (code, msg) = alice.fail(&["daemon", "--listen", LISTEN, "--notify"]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("--notify"), "{msg}");
+}
+
 #[test]
 fn members_vote_over_quic_and_strangers_are_turned_away() {
     let tmp = TempDir::new().unwrap();

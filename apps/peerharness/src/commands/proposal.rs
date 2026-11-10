@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::cli::{DecisionArg, ProposalCommand};
 use crate::commands::circle::find_circle;
 use crate::commands::Ctx;
-use crate::consent::confirm;
+use crate::consent::{asks_in_window, confirm, confirm_or_window};
 use crate::error::{refused, usage};
 use crate::governance::{self, NewProposal, Settled};
 use crate::node::Node;
@@ -133,6 +133,38 @@ fn settled_lines(t: &mut Text, s: &Settled) {
     }
 }
 
+/// Inside a coding agent's session nobody can type a passphrase. Before the owner is
+/// asked anything in a window, make sure the step could be carried out afterwards.
+fn key_before_window(node: &Node, what: &str) -> Result<()> {
+    if !asks_in_window(&node.config) {
+        return Ok(());
+    }
+    if node.unlocks_without_terminal()? && node.device().is_ok() {
+        return Ok(());
+    }
+    Err(refused(format!(
+        "{what} needs your device key, which cannot be unlocked from inside a coding \
+         agent's session. Run it yourself in your own terminal."
+    )))
+}
+
+/// The scanner's findings as preview lines, and whether one of them is high-risk.
+fn findings_preview(preview: &mut String, bundle: &ph_skills::Bundle) -> bool {
+    let findings = bundle.scan();
+    for f in &findings {
+        preview.push_str(&format!(
+            "\n  scanner, line {}: {}",
+            f.line,
+            f.explanation()
+        ));
+    }
+    let high = ph_skills::has_high_risk(&findings);
+    if high {
+        preview.push_str("\n  HIGH RISK findings above. Scanning never proves a text is safe.");
+    }
+    high
+}
+
 fn create(
     ctx: &Ctx,
     candidate: &str,
@@ -156,6 +188,17 @@ fn create(
     let draft = ph_skills::build_bundle(&md, Some(&name))
         .map_err(|e| usage(format!("this candidate cannot become a rule: {e}")))?;
     let title = crate::library::clean_statement(&cand.statement)?;
+    // The statement is the proposal's title, which is shorter than a note may be. Say so
+    // before anything is confirmed or saved, not when the event is signed.
+    let length = title.chars().count();
+    if length > ph_protocol::limits::text::TITLE {
+        return Err(usage(format!(
+            "a rule put to the vote is at most {} characters and this one has {length}. \
+             Shorten it first: `peerharness review {} --edit \"<the rule>\"`",
+            ph_protocol::limits::text::TITLE,
+            cand.id
+        )));
+    }
     let charter = governance::current_charter(&node.store, &circle.circle_id)?;
     let electorate = charter
         .content
@@ -171,7 +214,14 @@ fn create(
         skill = safe(draft.skill_md()),
         need = charter.content.rules.pass.need(electorate),
     );
-    confirm(&ctx.out, &preview, yes, "sharing the proposal")?;
+    key_before_window(&node, "sharing the proposal")?;
+    confirm_or_window(
+        &ctx.out,
+        &preview,
+        yes,
+        "sharing the proposal",
+        &node.config,
+    )?;
 
     // Confirmed: save exactly the previewed text to the library.
     let (_, bundle, _) = crate::library::create_local_skill(&node.home, &node.store, &cand, now)?;
@@ -424,15 +474,17 @@ fn vote(
     };
     // What the human typed is what is sent, after redaction, and it is shown first.
     let rationale = rationale.map(|r| ph_core::redact(r).text);
-    if decision == VoteDecision::Approve && p.kind() == ProposalKind::Adopt {
-        let bundles = crate::library::bundle_store(&node.home);
-        let adopt = p.adopt().ok_or_else(|| anyhow!("not an adopt proposal"))?;
-        if bundles.get(&adopt.bundle_digest).is_err() {
-            return Err(refused(
-                "this node does not have the rule's text yet, so you cannot have read what you \
-                 would approve. Import the proposer's events file first.",
-            ));
-        }
+    // The text of the rule, when this is a ballot on one and this node has it.
+    let rule_text = p.adopt().and_then(|adopt| {
+        crate::library::bundle_store(&node.home)
+            .get(&adopt.bundle_digest)
+            .ok()
+    });
+    if decision == VoteDecision::Approve && p.kind() == ProposalKind::Adopt && rule_text.is_none() {
+        return Err(refused(
+            "this node does not have the rule's text yet, so you cannot have read what you \
+             would approve. Import the proposer's events file first.",
+        ));
     }
     let mut preview = format!(
         "You are about to sign a ballot in {}:\n  {} on \"{}\" ({})",
@@ -447,13 +499,36 @@ fn vote(
             safe(r)
         ));
     }
-    preview.push_str(match decision {
-        VoteDecision::Approve => {
-            "\nAn approval cannot be withdrawn. See the text with `peerharness proposal show`."
-        }
-        _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
-    });
-    confirm(&ctx.out, &preview, yes, "the ballot")?;
+    // In a window the owner cannot run `proposal show` first, and what their agent
+    // tells them about a rule is not the rule: the window carries the text itself. Only
+    // a ballot on a rule whose text is here, with no high-risk finding, is asked there.
+    // Every other ballot (a repeal, a change to the charter) stays in the terminal.
+    let in_window = asks_in_window(&node.config);
+    let mut windowable = false;
+    if let (true, Some(bundle)) = (in_window, &rule_text) {
+        preview.push_str(match decision {
+            VoteDecision::Approve => "\nAn approval cannot be withdrawn.",
+            _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
+        });
+        preview.push_str(&format!(
+            " The rule, exactly as proposed:\n\n{}\n",
+            safe(bundle.skill_md()).trim_end()
+        ));
+        windowable = !findings_preview(&mut preview, bundle);
+    } else {
+        preview.push_str(match decision {
+            VoteDecision::Approve => {
+                "\nAn approval cannot be withdrawn. See the text with `peerharness proposal show`."
+            }
+            _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
+        });
+    }
+    if windowable {
+        key_before_window(&node, "the ballot")?;
+        confirm_or_window(&ctx.out, &preview, yes, "the ballot", &node.config)?;
+    } else {
+        confirm(&ctx.out, &preview, yes, "the ballot")?;
+    }
 
     let key = node.device()?.signing_key();
     governance::cast_vote(
@@ -513,23 +588,18 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
     let bundle = bundles
         .get(&rule.bundle_digest())
         .map_err(|_| refused("this node does not have the rule's text yet"))?;
-    let findings = bundle.scan();
     let mut preview = format!(
         "Install rule {name} for your agent? It passed in {}.\n\n{}\n",
         safe(&circle.name),
         safe(bundle.skill_md()).trim_end()
     );
-    for f in &findings {
-        preview.push_str(&format!(
-            "\n  scanner, line {}: {}",
-            f.line,
-            f.explanation()
-        ));
+    // A high-risk finding always asks the owner, and asks them in their terminal.
+    if findings_preview(&mut preview, &bundle) {
+        confirm(&ctx.out, &preview, yes, "installing the rule")?;
+    } else {
+        key_before_window(&node, "installing the rule")?;
+        confirm_or_window(&ctx.out, &preview, yes, "installing the rule", &node.config)?;
     }
-    if ph_skills::has_high_risk(&findings) {
-        preview.push_str("\n  HIGH RISK findings above. Scanning never proves a text is safe.");
-    }
-    confirm(&ctx.out, &preview, yes, "installing the rule")?;
     let settled = governance::settle(
         &node,
         &circle,

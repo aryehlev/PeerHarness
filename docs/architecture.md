@@ -56,7 +56,17 @@ governance (section 10, ADR-012 onwards).
 * Hooks (`peerharness hook <event>`) never need the private key. They write a bounded,
   redacted observation straight into SQLite with a short busy timeout, fall back to the
   spool file, always exit 0, and print nothing to stdout for `UserPromptSubmit` (stdout
-  there becomes model context).
+  there becomes model context). For `Stop` they may print one throttled
+  `systemMessage`, which Claude Code shows to the person and not to the model: a count
+  of the proposals that wait for the owner's vote (`governance::awaiting_vote`,
+  ADR-035), or else of the new candidates to review. Each has its own notification
+  topic, and the message holds no text written by anyone else.
+* `daemon --notify` (ADR-036) looks every three seconds at the same
+  `governance::awaiting_vote` and shows one notification of the operating system
+  (`apps/peerharness/src/notify.rs`; macOS) for proposals it has not announced before.
+  It holds a count only. Announced proposals are rows in `notifications` under the
+  topic prefix `desktop:`, with limits of their own (60 seconds apart, 10 proposals a
+  day, the owner's quiet hours) that the hook's throttle does not count.
 
 ## 2. Crates and dependency direction
 
@@ -985,6 +995,19 @@ written down directly.
   sets in every command it runs) or `PEERHARNESS_AGENT_SESSION` being set to anything
   but empty or `0`. This stops an agent that is trying to help. It is not a security
   boundary: a process that clears the variable is not stopped by it (ADR-022).
+* **Three steps can be asked in a window** (ADR-033). When the owner has turned it on
+  (`watch claude --install --windows`, stored as `[agent] windows` in `config.toml`,
+  off by default, never settable from a session), `proposal create`, `proposal vote` on
+  an `adopt` proposal and `proposal adopt` go through `consent::confirm_or_window`.
+  Inside a session that shows the exact preview in a window of the operating system
+  (`apps/peerharness/src/window.rs`; macOS, `/usr/bin/osascript`) and returns `Ok` only
+  for a click on "Proceed". Cancel, the return and escape keys, no answer within 90
+  seconds, a window that cannot be shown and `--yes` all refuse with exit code 3. The
+  preview is not printed into the session. A text that would not fit on the screen is
+  not shown in part: the step is refused. A rule with a high-risk scanner finding, a
+  ballot on anything but a rule, and every other consent step refuse inside a session
+  as before. The reporting skill then also names these three commands and `inbox`, and
+  says that only the user's click decides.
 
 ## 13. Privacy invariants (all crates)
 

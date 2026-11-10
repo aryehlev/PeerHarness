@@ -81,6 +81,15 @@ impl Node {
             .map_err(|_| anyhow::anyhow!("identity metadata names an unknown keystore backend"))
     }
 
+    /// Whether the device key can be unlocked with nobody typing at a terminal. A key
+    /// file needs its passphrase, which only `PEERHARNESS_PASSPHRASE` can supply then.
+    pub fn unlocks_without_terminal(&self) -> Result<bool> {
+        Ok(match self.backend()? {
+            KeystoreBackend::File => std::env::var_os(ph_identity::PASSPHRASE_ENV).is_some(),
+            KeystoreBackend::Os | KeystoreBackend::InsecureDev => true,
+        })
+    }
+
     /// Unlocks the device key (needed only by commands that sign).
     pub fn device(&self) -> Result<&DeviceIdentity> {
         if let Some(d) = self.device.get() {

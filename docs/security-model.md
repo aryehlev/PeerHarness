@@ -225,7 +225,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   not shown; the same text asked again gets no second entry; a blocked author's question
   is not stored. A sync is paged by a cursor and keeps at most 8192 events aside in
   memory while it waits for records they depend on. Unsolicited notifications are
-  limited to 2 per day with a per-topic cooldown.
+  limited to 2 per day with a per-topic cooldown, and hold a count only: a member who
+  floods the circle with proposals changes a number in one daily notice (ADR-035).
+  The desktop notifications of `daemon --notify` are off unless asked for, also hold
+  a count only, are shown once per proposal, at least 60 seconds apart and for at
+  most 10 proposals a day (ADR-036).
 * **Residual risk.** Device keys cost nothing to create, so per-peer limits do not stop an
   attacker who uses many keys; the global caps then protect the node's memory but can
   starve legitimate peers of connection slots. There is no IP-level limiting. A member
@@ -437,6 +441,15 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   rules in a project and switching to `follow`. A cancelled or refused command saves
   nothing. Two things are deliberately not consent steps: switching to `ask`, and opting
   out of a rule on one's own machine, which is never refused.
+* **Confirmation windows (ADR-033).** If the owner turned them on in their own terminal,
+  three steps started inside a session are put to the person in a window of the
+  operating system instead of being refused: proposing a rule, a ballot on a proposed
+  rule, and installing a rule that passed. The session chooses the arguments and can
+  make the window appear. It cannot answer it: only a click on "Proceed" counts,
+  "Cancel" is the default, `--yes` is ignored, and the exact preview is shown in full
+  or the step is refused. A rule with a high-risk finding is never decided in a window.
+  Every other consent step refuses inside a session as before, including the one that
+  turns windows on.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,
@@ -444,7 +457,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   `--yes`. An agent running as the owner can also edit the skills directory and the
   database directly, and can use a device key whose keystore unlocks without the owner
   (section 4.6). These rules protect against accidents and against other people. They
-  do not protect an owner from their own compromised session.
+  do not protect an owner from their own compromised session. With confirmation windows
+  on, three more things hold. The agent decides when a window appears and what it asks,
+  so a person can be worn down into clicking "Proceed"; the text in the window is
+  exact, and reading it is the person's part. An agent that can drive the screen could
+  click the button; macOS asks the owner before it lets a program do that. And the
+  agent's skill then tells it to read the inbox, so single-line titles and questions
+  written by other members reach its context before any vote; the text of a rule still
+  reaches an agent only after the rule passed.
 
 ### 4.18 Other local users and processes
 
@@ -463,10 +483,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Threat.** A malicious or vulnerable dependency, or a tampered download.
 * **Mitigation.** `Cargo.lock` is committed and every build uses `--locked`; CI runs
   `cargo deny` (licenses, sources, advisories) and `cargo audit`. Releases publish
-  `SHA256SUMS` (`docs/release.md`).
+  `SHA256SUMS` (`docs/release.md`). The install script (`install.sh`, ADR-034)
+  downloads over HTTPS only, installs nothing unless the archive matches the release's
+  checksum, never runs as root and writes one file.
 * **Residual risk.** Checksums detect corruption and mirror tampering, not a compromised
   repository, CI pipeline or GitHub account: they are published by the same pipeline.
-  Binaries are not code-signed and macOS binaries are not notarized.
+  Binaries are not code-signed and macOS binaries are not notarized. Piping the install
+  script into a shell runs whatever the `main` branch holds at that moment: it is as
+  trustworthy as the repository and no more, and it can be downloaded and read first.
 
 ### 4.20 Governance by vote
 
@@ -799,7 +823,8 @@ directory and QUIC on loopback.
 | 4.10 to 4.12 (hostile skills, paths, script execution) | `crates/ph-skills/tests/malicious.rs`, `bundles.rs`, `install.rs`, `frontmatter_props.rs` |
 | 4.13 (secrets and transcripts) | `crates/ph-core/src/redact.rs` (unit tests), `crates/ph-store/tests/privacy.rs`, `apps/peerharness/tests/local_loop.rs` |
 | 4.14 (hook payloads, settings) | `crates/ph-observer/tests/hooks.rs`, `settings.rs`, `spool.rs` |
-| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope) |
+| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope); `apps/peerharness/tests/agent_windows.rs` (confirmation windows, with a stand-in window program: off until the owner turns them on, which a session cannot do; only "Proceed" decides, and a decline, no answer, an unknown answer, a failing or missing window program and a text too long to show all leave nothing behind; every other consent step is still refused with windows on); `apps/peerharness/src/window.rs` (unit tests: the height estimate against measured dialogs, the text read back exactly by the real `osascript` on macOS) |
+| 4.19 (the install script) | `apps/peerharness/tests/install_script.rs` (against a release in a temporary folder: a matching checksum installs one file that runs; a changed archive, a missing checksum and a version that is not a tag install nothing) |
 | 4.21, 4.22 (joining from a node, the removal notice) | `apps/peerharness/tests/network.rs` (separate processes over QUIC: a new member joins from a member's node, the wrong root fingerprint is refused and stores nothing, a device on no roll is offered nothing; a removed member's node is shown the vote, verifies it, drops the circle's rule, and can neither sync nor rejoin afterwards); `apps/peerharness/src/peer.rs` (`a_member_voted_off_is_told_of_the_vote_and_nothing_else`: the exact set of records, no later charter, every other request refused, a never-member and a revoked device refused) |
 | 4.23 (questions and answers) | `apps/peerharness/src/governance.rs` (`questions_and_answers_are_authorized_by_the_roll`: a device on no roll, a member outside its scopes, a revoked device, an answer without its question or in another scope; `the_local_guard_keeps_noise_out_of_the_inbox`: duplicate, muted, blocked, over quota); `apps/peerharness/tests/circle_life.rs` (`a_question_is_asked_and_answered_by_members_of_the_roll`) |
 | 4.24 (leaving, amendments, devices, the owner's mode) | `apps/peerharness/tests/circle_life.rs` (`a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`: two devices of one member are one approval, the amend threshold, leaving acts locally at once and changes the roll only by vote) |
