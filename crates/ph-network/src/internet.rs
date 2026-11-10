@@ -1484,6 +1484,15 @@ impl Internet {
         let reached = successes > 0;
         if reached != self.bootstrapped {
             self.bootstrapped = reached;
+            if reached {
+                // Back on the network (or on it for the first time). A relay that
+                // dropped a reservation or did not answer while the network was gone
+                // did nothing wrong, and the servers closest to this node's id, where
+                // it looks for relays, are the same ones every time: without this the
+                // node went without a relay until the pauses ran out (measured: more
+                // than three minutes after a seven-minute outage).
+                self.relay_backoff.clear();
+            }
             let routing_peers: usize = self
                 .stack
                 .as_mut()
@@ -2635,6 +2644,28 @@ mod tests {
         i.links.clear();
         i.stop();
         assert_eq!(i.admit(stranger, &[], offered), Err(Refused::Stopped));
+    }
+
+    #[test]
+    fn relays_lost_with_the_network_are_asked_again_when_it_is_back() {
+        let mut i = on(false);
+        let now = Instant::now();
+        i.on_self_lookup(3, now);
+        assert!(i.bootstrapped);
+        // On the network, a relay that refused is left alone for a while.
+        i.relay_dropped(peer(7), false, now);
+        i.on_self_lookup(2, now);
+        assert_eq!(i.relay_backoff.len(), 1);
+        // The network goes: no server answers, and the reservations end.
+        i.on_self_lookup(0, now);
+        assert!(!i.bootstrapped);
+        i.relay_dropped(peer(8), true, now);
+        i.relay_dropped(peer(9), true, now);
+        assert_eq!(i.relay_backoff.len(), 3);
+        // It is back: nobody is held to what happened meanwhile.
+        i.on_self_lookup(1, now);
+        assert!(i.bootstrapped);
+        assert!(i.relay_backoff.is_empty());
     }
 
     #[test]
