@@ -4,6 +4,10 @@
 //! What these tests show: it creates the node, connects the agent and registers the
 //! tools, each after a preview; running it again changes nothing; an agent's session
 //! cannot run it; and where Claude Code is missing or refuses, it says what to run.
+//! Without confirmation windows it ends by saying what works there, not by suggesting
+//! prompts the agent can only refuse; for a node that is already there it names the
+//! keystore, and warns about a plaintext one; and `reset` names the command that takes
+//! the tools out of Claude Code again.
 //!
 //! Nothing here touches the developer's own Claude Code or keychain. Claude Code's
 //! `claude` command is a stand-in script named by `PEERHARNESS_TEST_CLAUDE_BIN`, which
@@ -266,4 +270,232 @@ fn where_claude_code_is_missing_or_refuses_setup_says_what_to_run() {
     std::fs::remove_file(&m.refuse).unwrap();
     let done = json(&m.setup(&["--yes", "--json"]).output().unwrap());
     assert_eq!(done["tools"], "registered");
+}
+
+/// Without confirmation windows every tool but `note` answers that the step is the
+/// owner's (ADR-038). `setup` used to end by suggesting two prompts for the agent all
+/// the same, and the agent answered them with "run `peerharness setup`".
+#[test]
+fn without_windows_setup_says_what_works_and_suggests_nothing_that_cannot() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    let prompts = [
+        "Start a new Claude Code session and ask it",
+        "What is my PeerHarness device key?",
+        "Create a PeerHarness team called acme.",
+    ];
+
+    // The owner keeps every decision in the terminal.
+    let out = m.setup(&["--no-dialogs", "--yes"]).output().unwrap();
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("off (every decision needs your own terminal)"));
+    // What works there: the note, the count at the end of a turn, and the terminal.
+    assert!(
+        said.contains("Without confirmation windows, this is what works from here:"),
+        "{said}"
+    );
+    assert!(said.contains("Your agent notes a rule"), "{said}");
+    assert!(said.contains("At the end of a turn"), "{said}");
+    assert!(
+        said.contains("Every decision is typed in your own terminal"),
+        "{said}"
+    );
+    assert!(said.contains("`peerharness keep <id>`"), "{said}");
+    assert!(
+        said.contains(concat!(
+            env!("CARGO_PKG_REPOSITORY"),
+            "/blob/main/docs/terminal.md"
+        )),
+        "{said}"
+    );
+    // Neither prompt would be answered with anything but a refusal.
+    for prompt in prompts {
+        assert!(!said.contains(prompt), "{prompt}: {said}");
+    }
+    // Running it again says the same, and says so to a program too.
+    let again = m.setup(&["--no-dialogs", "--yes"]).output().unwrap();
+    assert!(text(&again).contains("this is what works from here"));
+    assert!(!text(&again).contains(prompts[0]));
+    let report = json(
+        &m.setup(&["--no-dialogs", "--yes", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(report["agent_can_ask"], false);
+    assert_eq!(report["agent"]["windows"], false);
+
+    // With the windows on, the prompts are what to try, and the other text is not there.
+    let out = m.setup(&["--yes"]).output().unwrap();
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    for prompt in prompts {
+        assert!(said.contains(prompt), "{prompt}: {said}");
+    }
+    assert!(!said.contains("Without confirmation windows"), "{said}");
+    let report = json(&m.setup(&["--yes", "--json"]).output().unwrap());
+    assert_eq!(report["agent_can_ask"], true);
+}
+
+/// The same on a machine that can show no window at all: `setup` cannot turn anything
+/// on there, and does not pretend to.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn on_a_machine_without_a_window_setup_says_what_works_there() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    for _ in 0..2 {
+        let out = m
+            .setup(&["--yes"])
+            .env_remove("PEERHARNESS_TEST_WINDOW_BIN")
+            .output()
+            .unwrap();
+        let said = text(&out);
+        assert!(out.status.success(), "{said}");
+        assert!(
+            said.contains("This machine has no window PeerHarness can show"),
+            "{said}"
+        );
+        assert!(said.contains("this is what works from here"), "{said}");
+        assert!(said.contains("docs/terminal.md"), "{said}");
+        assert!(!said.contains("Start a new Claude Code session"), "{said}");
+        assert!(!said.contains("Create a PeerHarness team"), "{said}");
+    }
+    let status = json(
+        &m.cmd(&["--json", "watch", "claude", "--status"])
+            .env_remove("PEERHARNESS_TEST_WINDOW_BIN")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(status["windows"], false);
+    assert_eq!(status["windows_available"], false);
+}
+
+/// For a node that is already there, step 1 says which keystore holds its key. A
+/// plaintext keystore is said loudly: whoever ran `init` saw its warning, and that may
+/// not have been the owner.
+#[test]
+fn setup_says_which_keystore_an_existing_node_uses_and_warns_about_plaintext() {
+    let tmp = TempDir::new().unwrap();
+
+    // --- A node with plaintext keys, made before the owner ran `setup`.
+    let root = |name: &str| {
+        let root = tmp.path().join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    };
+    let m = Machine::new(&root("plain"));
+    let made = m
+        .cmd(&[
+            "--json",
+            "init",
+            "--keystore",
+            "insecure-dev",
+            "--insecure-dev-keystore",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(json(&made)["keystore"], "insecure-dev");
+    let out = m.cmd(&["setup", "--yes"]).output().unwrap();
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("1. Your node: already there."), "{said}");
+    assert!(
+        said.contains("Its private key is in a plaintext file (the insecure-dev keystore)."),
+        "{said}"
+    );
+    assert!(
+        said.contains("WARNING: this node's private keys are stored in PLAINTEXT"),
+        "{said}"
+    );
+    assert!(said.contains("`peerharness reset`"), "{said}");
+    // With --json the warning is on standard error, and the keystore is in the report.
+    let out = m.cmd(&["setup", "--yes", "--json"]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("warning: this node's private keys are stored in PLAINTEXT"),
+        "{}",
+        text(&out)
+    );
+    let report = json(&out);
+    assert_eq!(report["node_created"], false);
+    assert_eq!(report["keystore"], "insecure-dev");
+
+    // --- A node with its key in an encrypted file: named, and no warning.
+    let m = Machine::new(&root("file"));
+    let init = m
+        .cmd(&[
+            "init",
+            "--keystore",
+            "file",
+            "--kdf-profile",
+            "fast-insecure-test",
+        ])
+        .env("PEERHARNESS_PASSPHRASE", "a passphrase for tests only")
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{}", text(&init));
+    let out = m.cmd(&["setup", "--yes"]).output().unwrap();
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("1. Your node: already there."), "{said}");
+    assert!(
+        said.contains("Its private key is in an encrypted file, protected by your passphrase."),
+        "{said}"
+    );
+    assert!(!said.contains("PLAINTEXT"), "{said}");
+    let report = json(&m.cmd(&["setup", "--yes", "--json"]).output().unwrap());
+    assert_eq!(report["keystore"], "file");
+}
+
+/// `reset` leaves the registration with Claude Code in place, and names the command
+/// that takes it out: the one `setup` showed when it made the registration.
+#[test]
+fn reset_names_the_command_that_takes_the_tools_out_of_claude_code() {
+    const UNREGISTER: &str = "`claude mcp remove peerharness --scope user`";
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    let out = m.setup(&["--yes"]).output().unwrap();
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(
+        said.contains(&format!("Take it out again with {UNREGISTER}.")),
+        "{said}"
+    );
+
+    // Before anything is deleted: what stays, each with the way to remove it.
+    let out = m.cmd(&["reset"]).output().unwrap();
+    let dry = text(&out);
+    assert!(out.status.success(), "{dry}");
+    let left = dry
+        .split("Left in place:")
+        .nth(1)
+        .unwrap_or_else(|| panic!("{dry}"));
+    assert!(left.contains("registration of the PeerHarness tools with Claude Code"));
+    assert!(left.contains(UNREGISTER), "{dry}");
+    assert!(
+        left.contains("`peerharness watch claude --remove`"),
+        "{dry}"
+    );
+    assert!(left.contains("Nothing was deleted."), "{dry}");
+    assert!(m.home.join("peerharness.db").is_file());
+
+    // After the node is gone the same lines say what is still there. PeerHarness did
+    // not run Claude Code's command itself.
+    let out = m.cmd(&["reset", "--confirm"]).output().unwrap();
+    let done = text(&out);
+    assert!(out.status.success(), "{done}");
+    assert!(done.contains("This node no longer exists."), "{done}");
+    let still = done
+        .split("Still in place:")
+        .nth(1)
+        .unwrap_or_else(|| panic!("{done}"));
+    assert!(still.contains(UNREGISTER), "{done}");
+    assert!(!m.home.exists());
+    assert!(
+        m.calls().iter().all(|c| !c.contains("remove")),
+        "{:?}",
+        m.calls()
+    );
+    assert!(m.registered.is_file(), "the registration is still there");
 }

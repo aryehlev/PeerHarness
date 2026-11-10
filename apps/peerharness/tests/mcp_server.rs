@@ -2,7 +2,8 @@
 //! protocol on the server's standard input and output.
 //!
 //! What these tests show: the handshake and the tool list; that a tool does what the
-//! command does; and that the server is no way around consent. The server here runs
+//! command does; that where no window can be shown a refused tool says where the step
+//! is taken instead of naming `setup`; and that the server is no way around consent. The server here runs
 //! **without** the variables that mark an agent's session, as it would when a client
 //! other than Claude Code starts it, and every consent step is still refused or asked
 //! in a window, never answered.
@@ -133,8 +134,23 @@ impl Node {
     }
 
     fn serve(&self) -> Client {
+        self.serve_on(true)
+    }
+
+    /// The server on a machine that can show no window: neither it nor what it runs is
+    /// given the stand-in. Only for a node where no window is allowed either, so that
+    /// nothing here can open a real one.
+    #[cfg(not(target_os = "macos"))]
+    fn serve_without_a_window(&self) -> Client {
+        self.serve_on(false)
+    }
+
+    fn serve_on(&self, window: bool) -> Client {
         let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
         self.env(&mut cmd);
+        if !window {
+            cmd.env_remove("PEERHARNESS_TEST_WINDOW_BIN");
+        }
         let mut child = cmd
             .arg("mcp")
             .stdin(Stdio::piped())
@@ -439,6 +455,61 @@ fn a_tool_does_what_the_command_does_and_consent_stays_with_the_person() {
         "note",
         json!({ "rule": "Never edit generated files by hand." }),
     );
+
+    assert_eq!(client.close(), 0);
+}
+
+/// On a machine that can show no confirmation window (Linux, for now) every tool but
+/// `note` is refused, as ADR-038 has it. The refusal used to name `peerharness setup`
+/// as the way to allow the step, and running that changed nothing: the answer now says
+/// that the step is typed in a terminal, and where the commands are.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn where_no_window_can_be_shown_a_refused_tool_does_not_point_back_to_setup() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path());
+    node.init();
+    let mut client = node.serve_without_a_window();
+    client.handshake();
+
+    for (tool, arguments) in [
+        ("status", json!({})),
+        ("inbox", json!({})),
+        ("create_circle", json!({ "name": "team" })),
+        ("sync", json!({})),
+        (
+            "keep_rule",
+            json!({ "candidate_id": "cand_0123456789abcdef" }),
+        ),
+    ] {
+        let said = client.fails(tool, arguments);
+        assert!(
+            said.contains("cannot show a confirmation window"),
+            "{tool}: {said}"
+        );
+        // Not the loop: the owner ran `setup` already, and it has nothing to turn on.
+        assert!(!said.contains("setup"), "{tool}: {said}");
+        assert!(!said.contains("has not allowed"), "{tool}: {said}");
+        // Where the step is taken instead, and that the agent's part ends here.
+        assert!(said.contains("their own terminal"), "{tool}: {said}");
+        assert!(said.contains("docs/terminal.md"), "{tool}: {said}");
+        assert!(said.ends_with("Tell them so and stop."), "{tool}: {said}");
+    }
+    // The refusal is the same refusal: nothing ran and nothing was asked.
+    assert_eq!(node.run(&["status"])["circles"], json!([]));
+    assert!(node.shown().is_empty());
+
+    // What the answer says still works does.
+    let said = client.ok("note", json!({ "rule": RULE }));
+    assert!(said.contains("Noted for the user's review"), "{said}");
+
+    // Where a window can be shown and the owner has not allowed it, `setup` is still
+    // what allows it, and the answer still says so.
+    let mut with_window = node.serve();
+    with_window.handshake();
+    let said = with_window.fails("status", json!({}));
+    assert!(said.contains("has not allowed this"), "{said}");
+    assert!(said.contains("`peerharness setup`"), "{said}");
 
     assert_eq!(client.close(), 0);
 }

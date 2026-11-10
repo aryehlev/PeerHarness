@@ -1,4 +1,9 @@
 //! `peerharness doctor`: local diagnostics only. No network calls, never unlocks keys.
+//!
+//! A binary built with debug assertions says so in a line of its own ([`DEBUG_BUILD`]):
+//! such a build obeys the `PEERHARNESS_TEST_*` stand-ins, so whoever sets its environment
+//! can name the program that answers a confirmation window. It is a line and never a
+//! refusal: the test suite runs debug builds.
 
 use anyhow::Result;
 use ph_identity::{DeviceIdentity, KeystoreBackend, OsKeyStore};
@@ -11,6 +16,21 @@ use crate::daemon_info::DaemonInfo;
 use crate::home::mode_of;
 use crate::node::open_keystore_no_unlock;
 use crate::output::{Report, Text};
+
+/// What `doctor` says about a binary built with debug assertions. Release builds do not
+/// read the stand-ins and print nothing.
+pub const DEBUG_BUILD: &str = "debug build: it obeys the PEERHARNESS_TEST_* stand-ins that \
+    the tests use in place of a confirmation window, a notification and Claude Code's \
+    `claude` command. It is for development and tests, not for daily use; a release build \
+    does not read them.";
+
+/// What `status` says about it, in its list.
+pub const DEBUG_BUILD_SHORT: &str = "debug: for development and tests, not for daily use";
+
+/// Whether this binary obeys the test stand-ins.
+pub const fn is_debug_build() -> bool {
+    cfg!(debug_assertions)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Level {
@@ -40,6 +60,11 @@ impl Checks {
 pub fn run(ctx: &Ctx) -> Result<Report> {
     let home = &ctx.home;
     let mut c = Checks(Vec::new());
+
+    // The binary itself, before anything about the home: it holds without one.
+    if is_debug_build() {
+        c.add("build", Level::Warn, DEBUG_BUILD);
+    }
 
     // Home directory.
     if !home.root().is_dir() {

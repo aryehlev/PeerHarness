@@ -153,8 +153,23 @@ main() {
             ;;
     esac
     say ""
-    say "Next, once, in this terminal: set it up for Claude Code."
-    say "  peerharness setup"
+    case "$target" in
+        *-apple-darwin)
+            say "Next, once, in this terminal: set it up for Claude Code."
+            say "  peerharness setup"
+            ;;
+        *)
+            # No confirmation window can be shown here, so what a coding agent may
+            # start ends at noting a rule. The next step is the terminal guide.
+            say "Next: on Linux every decision is typed in your own terminal. PeerHarness can"
+            say "show its confirmation window on macOS only, so here a coding agent notes the"
+            say "rules you give it and starts nothing else. The commands, step by step:"
+            say "  https://github.com/${REPO}/blob/main/docs/terminal.md"
+            say ""
+            say "To create your node and have Claude Code note rules for you, once, in this terminal:"
+            say "  peerharness setup"
+            ;;
+    esac
     say ""
     say "To see three members vote on a rule first, in temporary folders:"
     say "  peerharness demo"

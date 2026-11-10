@@ -13,6 +13,15 @@
 //! Inside a coding agent's session it is refused as a whole: step 2 is where the owner
 //! allows what their agent may start, and no session takes that step for them.
 //!
+//! It ends by saying what the owner can do now, and that depends on the windows.
+//! Without them (a machine that can show none, or `--no-dialogs`) the agent's tools
+//! other than `note` run nothing (ADR-038), so it does not suggest asking the agent for
+//! anything: it says what works there and where the terminal's commands are.
+//!
+//! For a node that is already there, step 1 names the keystore its private key is in.
+//! A plaintext keystore (`insecure-dev`) gets a warning: an earlier `init` may have
+//! chosen it where its own warning reached nobody.
+//!
 //! Step 3 runs a program that edits Claude Code's configuration. Debug builds never
 //! look for it on `PATH`: they run only the program named by
 //! `PEERHARNESS_TEST_CLAUDE_BIN`, a stand-in for tests, so that no test can touch the
@@ -23,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::Result;
+use ph_identity::KeystoreBackend;
 use serde_json::{json, Value};
 
 use super::Ctx;
@@ -33,6 +43,14 @@ use crate::window::Window;
 
 /// The name the server is registered under.
 const SERVER_NAME: &str = "peerharness";
+
+/// Claude Code's own command that takes the server out again. `reset` names it too:
+/// the registration is in Claude Code's configuration, which PeerHarness never edits.
+pub const UNREGISTER: &str = "claude mcp remove peerharness --scope user";
+
+/// The terminal guide: every step as a command, the ones without a window included.
+pub const TERMINAL_GUIDE: &str =
+    concat!(env!("CARGO_PKG_REPOSITORY"), "/blob/main/docs/terminal.md");
 
 /// Environment variable naming the stand-in for Claude Code's `claude` command (debug
 /// builds only).
@@ -53,6 +71,17 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
         t.line("1. Your node: already there.");
         Value::Null
     };
+    // Which keystore holds the node's key: read from the node, which is not unlocked.
+    let backend = ctx.open_node()?.backend()?;
+    if !created {
+        t.line(format!("  {}", keystore_says(backend)));
+        if backend == KeystoreBackend::InsecureDev {
+            // `init` warned whoever ran it, which may not have been the owner. On
+            // standard error as well, where `--json` does not hide it.
+            ctx.out.warn(PLAINTEXT_WARNING);
+            t.line(format!("  WARNING: {PLAINTEXT_WARNING}"));
+        }
+    }
 
     // 2. The agent: the hooks, the skill, and what it may ask in a window.
     let dialogs = !a.no_dialogs && Window::find().is_some();
@@ -91,20 +120,71 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
     let tools = register(ctx, a.yes)?;
     t.line(format!("3. The tools: {}", tools.says()));
 
+    // What the owner can do now. With the windows off, or on a machine that can show
+    // none, every tool but `note` answers that the step is the owner's.
+    let agent_can_ask = agent.json["windows"] == true && Window::find().is_some();
     t.line("");
-    t.line("Start a new Claude Code session and ask it, for example:");
-    t.line("  \"What is my PeerHarness device key?\"");
-    t.line("  \"Create a PeerHarness team called acme.\"");
+    for line in next_steps(agent_can_ask) {
+        t.line(line);
+    }
     Ok(Report::new(
         json!({
             "node_created": created,
             "node": node,
+            "keystore": backend.as_str(),
             "agent": agent.json,
+            "agent_can_ask": agent_can_ask,
             "tools": tools.code(),
             "tools_command": command_line(&server_command(ctx)?),
         }),
         t.finish(),
     ))
+}
+
+/// What step 1 says about the keystore of a node that was already there.
+const fn keystore_says(backend: KeystoreBackend) -> &'static str {
+    match backend {
+        KeystoreBackend::Os => "Its private key is in the operating system's keychain.",
+        KeystoreBackend::File => {
+            "Its private key is in an encrypted file, protected by your passphrase."
+        }
+        KeystoreBackend::InsecureDev => {
+            "Its private key is in a plaintext file (the insecure-dev keystore)."
+        }
+    }
+}
+
+/// What the owner of a node with a plaintext keystore is told.
+const PLAINTEXT_WARNING: &str = "this node's private keys are stored in PLAINTEXT, in its home \
+    directory (the insecure-dev keystore, meant for development). Any program that runs as \
+    you can read them and sign your ballots. No command moves a key to another keystore: a \
+    node with a protected key is a new node, with a new device key (`peerharness reset` \
+    says what it deletes, then `peerharness setup`).";
+
+/// The closing lines: what to do next, which depends on whether the agent can put a
+/// decision in front of the owner.
+fn next_steps(agent_can_ask: bool) -> Vec<String> {
+    if agent_can_ask {
+        return vec![
+            "Start a new Claude Code session and ask it, for example:".to_owned(),
+            "  \"What is my PeerHarness device key?\"".to_owned(),
+            "  \"Create a PeerHarness team called acme.\"".to_owned(),
+        ];
+    }
+    vec![
+        "Without confirmation windows, this is what works from here:".to_owned(),
+        "  Your agent notes a rule when you correct it or state one. That is all it does: \
+         asked for anything else, it answers that the step is yours."
+            .to_owned(),
+        "  At the end of a turn, at most once a day, Claude Code tells you how many noted \
+         rules and proposals wait for you."
+            .to_owned(),
+        "  Every decision is typed in your own terminal: `peerharness inbox` shows what \
+         waits, `peerharness keep <id>` keeps a rule for your own agent, and proposing, \
+         voting, inviting and joining are commands as well."
+            .to_owned(),
+        format!("  The commands, step by step: {TERMINAL_GUIDE}"),
+    ]
 }
 
 /// How registering the tools with Claude Code came out.
@@ -215,7 +295,7 @@ fn register(ctx: &Ctx, yes: bool) -> Result<Tools> {
          command for that:\n  {line}\n\
          Claude Code then starts that program in each session. The tools start steps for \
          you. They never decide: that stays your click in a window, or your own terminal.\n\
-         Take it out again with `claude mcp remove {SERVER_NAME} --scope user`."
+         Take it out again with `{UNREGISTER}`."
     );
     confirm(
         &ctx.out,
@@ -324,6 +404,36 @@ mod tests {
         // A relative entry, the current directory included, is never searched.
         let relative = std::env::join_paths([PathBuf::from("."), PathBuf::from("")]).unwrap();
         assert_eq!(on_path("claude", &relative), None);
+    }
+
+    #[test]
+    fn the_closing_lines_follow_what_the_agent_can_do() {
+        // With windows: something to ask the agent.
+        let with = next_steps(true).join("\n");
+        assert!(with.contains("Start a new Claude Code session"));
+        assert!(!with.contains("terminal.md"));
+        // Without: what works, where the commands are, and no prompt for the agent.
+        let without = next_steps(false).join("\n");
+        assert!(without.contains("Your agent notes a rule"));
+        assert!(without.contains("typed in your own terminal"));
+        assert!(without.ends_with("/blob/main/docs/terminal.md"));
+        assert!(TERMINAL_GUIDE.starts_with("https://"));
+        assert!(!without.contains("ask it") && !without.contains("PeerHarness team called"));
+        // The command `reset` names is the one that removes what `add` registered.
+        assert_eq!(
+            UNREGISTER,
+            format!("claude mcp remove {SERVER_NAME} --scope user")
+        );
+        // Every keystore is named, and only the plaintext one as plaintext.
+        for backend in KeystoreBackend::ALL {
+            let says = keystore_says(backend);
+            assert_eq!(
+                says.contains("plaintext"),
+                backend == KeystoreBackend::InsecureDev,
+                "{says}"
+            );
+        }
+        assert!(PLAINTEXT_WARNING.contains("PLAINTEXT"));
     }
 
     #[test]

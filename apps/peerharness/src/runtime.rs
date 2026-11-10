@@ -94,10 +94,8 @@ impl Worker {
                         return;
                     }
                 };
-                let unlocked = node
-                    .device()
-                    .map(|d| (d.libp2p_seed(), d.public()))
-                    .context("cannot unlock the device key");
+                // `Node::device` says what failed ("cannot unlock the device key: ...").
+                let unlocked = node.device().map(|d| (d.libp2p_seed(), d.public()));
                 let ok = unlocked.is_ok();
                 let _ = ready_tx.send(unlocked);
                 if !ok {
@@ -147,7 +145,8 @@ struct Shared {
 pub struct Changes {
     pub installed: Vec<String>,
     pub removed: Vec<String>,
-    pub asking: Vec<String>,
+    /// Rules in force that wait for the owner's confirmation.
+    pub asking: Vec<governance::Waiting>,
     /// Rules in force that this node holds back (`governance::Held`), each with the
     /// name of its circle on this machine.
     pub held: Vec<(governance::HeldRule, String)>,
@@ -194,9 +193,7 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                 }
                 changes.installed.extend(settled.applied.installed);
                 changes.removed.extend(settled.applied.removed);
-                changes
-                    .asking
-                    .extend(settled.applied.asking.into_iter().map(|(name, _)| name));
+                changes.asking.extend(settled.applied.asking);
                 changes.held.extend(
                     settled
                         .applied

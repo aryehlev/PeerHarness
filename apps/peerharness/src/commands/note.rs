@@ -77,7 +77,11 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
                 existing.id, existing.status
             ));
             if !existing.status.is_terminal() {
-                t.line(format!("Next: `peerharness review {}`.", existing.id));
+                t.line(format!(
+                    "Next: `peerharness keep {id}` keeps it for your own agent; \
+                     `peerharness review {id}` shows it.",
+                    id = existing.id
+                ));
             }
         }
         return Ok(Report::new(
@@ -135,7 +139,12 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
             draft.name
         ));
         t.line(format!(
-            "Next: `peerharness review {id} --approve` saves it to your library."
+            "Next: `peerharness keep {id}` shows the exact text, asks once, and installs it \
+             for your own agent."
+        ));
+        t.line(format!(
+            "  To change it or drop it first: `peerharness review {id} --edit \"...\"`, or \
+             `--reject`."
         ));
     }
     Ok(Report::new(

@@ -339,9 +339,13 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
     if settled.applied.installed.iter().any(|s| s == name) {
         t.line("  installed it for your agent");
     }
-    for (skill, why) in &settled.applied.asking {
-        if skill == name {
-            t.line(format!("  it waits for your confirmation ({why})"));
+    for waiting in &settled.applied.asking {
+        if waiting.name == name {
+            t.line(format!(
+                "  it waits for your confirmation, because {}: `peerharness proposal adopt {}`",
+                waiting.because(),
+                short_id(&waiting.proposal_id)
+            ));
         }
     }
     for (skill, why) in &settled.applied.refused {

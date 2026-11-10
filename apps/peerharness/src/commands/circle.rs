@@ -67,10 +67,16 @@ pub fn run(ctx: &Ctx, command: CircleCommand) -> Result<Report> {
 /// The circle named `name`, or the only circle when `name` is `None`.
 pub fn find_circle(node: &Node, name: Option<&str>) -> Result<CircleRow> {
     match name {
-        Some(n) => node
-            .store
-            .circle_by_name(n)?
-            .ok_or_else(|| usage(format!("no circle named {n:?} on this node"))),
+        // The error names no circle, neither the one asked for nor the ones there are:
+        // it says where the names can be read.
+        Some(n) => node.store.circle_by_name(n)?.ok_or_else(|| {
+            usage(
+                "no circle on this node has that name. `peerharness status` lists the \
+                 circles of this node by name. A circle you joined is called \
+                 circle-<start of its root fingerprint> here, unless you passed --name \
+                 to `circle join`.",
+            )
+        }),
         None => {
             let mut all = node.store.circles()?;
             match all.len() {
@@ -904,19 +910,26 @@ fn mode(ctx: &Ctx, args: CircleModeArgs) -> Result<Report> {
     for skill in &settled.applied.installed {
         t.line(format!("  installed rule {skill} for your agent"));
     }
-    for (skill, why) in &settled.applied.asking {
-        t.line(format!(
-            "  rule {skill} waits for your confirmation ({why}): `peerharness proposal adopt <id>`"
-        ));
+    // Rules in force that are not installed and wait for the owner: each with the
+    // proposal to confirm. What is installed already stays and is not listed.
+    for waiting in &settled.applied.asking {
+        t.line(format!("  {}", waiting.line()));
     }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
+    }
+    if args.mode == ModeArg::Ask {
+        t.line(
+            "  From now on a rule that passes is installed only after you confirm it. \
+             Rules that are installed stay (`peerharness rule list`).",
+        );
     }
     Ok(Report::new(
         json!({
             "circle": circle.name,
             "adoption_mode": wanted,
             "installed": settled.applied.installed,
+            "waiting": settled.applied.asking.iter().map(governance::Waiting::json).collect::<Vec<_>>(),
         }),
         t.finish(),
     ))
@@ -1246,10 +1259,8 @@ fn finish_join(node: &Node, plan: &JoinPlan, lines: &[&str]) -> Result<(Value, T
     for skill in &settled.applied.installed {
         t.line(format!("  installed rule {skill}"));
     }
-    for (skill, why) in &settled.applied.asking {
-        t.line(format!(
-            "  rule {skill} waits for your confirmation ({why})"
-        ));
+    for waiting in &settled.applied.asking {
+        t.line(format!("  {}", waiting.line()));
     }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
@@ -1417,8 +1428,8 @@ fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, from: JoinFrom) -> Result<Rep
                     for skill in &r.changes.installed {
                         t.line(format!("  installed rule {skill}"));
                     }
-                    for skill in &r.changes.asking {
-                        t.line(format!("  rule {skill} waits for your confirmation"));
+                    for waiting in &r.changes.asking {
+                        t.line(format!("  {}", waiting.line()));
                     }
                     for (rule, circle) in &r.changes.held {
                         t.line(format!("  {}", rule.line(circle)));

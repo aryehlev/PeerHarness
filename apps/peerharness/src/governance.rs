@@ -1032,8 +1032,9 @@ pub struct Applied {
     pub installed: Vec<String>,
     /// Managed skills removed now (repealed, replaced or opted out).
     pub removed: Vec<String>,
-    /// Rules in force that wait for the owner's confirmation, with the reason code.
-    pub asking: Vec<(String, &'static str)>,
+    /// Rules in force that are not installed and wait for the owner's confirmation. A
+    /// rule that is in place already is not among them.
+    pub asking: Vec<Waiting>,
     /// Rules in force that cannot be installed, with the reason code.
     pub refused: Vec<(String, &'static str)>,
     /// Rules in force that the owner opted out of.
@@ -1049,6 +1050,51 @@ pub struct Applied {
     /// install over what it did not install, nor under the name of PeerHarness's own
     /// skill ([`Held`]).
     pub held: Vec<HeldRule>,
+}
+
+/// A rule in force that waits for the owner's confirmation before it is installed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Waiting {
+    /// The rule's skill name.
+    pub name: String,
+    /// The `adopt` proposal that put it in force: what `proposal adopt` takes.
+    pub proposal_id: EventId,
+    /// Why the owner is asked: the reason code of the step
+    /// (`ph_governance::AdoptionStep::code`).
+    pub why: &'static str,
+}
+
+impl Waiting {
+    /// Why the owner is asked, in words that complete "it waits for your confirmation,
+    /// because ...".
+    pub fn because(&self) -> &'static str {
+        match self.why {
+            "ask_high_risk" => "the scanner found high-risk content in it, which is always asked",
+            "ask_local_policy" => "the policy you set for this node is not met by its approvals",
+            _ => "you chose to be asked before a rule is installed",
+        }
+    }
+
+    /// The line a command prints after settling, for the owner: the rule, why it
+    /// waits, and the command that confirms it, with the proposal's id.
+    pub fn line(&self) -> String {
+        format!(
+            "rule {} is in force and waits for your confirmation, because {}: \
+             `peerharness proposal adopt {}`",
+            self.name,
+            self.because(),
+            crate::output::short_id(&self.proposal_id)
+        )
+    }
+
+    /// For a command's JSON report.
+    pub fn json(&self) -> Value {
+        json!({
+            "skill_name": self.name,
+            "proposal_id": self.proposal_id,
+            "why": self.why,
+        })
+    }
 }
 
 /// Why a rule in force is held on this node: it is not installed, whatever the owner's
@@ -1345,7 +1391,18 @@ pub fn apply_rules(
                     Err(_) => applied.conflicts.push(name),
                 }
             }
-            step @ AdoptionStep::AskOwner(_) => applied.asking.push((name, step.code())),
+            step @ AdoptionStep::AskOwner(_) => {
+                // What is in place already waits for nothing: the owner confirmed it, or
+                // followed the circle when it passed, and choosing to be asked takes
+                // nothing out.
+                if !managed_with(&target, &name, &rule.bundle_digest()) {
+                    applied.asking.push(Waiting {
+                        name,
+                        proposal_id: rule.proposal_id(),
+                        why: step.code(),
+                    });
+                }
+            }
             step @ AdoptionStep::Refuse(_) => applied.refused.push((name, step.code())),
             AdoptionStep::OptedOut => {
                 remove(&name, &rule.bundle_digest(), &mut applied)?;
@@ -2294,8 +2351,19 @@ mod tests {
         /// What `apply_rules` does on alice's node (device 1), which follows the
         /// circle's rules without asking. `confirmed` names rules she just confirmed.
         fn apply(&self, store: &Store, circle: &CircleId, confirmed: &[String]) -> Applied {
+            self.apply_in("follow", store, circle, confirmed)
+        }
+
+        /// The same, with alice's mode for the circle given: `follow` or `ask`.
+        fn apply_in(
+            &self,
+            mode: &str,
+            store: &Store,
+            circle: &CircleId,
+            confirmed: &[String],
+        ) -> Applied {
             let mut row = store.circle(circle).unwrap().unwrap();
-            row.adoption_mode = "follow".into();
+            row.adoption_mode = mode.into();
             apply_rules(
                 store,
                 &self.bundles,
@@ -2395,6 +2463,74 @@ mod tests {
             .iter()
             .map(|h| (h.name.as_str(), h.why))
             .collect()
+    }
+
+    /// A rule that is installed waits for nothing. An owner who switches to `ask` keeps
+    /// what is installed, and was told that each of those rules "waits for your
+    /// confirmation": only a rule that is not in place is reported as waiting.
+    #[test]
+    fn a_rule_that_is_installed_is_not_reported_as_waiting() {
+        let (store, circle, now) = node();
+        let machine = Machine::new();
+        let (adopt, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            "use-pnpm",
+            "Use pnpm, not npm.",
+            now,
+        );
+        let waiting = |applied: &Applied| -> Vec<(String, &'static str)> {
+            let named = |w: &Waiting| (w.name.clone(), w.why);
+            applied.asking.iter().map(named).collect()
+        };
+
+        // In mode `ask` a rule that passed waits, and nothing is installed. The line
+        // for the owner has the proposal's id and words, not a placeholder or a code.
+        let applied = machine.apply_in("ask", &store, &circle, &[]);
+        assert_eq!(waiting(&applied), [("use-pnpm".to_owned(), "ask_mode")]);
+        assert_eq!(applied.asking[0].proposal_id, adopt.event_id());
+        assert!(applied.installed.is_empty());
+        assert!(machine.text("use-pnpm").is_none());
+        let line = applied.asking[0].line();
+        let id = crate::output::short_id(&adopt.event_id());
+        assert!(
+            line.contains(&format!("`peerharness proposal adopt {id}`")),
+            "{line}"
+        );
+        assert!(line.contains("you chose to be asked"), "{line}");
+        assert!(
+            !line.contains("<id>") && !line.contains("ask_mode"),
+            "{line}"
+        );
+
+        // Her confirmation installs it. After that nothing waits, in either mode, and
+        // the rule stays where it is.
+        let applied = machine.apply_in("ask", &store, &circle, &["use-pnpm".to_owned()]);
+        assert_eq!(applied.installed, ["use-pnpm"]);
+        let text = machine.text("use-pnpm").unwrap();
+        for mode in ["ask", "follow"] {
+            let applied = machine.apply_in(mode, &store, &circle, &[]);
+            assert!(applied.asking.is_empty(), "{mode}: {:?}", applied.asking);
+            assert!(applied.installed.is_empty() && applied.removed.is_empty());
+            assert_eq!(machine.text("use-pnpm").unwrap(), text);
+        }
+
+        // A second rule that is not installed still waits, next to the one that is.
+        pass_rule(
+            &store,
+            &machine,
+            &circle,
+            "small-commits",
+            "Keep commits small.",
+            now,
+        );
+        let applied = machine.apply_in("ask", &store, &circle, &[]);
+        assert_eq!(
+            waiting(&applied),
+            [("small-commits".to_owned(), "ask_mode")]
+        );
+        assert!(machine.text("small-commits").is_none());
     }
 
     /// ADR-023, for a skill of the same name with another text: the owner kept it, no

@@ -111,10 +111,8 @@ fn settled_lines(t: &mut Text, s: &Settled, circle: &CircleRow) {
     for skill in &s.applied.removed {
         t.line(format!("  removed rule {skill}"));
     }
-    for (skill, why) in &s.applied.asking {
-        t.line(format!(
-            "  rule {skill} is in force and waits for your confirmation ({why}): `peerharness proposal adopt <id>`"
-        ));
+    for waiting in &s.applied.asking {
+        t.line(format!("  {}", waiting.line()));
     }
     for (skill, why) in &s.applied.refused {
         t.line(format!("  rule {skill} cannot be installed ({why})"));

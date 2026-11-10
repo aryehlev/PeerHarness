@@ -135,11 +135,8 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
         for skill in &settled.applied.removed {
             t.line(format!("  {}: removed rule {skill}", safe(&circle.name)));
         }
-        for (skill, why) in &settled.applied.asking {
-            t.line(format!(
-                "  {}: rule {skill} is in force and waits for your confirmation ({why})",
-                safe(&circle.name)
-            ));
+        for waiting in &settled.applied.asking {
+            t.line(format!("  {}: {}", safe(&circle.name), waiting.line()));
         }
         for skill in &settled.applied.conflicts {
             t.line(format!(

@@ -132,10 +132,8 @@ fn sync_lines(t: &mut Text, r: &SyncReport) {
     for skill in &r.changes.removed {
         t.line(format!("  removed rule {skill}"));
     }
-    for skill in &r.changes.asking {
-        t.line(format!(
-            "  rule {skill} is in force and waits for your confirmation: `peerharness proposal adopt <id>`"
-        ));
+    for waiting in &r.changes.asking {
+        t.line(format!("  {}", waiting.line()));
     }
     for (rule, circle) in &r.changes.held {
         t.line(format!("  {}", rule.line(circle)));
@@ -155,7 +153,7 @@ fn sync_json(r: &SyncReport) -> Value {
         "not_recognized": r.not_recognized,
         "installed": r.changes.installed,
         "removed": r.changes.removed,
-        "asking": r.changes.asking,
+        "asking": r.changes.asking.iter().map(|w| &w.name).collect::<Vec<_>>(),
         "held": r.changes.held.iter().map(|(rule, _)| rule.json()).collect::<Vec<_>>(),
         "charters_issued": r.changes.charters_issued,
     })
@@ -192,11 +190,17 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
             ..NetworkConfig::listening_on(listen)
         }
     };
+    // Asked for and impossible is refused, not dropped: the owner would wait for a
+    // notification that never comes. The message says what does run.
     let desktop = match args.notify {
-        true => Some(
-            crate::notify::Desktop::find()
-                .ok_or_else(|| usage("--notify: desktop notifications need macOS in this build"))?,
-        ),
+        true => Some(crate::notify::Desktop::find().ok_or_else(|| {
+            usage(
+                "--notify needs macOS: this build can show a desktop notification only \
+                 there. Nothing was started. The daemon runs without it: give the same \
+                 command without --notify. `peerharness inbox` shows what waits for your \
+                 vote.",
+            )
+        })?),
         false => None,
     };
     let home = ctx.home.clone();
@@ -204,7 +208,9 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
     // Held until this function returns; the operating system releases it if we crash.
     let _lock = DaemonLock::acquire(&home)?
         .ok_or_else(|| usage("a daemon is already running for this home"))?;
-    if lan && config.listen_addrs.iter().all(is_loopback) {
+    // On loopback only there is nothing to announce, and the line below is not printed.
+    let announces = announces_on_lan(lan, &config.listen_addrs);
+    if lan && !announces {
         out.warn(
             "--lan: this daemon only listens on loopback, so it has no address to announce. \
              Listen on a network address, for example --listen /ip4/0.0.0.0/udp/4001/quic-v1.",
@@ -237,7 +243,7 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
                  that was just admitted)"
             ));
         }
-        if lan {
+        if announces {
             out.note(
                 "Announcing this device's public key and port on the local network (mDNS). \
                  Members find it with `peerharness sync --lan`.",
@@ -494,6 +500,12 @@ enum Find {
     Internet(Duration),
 }
 
+/// Whether a daemon that listens on `listen` has an address to announce on the local
+/// network: with `--lan`, and not on loopback only.
+fn announces_on_lan(lan: bool, listen: &[Multiaddr]) -> bool {
+    lan && !listen.iter().all(is_loopback)
+}
+
 fn is_loopback(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| match p {
         ph_network::libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_loopback(),
@@ -613,4 +625,30 @@ fn sync_many(ctx: &Ctx, find: Find) -> Result<Report> {
         }
         Ok(Report::new(json, t.finish()))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A daemon that listens on loopback only has nothing to announce: `--lan` there
+    /// gets the warning, and the "Announcing ..." line is not printed after it.
+    #[test]
+    fn a_daemon_on_loopback_only_announces_nothing_on_the_local_network() {
+        let addr = |s: &str| s.parse::<Multiaddr>().unwrap();
+        let loopback = [
+            addr("/ip4/127.0.0.1/udp/0/quic-v1"),
+            addr("/ip6/::1/udp/0/quic-v1"),
+        ];
+        let any = [addr("/ip4/0.0.0.0/udp/4001/quic-v1")];
+        let mixed = [
+            addr("/ip4/127.0.0.1/udp/0/quic-v1"),
+            addr("/ip4/192.0.2.7/udp/4001/quic-v1"),
+        ];
+        assert!(!announces_on_lan(true, &loopback));
+        assert!(announces_on_lan(true, &any));
+        assert!(announces_on_lan(true, &mixed));
+        // Without --lan nothing is announced, whatever it listens on.
+        assert!(!announces_on_lan(false, &any));
+    }
 }

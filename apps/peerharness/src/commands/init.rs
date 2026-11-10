@@ -5,9 +5,14 @@
 //! or an encrypted file. The plaintext keystore (`insecure-dev`) is refused inside an
 //! agent's session, whether a flag or an existing config file asks for it: its warning
 //! has to reach a person, and there it would reach the agent.
+//!
+//! An `init` that fails before the node has a device key leaves the home as it found
+//! it ([`Made`]): it takes away the files and directories this run created and nothing
+//! else. Without that, a first run with no passphrase to read left a config file and a
+//! database behind, and every later command said the home had no identity.
 
 use anyhow::{Context, Result};
-use ph_identity::{DeviceIdentity, KeystoreBackend, OsKeyStore};
+use ph_identity::{DeviceIdentity, KeyStore, KeystoreBackend, OsKeyStore};
 use ph_store::{IdentityMetadata, Store};
 use serde_json::json;
 
@@ -16,7 +21,7 @@ use crate::cli::{InitArgs, KdfProfileArg, KeystoreArg};
 use crate::config::{Config, KdfProfile};
 use crate::consent::human_only;
 use crate::error::usage;
-use crate::home::{mode_of, set_mode};
+use crate::home::{mode_of, set_mode, Home};
 use crate::node::open_configured_keystore;
 use crate::output::{Report, Text};
 
@@ -60,6 +65,8 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
         );
     }
 
+    // What is not there yet is what this run makes, and takes away again if it fails.
+    let made = Made::before(home);
     home.ensure()?;
     if let Some(m) = mode_of(home.root()) {
         if m & 0o077 != 0 {
@@ -104,29 +111,49 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
         cfg.node.kdf_profile = k;
     }
     let backend = cfg.node.keystore;
-    if backend == KeystoreBackend::Os {
-        OsKeyStore::check_available().map_err(|e| {
-            anyhow::anyhow!("{e}").context(
-                "the OS keychain is not available; re-run with `--keystore file` (encrypted \
-                 key file protected by a passphrase)",
-            )
-        })?;
-    }
-    if backend == KeystoreBackend::InsecureDev {
-        // A config file that names the plaintext keystore asks for it as the flag does.
-        human_only(PLAINTEXT_KEYS)?;
-        ctx.out
-            .warn("insecure-dev keystore: private keys are stored in PLAINTEXT (development only)");
-    }
-    cfg.save(home)?;
+    // Up to the device key, a failure leaves nothing of this run behind. Once a key is
+    // in the keystore everything stays: the next `init` adopts it, and it needs the
+    // config file to know which keystore that was.
+    let key_in_keystore = std::cell::Cell::new(false);
+    let keyed = (|| -> Result<(Store, Box<dyn KeyStore>, DeviceIdentity)> {
+        if backend == KeystoreBackend::Os {
+            // The error says what to run instead (`--keystore file`).
+            OsKeyStore::check_available().map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
+        if backend == KeystoreBackend::InsecureDev {
+            // A config file that names the plaintext keystore asks for it as the flag does.
+            human_only(PLAINTEXT_KEYS)?;
+            ctx.out.warn(
+                "insecure-dev keystore: private keys are stored in PLAINTEXT (development only)",
+            );
+        }
+        cfg.save(home)?;
 
-    let store = Store::open(home.db_path()).context("cannot create the database")?;
-    let ks = open_configured_keystore(home, &cfg, backend)?;
-    let dev = if DeviceIdentity::exists(&*ks)? {
-        // A previous init stored the key but not the metadata: adopt it.
-        DeviceIdentity::load(&*ks).context("cannot unlock the existing device key")?
-    } else {
-        DeviceIdentity::create(&*ks).context("cannot create the device key")?
+        let store = Store::open(home.db_path()).context("cannot create the database")?;
+        let ks = open_configured_keystore(home, &cfg, backend)?;
+        let dev = if DeviceIdentity::exists(&*ks)? {
+            key_in_keystore.set(true);
+            // A previous init stored the key but not the metadata: adopt it.
+            DeviceIdentity::load(&*ks).context("cannot unlock the existing device key")?
+        } else {
+            DeviceIdentity::create(&*ks)
+                .inspect_err(|_| {
+                    // Looked at again, and taken as there when that cannot be told.
+                    key_in_keystore.set(DeviceIdentity::exists(&*ks).unwrap_or(true));
+                })
+                .context("cannot create the device key")?
+        };
+        Ok((store, ks, dev))
+    })();
+    let (store, ks, dev) = match keyed {
+        Ok(keyed) => keyed,
+        Err(e) => {
+            // The closure's database handle is closed by now.
+            if !key_in_keystore.get() {
+                made.undo(home);
+            }
+            return Err(e);
+        }
     };
     let keystore_ref = ks.locator(DeviceIdentity::LABEL)?;
     let id = IdentityMetadata {
@@ -138,6 +165,56 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     store.set_identity(&id)?;
     tracing::info!("node initialized");
     Ok(report(ctx, &id, true))
+}
+
+/// What was missing from a home before `init` touched it, and so is this run's to take
+/// away if it fails before the node has a device key.
+#[derive(Clone, Copy, Debug)]
+struct Made {
+    root: bool,
+    config: bool,
+    database: bool,
+    keys_dir: bool,
+}
+
+impl Made {
+    /// Looks at `home` before anything is created. A path that is there in any form (a
+    /// file, a directory, a link) is not this run's.
+    fn before(home: &Home) -> Self {
+        let missing = |p: std::path::PathBuf| std::fs::symlink_metadata(p).is_err();
+        Self {
+            root: missing(home.root().to_path_buf()),
+            config: missing(home.config_path()),
+            database: missing(home.db_path()),
+            keys_dir: missing(home.keys_dir()),
+        }
+    }
+
+    /// Takes away what this run created: the config file, the database with the two
+    /// files SQLite keeps next to it, and the keys directory and the home itself when
+    /// they are empty. A directory that holds anything else stays, so nothing that was
+    /// there before, and no key, is ever removed. Failures are ignored: the error that
+    /// brought us here is the one to report.
+    fn undo(self, home: &Home) {
+        if self.config {
+            let _ = std::fs::remove_file(home.config_path());
+        }
+        if self.database {
+            let db = home.db_path();
+            for suffix in ["", "-wal", "-shm"] {
+                let mut name = db.clone().into_os_string();
+                name.push(suffix);
+                let _ = std::fs::remove_file(name);
+            }
+        }
+        // `remove_dir` removes an empty directory and nothing else.
+        if self.keys_dir {
+            let _ = std::fs::remove_dir(home.keys_dir());
+        }
+        if self.root {
+            let _ = std::fs::remove_dir(home.root());
+        }
+    }
 }
 
 fn report(ctx: &Ctx, id: &IdentityMetadata, created: bool) -> Report {
@@ -164,7 +241,15 @@ fn report(ctx: &Ctx, id: &IdentityMetadata, created: bool) -> Report {
     t.kv("keystore", &id.keystore_backend);
     if created {
         t.line("");
-        t.line("Next: `peerharness observe demo` then `peerharness inbox`.");
+        t.line("Next:");
+        t.line(
+            "  peerharness demo                three members vote on a rule, in temporary folders",
+        );
+        t.line("  peerharness note \"<a rule>\"     write a rule down in one sentence; it prints an id");
+        t.line(
+            "  peerharness keep <that id>      keep it: shows the exact text, asks once, installs \
+             it for your agent",
+        );
     }
     Report::new(json, t.finish())
 }

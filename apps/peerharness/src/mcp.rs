@@ -546,19 +546,33 @@ impl Server {
     fn call(&self, tool: &Tool, args: &Args) -> Outcome {
         let asked = self.asked();
         if asked < tool.needs {
-            return Outcome::failed(not_allowed(self.home.is_initialized(), asked));
+            let window = crate::window::Window::find().is_some();
+            return Outcome::failed(not_allowed(self.home.is_initialized(), asked, window));
         }
         (tool.run)(self, args)
     }
 }
 
-/// What the agent is told when the owner has not allowed a tool.
-fn not_allowed(initialized: bool, asked: Asked) -> String {
+/// What the agent is told when the owner has not allowed a tool. `window` is whether
+/// this machine can show a confirmation window at all. Where it cannot, `setup` has
+/// nothing to turn on, so the answer does not send the owner back to it: it says that
+/// the step is typed in a terminal, and where the commands are.
+fn not_allowed(initialized: bool, asked: Asked, window: bool) -> String {
     let how = "peerharness setup";
     if !initialized {
         return format!(
             "PeerHarness is not set up on this machine. The user sets it up in their own \
              terminal with `{how}`. Tell them so and stop."
+        );
+    }
+    if !window {
+        return format!(
+            "This machine cannot show a confirmation window, so this step cannot be started \
+             from a coding agent here, and no setting changes that. Nothing was done. Noting \
+             a rule (`note`) still works. This step is the user's to type in their own \
+             terminal: `peerharness --help` lists the commands, and docs/terminal.md has \
+             them step by step ({guide}). Tell them so and stop.",
+            guide = crate::commands::setup::TERMINAL_GUIDE,
         );
     }
     match asked {
@@ -1132,11 +1146,31 @@ mod tests {
             (true, Asked::Rules),
             (true, Asked::RulesAndCircle),
         ] {
-            let said = not_allowed(initialized, asked);
+            let said = not_allowed(initialized, asked, true);
             assert!(said.contains("`peerharness setup`"));
             assert!(said.contains("their own terminal") && said.ends_with("and stop."));
         }
-        assert!(not_allowed(false, Asked::Nothing).contains("is not set up"));
+        assert!(not_allowed(false, Asked::Nothing, true).contains("is not set up"));
+        // No node at all: setting it up is the next step, window or not.
+        assert!(not_allowed(false, Asked::Nothing, false).contains("`peerharness setup`"));
+    }
+
+    #[test]
+    fn where_no_window_can_be_shown_the_answer_does_not_send_the_owner_back_to_setup() {
+        // Whatever the settings say: windows that were turned on elsewhere and came
+        // along with a copied home open nothing here either.
+        for asked in [Asked::Nothing, Asked::Rules, Asked::RulesAndCircle] {
+            let said = not_allowed(true, asked, false);
+            assert!(said.contains("cannot show a confirmation window"), "{said}");
+            assert!(!said.contains("setup"), "{said}");
+            assert!(!said.contains("has not allowed"), "{said}");
+            // It says where the step is taken instead, and still tells the agent to stop.
+            assert!(said.contains("their own terminal"), "{said}");
+            assert!(said.contains("docs/terminal.md"), "{said}");
+            assert!(said.ends_with("Tell them so and stop."), "{said}");
+        }
+        // With a window the owner is told what they can allow, as before.
+        assert!(not_allowed(true, Asked::Nothing, true).contains("has not allowed this"));
     }
 
     #[test]

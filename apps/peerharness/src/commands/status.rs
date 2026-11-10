@@ -1,4 +1,5 @@
 //! `peerharness status`: mode, identity, circles, hooks and local counts. Never unlocks.
+//! A binary built with debug assertions says so (see `doctor`).
 
 use anyhow::Result;
 use ph_core::CandidateStatus;
@@ -98,6 +99,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         "skills": skills.len(),
         "active_installations": installs.len(),
         "known_peers": peers,
+        "debug_build": super::doctor::is_debug_build(),
         "hooks": hooks,
         "daemon": daemon.as_ref().map(|d| json!({
             "pid": d.pid,
@@ -164,6 +166,9 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
                 }
             ));
         }
+    }
+    if super::doctor::is_debug_build() {
+        t.kv("build", super::doctor::DEBUG_BUILD_SHORT);
     }
     Ok(Report::new(json, t.finish()))
 }

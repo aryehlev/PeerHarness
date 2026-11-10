@@ -6,6 +6,12 @@
 #
 # Usage:  demo/two-peers.sh          (run it from your own terminal, not from inside a
 #                                     coding agent: the steps that vote are refused there)
+#
+# Which binary it runs:
+#   * the one named by PEERHARNESS_BIN, when that is set. With an installed release no
+#     Rust toolchain is needed:  PEERHARNESS_BIN="$(command -v peerharness)" demo/two-peers.sh
+#   * otherwise a debug build of this checkout (`cargo build`, a few minutes the first time);
+#   * where there is no cargo, the `peerharness` on your PATH.
 set -euo pipefail
 
 if [ -n "${CLAUDECODE:-}${PEERHARNESS_AGENT_SESSION:-}" ]; then
@@ -14,9 +20,30 @@ if [ -n "${CLAUDECODE:-}${PEERHARNESS_AGENT_SESSION:-}" ]; then
   exit 1
 fi
 
-cd "$(dirname "$0")/.."
-cargo build --quiet -p peerharness
-BIN="$PWD/target/debug/peerharness"
+if [ -n "${PEERHARNESS_BIN:-}" ]; then
+  # A path, or a name to look up on PATH.
+  BIN="$(command -v "$PEERHARNESS_BIN" || true)"
+  if [ -z "$BIN" ]; then
+    echo "PEERHARNESS_BIN names no program that can be run: $PEERHARNESS_BIN" >&2
+    exit 1
+  fi
+elif command -v cargo >/dev/null 2>&1; then
+  cd "$(dirname "$0")/.."
+  cargo build --quiet -p peerharness
+  BIN="$PWD/target/debug/peerharness"
+elif command -v peerharness >/dev/null 2>&1; then
+  BIN="$(command -v peerharness)"
+else
+  echo "Found neither cargo nor an installed peerharness. Install a release (see the README)" >&2
+  echo "or set PEERHARNESS_BIN to the binary to run." >&2
+  exit 1
+fi
+# The daemon is started in the background from wherever this script was called.
+case "$BIN" in
+  /*) ;;
+  *) BIN="$PWD/$BIN" ;;
+esac
+echo "Using $("$BIN" --version) at $BIN"
 
 WORK="$(mktemp -d)"
 DAEMON_PID=""
@@ -59,7 +86,7 @@ echo "$ADDR"
 say "Bob checks the root fingerprint and joins straight from Alice's node: he is on its roll now"
 bob circle join "$ADDR" --expect-fingerprint "$FINGERPRINT" --yes --name team 2>/dev/null | grep -E '^Joined|^  charter'
 
-say "Alice was corrected by her agent, writes the rule down and puts it to the vote"
+say "Alice corrected her agent, writes the rule down and puts it to the vote"
 CANDIDATE="$(alice --json note 'Use pnpm, not npm, in this repository.' | field candidate_id)"
 PROPOSAL="$(alice --json proposal create "$CANDIDATE" --circle team --yes 2>/dev/null | field proposal_id)"
 alice proposal vote "$PROPOSAL" approve --yes 2>/dev/null | sed -n 's/^Ballot recorded. //p'
