@@ -34,7 +34,7 @@ apps/peerharness depends on everything and is the only place crates are wired to
 | `ph-network` | libp2p QUIC transport, framing, rate limits | know about circles or authorize anything |
 | `ph-observer` | hook parsing, settings install/remove, spool, notification throttle | open paths from hook payloads |
 | `ph-learning` | detectors, free-text notes, drafts, advisory providers | let provider or agent output drive any decision |
-| `ph-governance` | incoming-event authorization, read rules, tally, result verification, rules in force, charter succession, conflicts, anti-spam, adoption gate | do storage or networking; read a clock when counting |
+| `ph-governance` | incoming-event authorization, the roll as membership (`RollOracle`), read rules, tally, result verification, rules in force, charter succession, conflicts, anti-spam, adoption gate | do storage or networking; read a clock when counting |
 | `ph-skills` | `SKILL.md` parsing and validation, the instruction-only rule, scanner, bundles, bundle store, installer | execute skill content |
 
 Only `apps/peerharness` may depend on `ph-store` or `ph-network`. Library crates talk
@@ -85,6 +85,13 @@ stop, leave the feature disabled, and document the blocker.
   other request gets `error{unauthorized}`, identical whether a circle exists or not.
 * Request authorization (who may connect, read, ask, answer) is re-evaluated on every
   request and every use, at the local clock. Never cache an authorization decision.
+* On the transport, a peer is answered because its transport-authenticated device key is
+  on the roll of the current charter of the circle the request concerns, within the
+  scopes of its roll entry and unless the device is revoked (`RollOracle`, ADR-026).
+  Never answer a request on the strength of a credential, a claimed id or an earlier
+  `authenticate`. A pushed event gets no standing from who pushed it.
+* A syncing node sends nothing circle-specific, not even a circle id, to a peer it does
+  not share that circle's roll with.
 * A credential counts only with a matching subject-signed acceptance, only from the
   circle root, only within its scopes and roles, and never after revocation or expiry.
 * Four ways to authorize an event, never interchangeable (ADR-010, ADR-012): QUESTION and

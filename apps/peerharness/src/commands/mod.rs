@@ -8,6 +8,7 @@ pub mod export;
 pub mod inbox;
 pub mod init;
 pub mod later;
+pub mod net;
 pub mod note;
 pub mod observe;
 pub mod proposal;
@@ -46,8 +47,8 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         Command::Status => status::run(ctx),
         Command::Demo => demo::run(ctx),
         Command::Doctor => doctor::run(ctx),
-        Command::Daemon(a) => later::daemon(ctx, a),
-        Command::Connect(a) => later::connect(ctx, a),
+        Command::Daemon(a) => net::daemon(ctx, a),
+        Command::Connect(a) => net::connect(ctx, a),
         Command::Observe { command } => match command {
             ObserveCommand::Demo => observe::demo(ctx),
             ObserveCommand::Import { file } => observe::import(ctx, &file),
@@ -68,7 +69,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         Command::Proposal { command } => proposal::run(ctx, command),
         Command::Events { command } => exchange::run(ctx, command),
         Command::Rule { command } => rule::run(ctx, command),
-        Command::Sync(a) => later::sync(ctx, a),
+        Command::Sync(a) => net::sync(ctx, a),
         Command::Export(a) => export::run(ctx, a),
         Command::Reset(a) => reset::run(ctx, a),
     }

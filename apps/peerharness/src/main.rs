@@ -22,6 +22,8 @@ mod installs;
 mod library;
 mod node;
 mod output;
+mod peer;
+mod runtime;
 
 use clap::Parser;
 

@@ -7,16 +7,14 @@ something here, update the code that depends on it and record the change in
 
 Implementation status at this revision: the nine library crates implement and test this
 contract. `apps/peerharness` wires the local commands (`init`, `status`, `doctor`,
-`observe`, `note`, `inbox`, `review`, `skills`, `watch`, `hook`, `export`) and
+`observe`, `note`, `inbox`, `review`, `skills`, `watch`, `hook`, `export`, `reset`) and
 governance (`circle create`, `circle invite`, `circle remove`, `circle join`,
 `circle members`, `proposal`, `rule`, `events`, `demo`). Nodes exchange signed events
 as a file or as a directory of small files (`events export`, `events import`,
-`events sync`; ADR-019, ADR-025). The network daemon, including the request handler
-that applies the authorization rules of section 7, is **not** wired yet, and neither
-are `question`, `circle revoke` and `reset`; statements about the daemon describe what
-it must implement. Where this
-file departs from `docs/spec.md`, the ADRs in `docs/decisions.md` say why; the largest
-departure is governance (section 10, ADR-012 onwards).
+`events sync`; ADR-019, ADR-025), or directly over QUIC (`daemon`, `connect`, `sync`;
+section 7, ADR-026). Not wired: `question`, `circle revoke`, a delivery loop, and
+gossip. Where this file departs from `docs/spec.md`, the ADRs in `docs/decisions.md` say
+why; the largest departure is governance (section 10, ADR-012 onwards).
 
 ## 1. Process model
 
@@ -31,21 +29,27 @@ departure is governance (section 10, ADR-012 onwards).
     keys/                  # encrypted key files when the file keystore is used (0700 dir, 0600 files)
     spool/observations.jsonl  # hook fallback spool (0600), drained on the next CLI/daemon run
     bundles/<hex-digest>/SKILL.md  # immutable content-addressed skill bundles
-    daemon.json            # {"pid", "control_port", "token"} (0600) only while the daemon runs
+    daemon.json            # {"pid", "peer_id", "listen_addrs"} (0600) while the daemon runs; no secret
+    daemon.lock            # locked exclusively by the running daemon
     backups/               # backups of files PeerHarness changed (Claude settings)
   ```
 
-* `peerharness daemon` runs the libp2p swarm, a delivery loop and a **local control
-  endpoint**. The control endpoint is a loopback TCP listener (`127.0.0.1:0`) speaking
-  newline-delimited JSON. Every request must carry a random 256-bit token, which is stored
-  in `daemon.json` (0600). We use loopback TCP rather than a Unix socket because of macOS
-  path-length limits on temporary homes and for future Windows support (see
-  decisions.md).
+* `peerharness daemon` runs the libp2p transport in the foreground and answers peers.
+  It never dials on its own and has no control endpoint. `daemon.json` records where it
+  listens, and it holds an exclusive lock on `daemon.lock` for as long as it runs: that
+  lock, which the operating system drops with the process, is how `status` knows a
+  daemon is running and why a home has at most one.
+* `peerharness sync <address or peer id>` starts the transport for one exchange, without
+  listening: it fetches what the peer has, sends what the peer lacks, and exits. It
+  needs no daemon of its own and may run while this home's daemon is serving (SQLite
+  arbitrates). `connect` only checks who answers and stores the address.
+* In both, one **node thread** owns the store and the unlocked keys, and every request
+  is one job on it (`apps/peerharness/src/runtime.rs`). After events arrive, the circles
+  concerned are settled: results published, a passed amendment notarized on the
+  founder's node, the rules in force applied.
+* Not built: a delivery loop, an outbox drain, gossip. Events reach a peer when someone
+  syncs. Nothing in the CLI writes the `outbox` table yet.
 * Local-only CLI commands open the store, and the keystore when they need it, directly.
-  Commands that need the network (`connect`, `sync`, and immediate delivery after
-  `question send`, `proposal vote` and similar) ask the daemon over the control endpoint.
-  Signed events are always written to the local event log and the **outbox** first, so
-  they still reach peers later if the daemon is not running.
 * Hooks (`peerharness hook <event>`) never need the private key. They write a bounded,
   redacted observation straight into SQLite with a short busy timeout, fall back to the
   spool file, always exit 0, and print nothing to stdout for `UserPromptSubmit` (stdout
@@ -101,11 +105,12 @@ All string encodings carry a self-describing prefix:
 * Roles: `owner`, `member`. Capabilities: `ask`, `answer`, `propose`, `vote`, `publish`,
   `invite`, `revoke`, `read`. `member` gets `read, ask, answer, propose, vote, publish`.
   `owner` gets all of them. Unknown roles grant nothing (reject at parse time).
-* Only `read`, `ask` and `answer` are consulted in v0. Who may propose, vote and publish
-  a result is decided by the roll of the charter (section 10), never by a credential
-  capability, so `propose`, `vote` and `publish` have no effect. `owner`, `invite` and
-  `revoke` confer nothing either: the root key signs credentials and revocations, and the
-  roll changes only by vote.
+* Credential capabilities matter in one place in v0: `ask` and `answer` are checked for
+  QUESTION and ANSWER events. Who may propose, vote and publish a result is decided by
+  the roll of the charter (section 10), and so is who the transport answers and what
+  they may read (section 7, ADR-026), never by a credential capability. `owner`,
+  `invite` and `revoke` confer nothing either: the root key signs credentials and
+  revocations, and the roll changes only by vote.
 
 ## 4. Signing (ph-protocol)
 
@@ -243,10 +248,13 @@ Invite {
   (`verify_revocation_signature`). `revoked_at` is informational and no time rule applies
   to it, in stateless validation, in ph-governance and in the membership registry
   (ADR-017). Revocations are permanent for that device key in that circle.
-* Credentials and the charter answer different questions. A **credential** (per device,
-  root-issued, expiring, scoped) gives a device access: it may connect, read within its
-  scopes, ask and answer. The **charter's roll** (per person, changed only by vote,
-  section 10) decides who may propose, vote and publish a result.
+* The **charter's roll** (per person, changed only by vote, section 10) is the
+  membership statement in use. It decides who may propose, vote and publish a result,
+  and it decides who the transport answers and what they may read (section 7, ADR-026).
+  **Credentials** (per device, root-issued, expiring) stay in the protocol and the
+  library. In v0 they authorize only QUESTION and ANSWER events, which no CLI command
+  produces yet, and the founder's own is the only one the CLI issues. They are not
+  consulted for transport access, because the root key issues them without a vote.
 * The root key also signs charters (`CircleAuthority::issue_founding_charter` and
   `issue_next_charter`). For every charter after the first it is a notary: nodes accept
   the charter only if a passed amendment justifies it (section 10.8).
@@ -281,31 +289,49 @@ FetchBundle { circle_id, digest }     ->  Bundle { digest, files: [{path, conten
 any                                   ->  Error { code: "unauthorized"|"rate_limited"|"bad_request"|"too_large"|"unavailable" }
 ```
 
-* Before authorization only `Hello` is answered. Every other request from an
-  unauthenticated peer gets `Error{unauthorized}`, identical whether the circle exists or
-  not. No circle names, member lists, skill titles or counts leak.
-* Authorization is re-evaluated on **every** request (expiry and the latest revocation
-  state), not cached from `Authenticate`.
-* A node presents a credential only to a peer it believes is in that circle: the peer's
-  device key is the subject of a credential it knows, or the peer is the invite issuer.
-  It never presents credentials to unknown peers.
+* **Who is answered** (`apps/peerharness/src/peer.rs`). The transport proves which
+  device key is on the other end. What that key may have is decided from the **roll** of
+  the current charter of the circle a request concerns (`ph_governance::RollOracle`),
+  with the scopes of the member's roll entry, minus any device this node knows to be
+  revoked. Credentials are not consulted (ADR-026).
+* Only `Hello` is answered to anyone. Every other request from a device that is not an
+  active member of the circle it concerns gets `Error{unauthorized}`, identical whether
+  the circle exists here or not. No circle names, member lists, skill titles or counts
+  leak.
+* The decision is made again on **every** request from the store as it then is, never
+  cached. A member removed by a charter this node has accepted, or revoked, is a
+  stranger from the next request on.
+* `Authenticate` proves nothing any more and its `memberships` may be empty. A peer on
+  the roll of a circle this node holds gets `Authenticated` with an empty list, and its
+  `listen_addrs` are stored; anyone else gets `unauthorized`.
+* A syncing node sends a circle id only to a peer whose device is on that circle's roll
+  as this node holds it. To a peer it shares no circle with it sends `Hello` and nothing
+  more.
+* `PushEvents` is accepted only for circles the pusher is a member of. Each event then
+  goes through `governance::ingest` like any other: it counts by its author and
+  signature, and who carried it gives it no standing. Events of one batch may depend on
+  one another in any order.
 * Read rule (`ph_governance::may_read_event`): a QUESTION or ANSWER, and a decision event
-  with a scope other than `*`, is readable when the requester's credential grants `read`
-  on its scope. Control-plane events (MEMBERSHIP, REVOCATION, CHARTER) and decision
-  events with scope `*` are readable by every active member: a `*` proposal concerns the
-  whole circle and its electorate is the whole roll, and members cannot vote on what they
-  cannot read. A vote never widens read access.
+  with a scope other than `*`, is readable when the requester's roll entry covers its
+  scope. Control-plane events (MEMBERSHIP, REVOCATION, CHARTER) and decision events with
+  scope `*` are readable by every active member: a `*` proposal concerns the whole
+  circle and its electorate is the whole roll, and members cannot vote on what they
+  cannot read. A vote on a rule never widens read access.
 * `FetchEvents` returns the events of that circle the requester may read under that
   rule. Permanent events are served however old they are; expired QUESTION, ANSWER and
   MEMBERSHIP events are not. `FetchBundle` succeeds only when a stored `adopt` PROPOSAL
   with that digest is readable by the requester.
+* A node that accepts pushed `adopt` proposals whose bundle it lacks fetches those
+  bundles back from the pusher over the same connection, then settles.
 * Rate limits, enforced in ph-network before the handler runs: per-peer token bucket
   (default 20 requests/s, burst 40), at most 512 KiB/s inbound bytes, at most 8
   concurrent inbound streams per peer. Over the limit gets `rate_limited` and a tracing
   warning with no content.
-* The request handler that applies these authorization rules belongs to the daemon in
-  `apps/peerharness` (ph-network knows nothing about circles). It is not written yet;
-  ph-governance and ph-store provide the predicates it must compose.
+* Limits of this transport in v0: no discovery, relays or NAT traversal (a peer must be
+  directly reachable); a new member joins from a file or shared directory first, since
+  it is on no roll it holds yet; a removed member is refused by its peers and is not
+  told why, so its own node learns of the removal only from a file or directory;
+  `FetchEvents` has no cursor (section 10.12).
 
 ## 8. SQLite schema (ph-store)
 
@@ -395,9 +421,9 @@ ph-governance, ph-store, ph-identity and ph-skills, and the CLI drives all of it
 (`apps/peerharness/src/governance.rs`: every event, local or received, enters the store
 through one `ingest` path; `settle` publishes results, notarizes passed amendments on
 the founder's node and applies the rule set to the agent's skills directory). It is
-exercised end to end by `peerharness demo` and by `apps/peerharness/tests`. Events
-travel as files; the network daemon is not wired yet. Decisions behind this
-section: ADR-012 to ADR-018 and ADR-023.
+exercised end to end by `peerharness demo` and by `apps/peerharness/tests`, over files,
+a shared directory and QUIC. Decisions behind this section: ADR-012 to ADR-018,
+ADR-023, ADR-024 and ADR-026.
 
 ### 10.1 What "democratic" means here
 
@@ -706,8 +732,11 @@ switch them off.
    another backtick later on the same line, or a fence opened with three backticks or
    three tildes directly followed by an exclamation mark. Any file other than `SKILL.md`
    and any frontmatter key outside the allowlist of section 11 is refused as before.
-3. **No vote grants access.** Read access comes only from credentials and scopes
-   (section 7). Nothing in `ph_governance::read` looks at a ballot.
+3. **No vote on a rule grants access.** Who may read a circle's records is the roll,
+   with the scopes in each member's entry (section 7). It changes only by an amendment
+   to the roll, which every member sees and votes on, and the root key cannot widen it
+   by issuing a credential (ADR-026). Nothing in `ph_governance::read` looks at a
+   ballot, and passing a rule gives nobody access to anything.
 4. **High-risk content always asks.** A rule with a high-risk scanner finding is never
    installed without the owner's explicit confirmation, in any mode.
 5. **You can refuse.** Opt-out always works and only changes your machine. A node that
@@ -741,8 +770,9 @@ Outcomes depend on signatures and on the charter, never on a clock.
 
 ### 10.12 Known limits of v0
 
-* **Founder liveness.** Without the root key holder no charter change (and no
-  credential renewal, section 6) can happen.
+* **Founder liveness.** Without the root key holder no charter change can happen. The
+  members keep exchanging records and voting on rules: access is the roll, which does
+  not expire (ADR-026).
 * **Founder equivocation.** If two different amendments both pass under one charter,
   which needs some member to approve both, the root chooses which to notarize. A root
   that signs two successors can split the circle: a node keeps the first valid one it

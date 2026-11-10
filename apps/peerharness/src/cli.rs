@@ -46,9 +46,9 @@ pub enum Command {
     Demo,
     /// Local diagnostics (no network calls).
     Doctor,
-    /// Run the networking daemon in the foreground.
+    /// Listen for the members of your circles and answer their syncs (foreground).
     Daemon(DaemonArgs),
-    /// Dial a peer through the running daemon.
+    /// Check who answers at an address and remember it.
     Connect(ConnectArgs),
     /// Inject synthetic observations (demo and tests).
     Observe {
@@ -92,7 +92,11 @@ pub enum Command {
         #[command(subcommand)]
         command: ProposalCommand,
     },
-    /// Reconcile missing authorized events with a peer through the daemon.
+    /// Exchange with one peer what each of you lacks, directly over QUIC.
+    ///
+    /// The peer must be running `peerharness daemon`, and each of you must be on the
+    /// roll of a circle the other holds. Give its address, or its peer id once an
+    /// address is stored.
     Sync(SyncArgs),
     /// Exchange a circle's signed events with other members as a file.
     Events {
@@ -581,6 +585,8 @@ pub enum RuleCommand {
 
 #[derive(Debug, Args)]
 pub struct SyncArgs {
+    /// The peer's multiaddr (as its daemon prints it), or its peer id after a first sync.
+    #[arg(value_name = "ADDRESS_OR_PEER_ID")]
     pub peer_id: String,
 }
 

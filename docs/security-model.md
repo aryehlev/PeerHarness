@@ -12,12 +12,11 @@ Scope: the `peerharness` binary and its crates, protocol v0 (`docs/protocol-v0.m
 macOS and Linux. Windows is not supported. Mitigations at the library level are
 implemented in the crates named in each entry. Statements about CLI and daemon behaviour
 describe the v0.1 command and daemon contract for `apps/peerharness`. At this revision
-the local commands and the governance commands are wired and exercised end to end, with
-signed events exchanged as files. The network daemon is not wired yet, so statements
-about what a node does on the wire describe what it must do, not something that has
-been exercised end to end. A file of exported events contains the circle's roll and
-proposals in clear; whoever holds the file can read it, so it must be given only to
-members.
+the local commands, the governance commands and the transport (`daemon`, `connect`,
+`sync`) are wired and exercised end to end: signed events travel as a file, as a
+directory of record files, or between separate processes over QUIC. A file or directory
+of exported events contains the circle's roll and proposals in clear; whoever can read
+it can read them, so it must be given only to members.
 
 ## 1. Assets
 
@@ -86,15 +85,18 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 
 * **Threat.** A peer connects to a node and tries to read circle data or metadata, or to
   inject events.
-* **Mitigation.** Before membership is proven, only `hello` gets a real answer, and it is
-  the same generic answer for everyone. `authenticate` returns nothing unless the
-  requester proved membership; PeerHarness presents its own credentials only to peers
-  it already believes are in that circle. Every other request gets
-  `error{unauthorized}`, identical whether the circle exists or not. Pushed events must
-  pass signature, schema, time and membership checks (`ph-protocol`,
-  `ph-governance::authorize_incoming`). Requests are strictly parsed with size and depth
-  limits before any handler runs (`ph-network`). There is no discovery: no mDNS, DHT or
-  gossip, so a node is not advertised.
+* **Mitigation.** Only `hello` gets a real answer, and it is the same generic answer for
+  everyone. A peer is answered further only if its transport-authenticated device key is
+  on the roll of the current charter of the circle its request concerns, checked again
+  on every request (`apps/peerharness/src/peer.rs`, `ph_governance::RollOracle`). Every
+  other request gets `error{unauthorized}`, identical whether the circle exists or not.
+  A syncing node sends nothing that names a circle to a peer it does not share that
+  circle with. Pushed events are taken only for circles the pusher is a member of and
+  must then pass signature, schema, time and authorship checks (`ph-protocol`,
+  `ph-governance::authorize_incoming`); who pushed an event gives it no standing.
+  Requests are strictly parsed with size and depth limits before any handler runs
+  (`ph-network`). There is no discovery: no mDNS, DHT or gossip, so a node is not
+  advertised.
 * **Residual risk.** An attacker who can reach the port learns that a PeerHarness node
   listens there, its `PeerId` (device public key) and the protocol version. Parser or
   libp2p/QUIC bugs are possible; the wire parser has property and adversarial tests, but
@@ -111,6 +113,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   the TLS-authenticated libp2p connection. Possessing an invite file or a credential is
   useless without the subject's private device key. Joining shows the root fingerprint
   and requires confirmation; scripted joins need `--expect-fingerprint`.
+  For access over the transport and for voting, the membership statement is the roll of
+  the charter, which changes only by a passed amendment. A credential, even a genuine
+  one signed by the root key, gives no transport access by itself (ADR-026).
 * **Residual risk.** The human fingerprint check is the only link between a root key and
   the real organization. A user who joins a circle from a forged invite without checking
   the fingerprint out of band joins the attacker's circle (this does not compromise the
@@ -362,13 +367,13 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   member with one vote, whatever the number of their devices. Every node computes every
   outcome itself, and an owner can always opt out of a rule or choose to be asked.
 * **Residual risk.** The root-key holder still has real power in v0:
-  * **Access is not voted.** The root alone issues the credentials that let a device
-    connect and read. It can give read access within any scope to any key, including
-    its own, without anyone's approval.
-  * **It can block.** It can revoke any device, which stops that device's ballots from
-    counting (the member stays in the electorate, so this makes proposals harder to
-    pass, never easier). It can refuse to notarize a passed amendment, which freezes the
-    roll and the rules. It can let credentials lapse, which cuts members off.
+  * **It cannot grant access, but it can take it away.** Who a node answers on the
+    transport is the roll, so the root cannot let anyone read the circle by signing a
+    credential (ADR-026). It can still revoke any device: peers that hold the revocation
+    stop answering that device, and its ballots stop counting (the member stays in the
+    electorate, so this makes proposals harder to pass, never easier).
+  * **It can block.** It can refuse to notarize a passed amendment, which freezes the
+    roll and the voting rules. Rules can still be proposed, passed and repealed.
   * **It can split.** If two conflicting amendments both pass, it chooses one; if it
     signs two successors of one charter, nodes that saw different ones first diverge.
   * **Founding bias.** The founder alone admits the second member, and those two admit
@@ -398,15 +403,17 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   (section 4.6). These rules protect against accidents and against other people. They
   do not protect an owner from their own compromised session.
 
-### 4.18 Local control endpoint and other local users
+### 4.18 Other local users and processes
 
-* **Threat.** Another process or user on the same machine drives the daemon or reads
-  PeerHarness files.
-* **Mitigation.** The home directory is 0700 and its files 0600. The daemon's loopback
-  control endpoint requires a random 256-bit token from `daemon.json` (0600).
-* **Residual risk.** Any process running as the same user can read the token and the
-  files. Other users can connect to the loopback port but cannot authenticate without the
-  token. Root or an administrator on the machine can read everything.
+* **Threat.** Another process or user on the same machine reads PeerHarness files or
+  interferes with a running daemon.
+* **Mitigation.** The home directory is 0700 and its files 0600. The daemon has no
+  control endpoint: it takes no commands from anything, local or remote, and only answers
+  the peer protocol on its QUIC listener. `daemon.json` holds the listen addresses and
+  no secret. One daemon per home is enforced by a file lock.
+* **Residual risk.** Any process running as the same user can read the files, the
+  database and, depending on the keystore, the keys (section 4.6). Root or an
+  administrator on the machine can read everything.
 
 ### 4.19 Supply chain and releases
 
@@ -520,12 +527,12 @@ for vulnerabilities.
 ## Test coverage
 
 Where each group of threats is exercised. Paths are relative to the repository root.
-Multi-node tests run separate processes of the real binary; the transport tests run at
-library level, because the daemon is not wired into the CLI yet.
+Multi-node tests run separate processes of the real binary, over files, a shared
+directory and QUIC on loopback.
 
 | threats | tests |
 |---|---|
-| 4.1, 4.5, 4.7 (peers without membership, impersonation, limits) | `crates/ph-network/tests/network.rs`, `adversarial.rs`, `codec.rs`; `crates/ph-governance/tests/authz.rs`; `apps/peerharness/tests/circle_vote.rs` (an outsider's node stores nothing) |
+| 4.1, 4.5, 4.7 (peers without membership, impersonation, limits) | `crates/ph-network/tests/network.rs`, `adversarial.rs`, `codec.rs`; `crates/ph-governance/tests/authz.rs`, `roll_oracle.rs`; `apps/peerharness/src/peer.rs` (unit tests of the request handler); `apps/peerharness/tests/network.rs` (separate processes over QUIC: a stranger, a node that claims a shared circle, a removed member); `apps/peerharness/tests/circle_vote.rs` (an outsider's node stores nothing) |
 | 4.2, 4.9 (forged, expired or revoked membership) | `crates/ph-identity/tests/attacks.rs`, `membership.rs` |
 | 4.3, 4.20 (stolen, duplicated or invented votes; counting; results; succession) | `crates/ph-governance/tests/tally.rs`, `result.rs`, `ruleset.rs`, `succession.rs`, `adversarial.rs`; `apps/peerharness/tests/circle_vote.rs`, `demo.rs` |
 | 4.4, 4.16 (scope access, the root-key holder) | `crates/ph-governance/tests/authz.rs`, `succession.rs` |
@@ -537,6 +544,6 @@ library level, because the daemon is not wired into the CLI yet.
 | 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs` |
 
 Not covered by an automated test: 4.15 (untrusted repository content) beyond the
-project-scope symlink checks in `crates/ph-skills/tests/install.rs`, 4.18 (the local
-control endpoint, which does not exist until the daemon is wired) and 4.19 (supply
+project-scope symlink checks in `crates/ph-skills/tests/install.rs`, 4.18 (other local
+users: file modes are set, not tested against a second account) and 4.19 (supply
 chain), which CI checks with `cargo deny` and `cargo audit`.

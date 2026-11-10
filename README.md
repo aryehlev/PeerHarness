@@ -15,10 +15,10 @@ inside an agent's session.
 > **Status: pre-release, not audited.** Writing rules down, reviewing and installing
 > them, founding a circle, admitting and removing members by vote, proposing, voting,
 > repealing and installing passed rules all work today from the command line.
-> Nodes exchange their signed events as a file you send however you like, or through
-> a directory in a git repository you already share. The live peer-to-peer transport
-> exists as a library but is not wired into the CLI yet. See
-> [What works today](#what-works-today) before relying on anything.
+> Nodes exchange their signed events directly over QUIC, through a directory in a git
+> repository you already share, or as a file you send however you like. There is no
+> discovery or NAT traversal yet: for a direct sync one node must be reachable by the
+> other. See [What works today](#what-works-today) before relying on anything.
 
 ## See it run
 
@@ -68,8 +68,17 @@ read or changed. Its output, slightly abridged:
     The signature is valid and every node still refuses it: the key is a notary, not a ruler.
 ```
 
-In the demo the signed events travel between the nodes as files, in one process. That
-is stated in its output too.
+In that demo the signed events travel between the nodes as files, in one process (its
+output says so). To see two separate processes do it over the network, each with its
+own key and database, talking QUIC on loopback:
+
+```sh
+demo/two-peers.sh
+```
+
+It ends with the rule installed for both agents and a third node, which is not on the
+roll, being told nothing. Run it from your own terminal: inside a coding agent's
+session the steps that vote are refused, by design.
 
 ## How a vote works
 
@@ -117,8 +126,9 @@ The precise rules are in [docs/architecture.md](docs/architecture.md), section 1
 | `events sync <dir>` (the circle as a directory in a repository you already share) | works, tested end to end |
 | `init`, `status`, `doctor`, `observe demo`, `inbox`, `export --local` | work |
 | `watch claude --install` / `--remove`: the hooks, and the skill that asks your agent to report corrections | work, tested; other hooks and settings in the file are kept, with a backup |
-| `question`, `circle revoke`, `reset` | not implemented yet (they say so) |
-| Live peer-to-peer transport over QUIC (`daemon`, `connect`, `sync`) | library exists and is tested, not wired into the CLI |
+| `reset` (delete this node and its keys; explains first, deletes only with `--confirm`) | works, tested |
+| `question`, `circle revoke` | not implemented yet (they say so) |
+| `daemon`, `sync`, `connect` (direct peer-to-peer over QUIC) | work, tested with separate processes on loopback. No discovery, relays or NAT traversal: one side must be reachable |
 | Finding corrections | you write the rule down, or your agent reports it when you correct it (best effort: it depends on the agent noticing). The built-in pattern detector only knows "use X, not Y" |
 | Windows | not supported yet |
 
@@ -215,6 +225,25 @@ An exported file contains the circle's roll and proposals in clear text. Send it
 to members. Every node verifies each line itself, so the channel you send it over does
 not need to be trusted for integrity.
 
+### Directly, peer to peer
+
+One of you leaves a node listening; the others sync with it. No server is involved:
+the two nodes talk over QUIC, each proves its device key in the handshake, and each
+answers the other only because that key is on the roll you all voted on.
+
+```sh
+peerharness daemon --listen /ip4/0.0.0.0/udp/4001/quic-v1    # prints the address to give the others
+peerharness sync /ip4/192.0.2.7/udp/4001/quic-v1/p2p/<peer id>   # the others; later just: sync <peer id>
+```
+
+A sync fetches what the peer has, sends what it lacks, and applies what has passed:
+when your ballot completes a majority, the rule is installed on both sides. A device
+that is not on the roll gets no answer beyond a version greeting, and learns nothing
+about the circle, not even whether it exists there. A new member joins from a file or
+the shared directory first, since nobody is on a roll they do not hold yet. There is
+no discovery and no relay: one of the two machines has to be reachable by the other
+(same network, VPN, or a forwarded UDP port).
+
 ### Through a repository you already share
 
 Instead of sending files around, keep the circle in a directory of your team's
@@ -237,9 +266,9 @@ vote.
 
 ## Known limits
 
-* **The founder's key must stay available.** It notarizes charter changes and renews
-  member credentials. If it is lost the circle keeps its rules but cannot change its
-  roll.
+* **The founder's key must stay available to change the roll.** It notarizes charter
+  changes. If it is lost the circle keeps working: members still sync, propose, vote
+  and repeal. What stops is admitting and removing members and changing the thresholds.
 * **Turnout.** A member who never votes makes every threshold harder to reach. Rolls
   are capped at 64 members.
 * **Votes are signed and attributable.** There is no secret ballot.

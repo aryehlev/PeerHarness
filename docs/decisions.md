@@ -252,3 +252,25 @@ someone with write access can delete record files (which withholds them from who
 has not synced yet, but cannot forge or alter a vote). Writing records out is a human
 step and refuses inside an agent session; importing is open. The spec's request for a
 libp2p transport stands; this does not replace it.
+
+## ADR-026: The transport answers the roll, not credentials
+The spec authorizes peers by membership credential, and the library implements that.
+Wiring the transport showed two consequences of using it for access once membership is
+decided by vote. First, a credential is issued by the root key alone, so the founder
+could give any device read access to the circle's proposals and ballots without a
+vote, which contradicts "the root key is a notary, not a ruler". Second, credentials
+expire and only the root key renews them, so a circle whose founder left would stop
+syncing after thirty days although its roll and rules are intact. The daemon therefore
+decides access from the roll of the current charter, per request
+(`ph_governance::RollOracle`, `apps/peerharness/src/peer.rs`): a device on the roll, in
+the scopes of its roll entry, not locally known as revoked. The roll is itself a
+locally verifiable, root-signed membership statement, which is what hard requirement 4
+asks for, and it changes only by a passed amendment. `Authenticate` keeps its wire
+shape and only announces addresses. Credentials, acceptances, invites and MEMBERSHIP
+events stay in the protocol and the library; they still authorize QUESTION and ANSWER
+events, which no CLI command produces yet, and that should move to the roll when
+`question` is wired. Also decided here: no control endpoint, delivery loop or gossip in
+v0. `daemon` only answers, `sync` is one exchange with one peer, and a held file lock
+(not a pid or a port) says whether a daemon runs. Costs: a new member cannot join over
+the network (it holds no roll yet) and joins from a file or directory; a removed
+member's node is not told of its removal by peers.

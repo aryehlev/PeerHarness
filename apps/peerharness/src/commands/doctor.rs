@@ -248,17 +248,15 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
     }
 
     // Daemon file.
-    match DaemonInfo::read(home) {
-        Ok(Some(d)) if d.is_reachable() => {
-            c.add("daemon", Level::Ok, format!("running (pid {})", d.pid))
-        }
-        Ok(Some(_)) => c.add(
+    match (DaemonInfo::running(home), DaemonInfo::read(home)) {
+        (Some(d), _) => c.add("daemon", Level::Ok, format!("running (pid {})", d.pid)),
+        (None, Ok(Some(_))) => c.add(
             "daemon",
             Level::Warn,
-            "stale daemon.json (daemon not reachable)",
+            "not running, and a daemon.json was left behind by one that stopped uncleanly",
         ),
-        Ok(None) => c.add("daemon", Level::Ok, "not running"),
-        Err(e) => c.add("daemon", Level::Warn, format!("{e:#}")),
+        (None, Ok(None)) => c.add("daemon", Level::Ok, "not running"),
+        (None, Err(e)) => c.add("daemon", Level::Warn, format!("{e:#}")),
     }
     let _ = cfg;
     finish(c)
