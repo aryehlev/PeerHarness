@@ -15,8 +15,9 @@ describe the v0.1 command and daemon contract for `apps/peerharness`. At this re
 the local commands, the governance commands and the transport (`daemon`, `connect`,
 `sync`) are wired and exercised end to end: signed events travel as a file, as a
 directory of record files, or between separate processes over QUIC. A file or directory
-of exported events contains the circle's roll and proposals in clear; whoever can read
-it can read them, so it must be given only to members.
+of exported events contains the circle's roll, its proposals and ballots, and its
+questions, answers and recorded stances in clear; whoever can read it can read them, so
+it must be given only to members.
 
 ## 1. Assets
 
@@ -101,8 +102,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   (`ph-protocol`, `ph-governance::authorize_incoming`); who pushed an event gives it no
   standing.
   Requests are strictly parsed with size and depth limits before any handler runs
-  (`ph-network`). There is no discovery: no mDNS, DHT or gossip, so a node is not
-  advertised.
+  (`ph-network`). By default a node is not advertised: there is no DHT and no gossip,
+  and discovery on the local network is off unless the owner turns it on (4.27).
 * **Residual risk.** An attacker who can reach the port learns that a PeerHarness node
   listens there, its `PeerId` (device public key) and the protocol version. Parser or
   libp2p/QUIC bugs are possible; the wire parser has property and adversarial tests, but
@@ -125,10 +126,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   scripted joins need `--expect-fingerprint`.
 * **Residual risk.** The human fingerprint check is the only link between a root key and
   the real organization. A user who joins a circle from a forged file, or from a hostile
-  node (4.21), without checking
-  the fingerprint out of band joins the attacker's circle (this does not compromise the
-  real circle, but the user may then share content with the attacker). Fingerprints are
-  80 bits, enough for human comparison but not a cryptographic commitment.
+  node (4.21), without checking the fingerprint out of band joins the attacker's circle
+  (this does not compromise the real circle, but the user may then share content with
+  the attacker). Fingerprints are 80 bits, enough for human comparison but not a
+  cryptographic commitment.
 
 ### 4.3 Stolen or duplicated votes, invented voters
 
@@ -160,13 +161,13 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Threat.** A member authorized for `team/frontend` requests `team/finance` objects.
 * **Mitigation.** Scope coverage is exact (`*`, equality, or a `/`-separated prefix; no
   other wildcard). `fetch_events` returns a QUESTION, ANSWER or scoped decision event
-  only when the requester has `read` on its scope; `fetch_bundle` serves a bundle only if
-  a stored `adopt` PROPOSAL with that digest is readable by the requester; outgoing
+  only when the requester has `read` on its scope; `fetch_bundle` serves a bundle only
+  if a stored `adopt` PROPOSAL with that digest is readable by the requester; outgoing
   pushes are filtered the same way at send time. A sync cursor only selects where a
   responder starts; it is not an authorization. A member whose roll entry does not cover
   a scope is not in that scope's electorate and cannot propose, vote, ask, answer or
-  record a stance there. No vote, result or charter widens read access: the read rules never look
-  at a ballot (`ph-governance::read`).
+  record a stance there. No vote, result or charter widens read access: the read rules
+  never look at a ballot (`ph-governance::read`).
 * **Residual risk.** Control-plane events (MEMBERSHIP, REVOCATION, CHARTER) are readable
   by every active member regardless of scope, so every member learns every other
   member's handle, device keys and scopes, and who was revoked and why (the revocation
@@ -366,7 +367,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Mitigation.** The detector reads only the user's own prompts, never repository files,
   and every candidate needs human review before it becomes a local skill or is shared.
   The repository path is reduced to a hashed `repo_key`. Project-scope installs are
-  confined to the project root and refuse symlinked components.
+  confined to the project root and refuse symlinked components. A member can have the
+  rules of one scope installed in a single project directory instead of for every
+  project (`circle place`, ADR-030): the directory comes from the owner's command line,
+  never from a hook payload or a peer, choosing it is a confirmation step, and the
+  installer is confined to that directory, so a linked `.claude` in an untrusted
+  checkout is refused. Nothing about the placement is shared or voted.
 * **Residual risk.** A user who pastes repository content into a prompt can produce a
   candidate from it; review is the control. PeerHarness does not defend against the
   agent itself being manipulated by repository content.
@@ -426,10 +432,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   which is a candidate in the inbox and nothing more, and at most 20 unreviewed agent
   notes are kept. Every consent step refuses inside an agent session, with or without
   `--yes` (architecture 12.1): among them asking and answering a question, announcing a
-  stance, leaving a circle, proposing an amendment, revoking a device and switching to
-  `follow`. A cancelled or refused command saves nothing. Two things are deliberately
-  not consent steps: switching to `ask`, and opting out of a rule on one's own machine,
-  which is never refused.
+  stance, leaving a circle, proposing an amendment, revoking a device, placing a scope's
+  rules in a project and switching to `follow`. A cancelled or refused command saves
+  nothing. Two things are deliberately not consent steps: switching to `ask`, and opting
+  out of a rule on one's own machine, which is never refused.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,
@@ -497,6 +503,166 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     them. Sync is paged by a cursor and no longer stalls on a large log, but every node
     keeps all of it.
 
+### 4.21 Joining from a member's node
+
+* **Threat.** A device that is not a member uses the join exchange to learn which
+  circles a node holds, or a node gets a joining device to accept a circle its owner
+  did not mean.
+* **Mitigation.** A node names its circles only in the answer to `authenticate`, and
+  only to a device whose key is on their roll. A device on no roll that asks to join
+  gets `unauthorized` and learns nothing: not a circle id, not whether any circle
+  exists there. An admitted device is on the roll, so it was already entitled to the
+  circle's records; the answer adds the circle id it lacked. Before its owner has
+  confirmed anything, the joining node sends a greeting, an announcement that carries no
+  address, and fetches that name only circle ids the peer itself just named. It stores
+  nothing until the owner has seen the charter, its roll and the root fingerprint and
+  confirmed. A scripted join needs `--expect-fingerprint`, and a fingerprint that
+  differs is a refusal. After that every fetched record passes the same checks as a
+  record from a file (signature, roll, charter succession).
+* **Residual risk.** The fingerprint is the only link to the circle the owner means
+  (4.2). Device keys are not secret, so a hostile node at the address can offer a circle
+  of its own whose charter lists the joiner's key. An owner who confirms without
+  comparing the fingerprint out of band joins that circle. The node at the address
+  learns the joiner's device key and IP address from the connection, as any dialed node
+  does. Joining needs a node that has already accepted the charter listing the device;
+  one that has not answers `unauthorized`, which looks the same as not being admitted.
+
+### 4.22 The removal notice
+
+* **Threat.** The one case in which a node answers a device that is not a member is
+  used to read what the circle did after a removal, by a device that was never a
+  member, or by a device that was cut off because it was compromised.
+* **Mitigation.** This is a deliberate and narrow exception to "a peer is answered
+  because it is on the current roll" (ADR-028). It applies to one request type,
+  `fetch_events`, from a device that the node's own records show on the roll of an
+  earlier charter, that is not on the current roll and is not revoked. The answer is a
+  fixed set: the CHARTER events up to the first charter that no longer lists the device,
+  and for each of them the amendment, the ballots on that amendment and the result that
+  justify it (`peer::farewell`). The device could read every one of those records as a
+  member, and the removing charter is word for word the amendment it could vote on, so
+  nothing it could not already have read is disclosed. No later charter is in it, so no
+  later roll; no rule proposal, question, answer or stance; and no rule text, because
+  every other request from the device is still `unauthorized`. A device that was never
+  on a roll the node holds, and a revoked device, get `unauthorized` as before. The
+  asking node does not take the peer's word: it verifies the charter as a successor of
+  the one it holds, justified by a result it counts itself, and only then treats itself
+  as removed and takes out the rules that circle had installed.
+* **Residual risk.** A removed member learns that the amendment passed, who approved it
+  and who dissented (the ballots were attributable to it already), and that the
+  responder still holds the circle. A member who was removed for cause is answered this
+  way too unless the device is also revoked: to cut a device off completely, revoke it.
+  A node that never held a charter listing the device cannot give the notice, so a
+  removed member may be refused by some peers without explanation. The notice is not
+  pushed: a removed node learns of its removal only when it next asks, and follows the
+  circle's rules on its own machine until then.
+
+### 4.23 Questions and answers
+
+* **Threat.** A device that is not a member, or a member outside a scope, puts questions
+  or answers into a circle; someone takes part on the strength of a credential the
+  founder signed without a vote; a member floods the others with questions.
+* **Mitigation.** The author of a QUESTION or ANSWER must be a device on the roll of the
+  circle's current charter whose roll entry covers the event's scope, and not revoked
+  (`ph_governance::RollOracle`, ADR-027). A founder-issued credential no longer lets
+  anyone ask or answer, just as it gives no access on the transport. An answer must
+  name a stored question in the same circle and scope. The text that leaves the machine
+  is exactly what the preview showed, after redaction, and asking or answering is a
+  consent step that refuses inside an agent's session (4.17). Received questions pass a
+  local guard (4.7). An answer is an opinion on the record and is never counted: a rule
+  still needs a proposal and a majority.
+* **Residual risk.** These events are judged against the charter each node holds when
+  they arrive, so nodes that hold different charters at that moment can differ on
+  whether they keep one. Questions and answers are signed and attributable, readable by
+  every member whose roll entry covers the scope, and by anyone who can read an exported
+  file or shared directory. They expire after 30 days and are not served afterwards, but
+  copies stay in the logs that received them. Quotas, mute and block are local: a
+  member can still send each other member 20 questions a day.
+
+### 4.24 Leaving a circle
+
+* **Threat.** A member is kept following a circle's rules against their will, or
+  leaving is used to change the roll without a vote.
+* **Mitigation.** `circle leave` acts on the owner's machine at once: the rules that
+  circle installed are removed and none of its rules is installed there again, whatever
+  the roll says. Nobody's agreement is needed for that. Separately it puts the owner's
+  removal to the vote, with their approval. The roll changes only if that amendment
+  passes, like any other: a unilateral exit would be a second way to change the roll,
+  with a threshold other than a majority (ADR-027).
+* **Residual risk.** Until the members approve, the leaver is still on the roll. They
+  count in every electorate, which makes thresholds harder to reach; their device key
+  can still read, sync and vote; and their approval of their own removal cannot be
+  withdrawn, although they can follow the circle again on their machine. A sole member
+  cannot leave. A founder who leaves the roll still holds the root key, and later
+  charter changes then depend on files carried to and from that node (4.16).
+
+### 4.25 Recorded opt-outs (STANCE)
+
+* **Threat.** A stance is forged in another member's name, is used to change the
+  outcome of a vote, is forced out of a member who wanted to opt out quietly, or stands
+  between an owner and their own machine.
+* **Mitigation.** A STANCE is signed by its author's device and accepted only from a
+  device on the roll of the charter it names, for a member the rule's scope concerns,
+  about a stored `adopt` proposal in the same circle and scope; a revoked device's
+  stance is refused and its earlier ones are no longer shown. Nothing reads a stance:
+  no count, result, rule set or installation changes because of one (ADR-029).
+  Publishing one is voluntary. It happens only with `--announce`, after a preview of the
+  exact record and a confirmation, and it refuses inside an agent's session. The opt-out
+  on the machine does not wait for any of that: it has already happened when the prompt
+  appears and stays if the announcement is refused.
+* **Residual risk.** A published stance is permanent and attributable. Every member who
+  may read the rule sees it, with the reason given, and so does anyone who can read an
+  exported file. Publishing an opt-out is a disclosure the member chooses, and it cannot
+  be taken back, only followed by a later stance. The record is incomplete by design: a
+  member who opted out without announcing is not on it, and a stance says nothing
+  verifiable about what is installed on anyone's machine. The current stance is chosen
+  by the author's own `created_at`, which the author controls within the usual bounds;
+  that affects only how their own stance is displayed.
+
+### 4.26 Syncing with known peers, and on a timer
+
+* **Threat.** A node that syncs unattended is made to contact addresses of an
+  attacker's choosing, or sends circle data to a peer its owner never approved.
+* **Mitigation.** `sync` without an argument and `daemon --sync-every` dial only
+  addresses the node has stored, and it stores only addresses its owner dialed. The
+  addresses a peer announces in `authenticate` are not kept, so a member cannot point
+  another member's node at an address of its choosing. No address comes from an event,
+  and none from discovery unless the owner turned that on (4.27). Each of those syncs is the ordinary session: the node
+  sends a greeting, and nothing that names a circle unless the answering device key is
+  on a roll the node holds. Only signed events travel, each previewed and confirmed by
+  its author when it was created. The timer is off unless the owner starts the daemon
+  with it, and its interval is at least 30 seconds.
+* **Residual risk.** A daemon that syncs on a timer signs results, and on the founder's
+  node new charters, without its owner present, as it already does when it answers.
+  Regular dialing is visible to network observers. A stored address that has since
+  passed to another party receives a QUIC handshake and, if it answers, a greeting,
+  which shows it the node's IP address and device key; nothing more is sent unless the
+  answering key is on a shared roll.
+
+### 4.27 Discovery on the local network
+
+* **Threat.** An observer on the local network identifies or tracks PeerHarness nodes; a
+  host on the segment feeds a node false announcements, to be dialed or to hide a
+  member; a node contacts strangers it heard.
+* **Mitigation.** Discovery is off unless the owner asks for it with `--lan`; without it
+  no multicast socket exists and nothing is sent (ADR-031). With it, a node announces
+  its device public key and its listen addresses under the generic libp2p service name,
+  and nothing about circles, members or rules. A node without a listen address on the
+  network (a `sync` client, a daemon on loopback) announces an empty record: it finds
+  others without being found. What is heard is a hint and nothing more: `ph-network`
+  only reports it, never dials it and keeps it out of its address book, and holds at
+  most 256 peers with 8 addresses each. The application dials only a device key that is
+  on a roll it holds, at an announced address that names that key, so the handshake
+  must prove the key; whoever answers is then judged by the roll like any other peer
+  (4.1). A device on no roll of the node is never dialed and is sent nothing.
+* **Residual risk.** The device key is stable, so an announcing device can be
+  recognized on every network it joins, and matched to a member by anyone who holds a
+  roll that lists it, a former member included. Other libp2p software on the network
+  sees the node and may connect; it gets `hello` and nothing else. mDNS is
+  unauthenticated: any host on the segment can fill the list or keep a member out of
+  it, which costs discovery and nothing else, and can announce a member's key at an
+  address of its choosing, to which the node then sends a handshake that fails unless
+  the answerer holds that key. IPv4 only.
+
 ## 5. Privacy limitations
 
 These are limits of the design, not bugs, and they apply even when everything works as
@@ -525,13 +691,17 @@ intended.
   the members who voted to admit that handle. One person's several devices are one vote,
   but nothing in the protocol stops a circle from admitting the same person under two
   handles. A key can be shared, and a device can be re-enrolled with a new key.
-* **The root-key holder is still a single point of authority for access in v0.** It
-  alone issues and revokes the credentials that let a device read, and it can stall
-  charter changes. It cannot change the roll or the voting rules, or pass a rule, alone
-  (4.16).
+* **The root-key holder is still a single point of authority in v0.** It alone can cut
+  a device off, without a vote, and it can stall charter changes. It cannot give anyone
+  access, change the roll or the voting rules, or pass a rule, alone (4.16).
 * **Votes are visible to the circle.** Every member who may read a proposal sees who
   approved it and who dissented, with their rationale. Circle-wide (`*`) decisions and
-  all charter amendments are visible to every member.
+  all charter amendments are visible to every member. A member who was voted off is
+  shown the ballots of that vote once more (4.22).
+* **Questions, answers and recorded opt-outs carry your name.** They are signed, and
+  every member who may read their scope sees who asked, who answered what, and who put
+  an opt-out on record and why. A recorded opt-out never expires (4.25). An opt-out
+  that is not announced stays on your machine.
 * **The advisory providers are remote inference.** `claude -p` (Claude Code) and
   `codex exec` (Codex CLI) send the previewed text to their vendor's service under the
   user's own account; that vendor's data handling then applies. They are off by default
@@ -539,9 +709,14 @@ intended.
   An Ollama-compatible endpoint is local only when it is on loopback; non-loopback
   endpoints are refused unless explicitly allowed, and are then remote too.
 * **Metadata is visible to members and partly to the network.** Members see the member
-  list, including each member's handle, device keys and scopes on the roll (4.4). Network observers see IP addresses, ports, timing and traffic volume of
-  QUIC connections, even though content is encrypted. Invite files contain the circle
-  name, root key, addresses and the invitee's credential; treat them as sensitive.
+  list, including each member's handle, device keys and scopes on the roll (4.4), and
+  the addresses a member's node announces when it syncs. Network observers see IP
+  addresses, ports, timing and traffic volume of QUIC connections, even though content
+  is encrypted; a daemon that syncs on a timer shows a regular pattern (4.26), and one
+  started with `--lan` announces its device key and port to the local network (4.27).
+  Invite
+  files contain the circle name, root key, addresses and the invitee's credential; treat
+  them as sensitive.
 * **Local data is stored in plaintext SQLite.** Observations (redacted prompt text) are
   kept for 14 days by default in a database protected only by file permissions and disk
   encryption.
@@ -553,7 +728,7 @@ intended.
 * Censorship resistance, cross-NAT connectivity, relays.
 * End-to-end encrypted offline group storage, group rekeying (future, for example MLS).
 * Charter changes without the root key as notary, root key rotation and recovery,
-  voting on who gets read access, secret ballots.
+  revocation by vote, leaving a roll without a vote, secret ballots.
 * Windows.
 
 ## 7. Reporting vulnerabilities
@@ -569,18 +744,28 @@ directory and QUIC on loopback.
 
 | threats | tests |
 |---|---|
-| 4.1, 4.5, 4.7 (peers without membership, impersonation, limits) | `crates/ph-network/tests/network.rs`, `adversarial.rs`, `codec.rs`; `crates/ph-governance/tests/authz.rs`, `roll_oracle.rs`; `apps/peerharness/src/peer.rs` (unit tests of the request handler); `apps/peerharness/tests/network.rs` (separate processes over QUIC: a stranger, a node that claims a shared circle, a removed member); `apps/peerharness/tests/circle_vote.rs` (an outsider's node stores nothing) |
-| 4.2, 4.9 (forged, expired or revoked membership) | `crates/ph-identity/tests/attacks.rs`, `membership.rs` |
+| 4.1, 4.5, 4.7 (peers without membership, impersonation, limits) | `crates/ph-network/tests/network.rs`, `adversarial.rs`, `codec.rs`; `crates/ph-governance/tests/authz.rs`, `roll_oracle.rs`; `apps/peerharness/src/peer.rs` (unit tests of the request handler; `a_cursor_pages_through_a_log_larger_than_the_known_list`: a log larger than the `known` list, and a cursor that does not widen what is read); `apps/peerharness/tests/network.rs` (separate processes over QUIC: a stranger, a node that claims a shared circle, a device on no roll that asks to join); `apps/peerharness/tests/circle_vote.rs` (an outsider's node stores nothing) |
+| 4.2, 4.9 (forged, expired or revoked membership) | `crates/ph-identity/tests/attacks.rs`, `membership.rs`; `apps/peerharness/tests/circle_life.rs` (`the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted`: only the founder's node and only a person can revoke, not its own device; the roll and the electorate are unchanged; the device's ballots stop counting, new ones are refused by every node that knows, and its own node stops signing once it knows) |
 | 4.3, 4.20 (stolen, duplicated or invented votes; counting; results; succession) | `crates/ph-governance/tests/tally.rs`, `result.rs`, `ruleset.rs`, `succession.rs`, `adversarial.rs`; `apps/peerharness/tests/circle_vote.rs`, `demo.rs` |
-| 4.4, 4.16 (scope access, the root-key holder) | `crates/ph-governance/tests/authz.rs`, `succession.rs` |
+| 4.4, 4.16 (scope access, the root-key holder) | `crates/ph-governance/tests/authz.rs`, `succession.rs`; `apps/peerharness/tests/circle_life.rs` (the revocation test above) |
 | 4.6 (keys at rest) | `crates/ph-identity/tests/keystore.rs` |
 | 4.8 (replay, malformed and oversized input) | `crates/ph-protocol/tests/adversarial.rs`, `proptests.rs`, `vectors.rs`; `crates/ph-store/tests/events.rs` |
 | 4.10 to 4.12 (hostile skills, paths, script execution) | `crates/ph-skills/tests/malicious.rs`, `bundles.rs`, `install.rs`, `frontmatter_props.rs` |
 | 4.13 (secrets and transcripts) | `crates/ph-core/src/redact.rs` (unit tests), `crates/ph-store/tests/privacy.rs`, `apps/peerharness/tests/local_loop.rs` |
 | 4.14 (hook payloads, settings) | `crates/ph-observer/tests/hooks.rs`, `settings.rs`, `spool.rs` |
-| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs` |
+| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope) |
+| 4.21, 4.22 (joining from a node, the removal notice) | `apps/peerharness/tests/network.rs` (separate processes over QUIC: a new member joins from a member's node, the wrong root fingerprint is refused and stores nothing, a device on no roll is offered nothing; a removed member's node is shown the vote, verifies it, drops the circle's rule, and can neither sync nor rejoin afterwards); `apps/peerharness/src/peer.rs` (`a_member_voted_off_is_told_of_the_vote_and_nothing_else`: the exact set of records, no later charter, every other request refused, a never-member and a revoked device refused) |
+| 4.23 (questions and answers) | `apps/peerharness/src/governance.rs` (`questions_and_answers_are_authorized_by_the_roll`: a device on no roll, a member outside its scopes, a revoked device, an answer without its question or in another scope; `the_local_guard_keeps_noise_out_of_the_inbox`: duplicate, muted, blocked, over quota); `apps/peerharness/tests/circle_life.rs` (`a_question_is_asked_and_answered_by_members_of_the_roll`) |
+| 4.24 (leaving, amendments, devices, the owner's mode) | `apps/peerharness/tests/circle_life.rs` (`a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`: two devices of one member are one approval, the amend threshold, leaving acts locally at once and changes the roll only by vote) |
+| 4.15 (placing a scope's rules in one project) | `apps/peerharness/tests/circle_life.rs` (`the_rules_of_a_scope_can_live_in_one_project`: only a person can place a scope; repeals and opt-outs act on the copy in the project; nobody else's machine changes) |
+| 4.27 (discovery on the local network) | `crates/ph-network/tests/discovery.rs` (`discovery_is_off_by_default_and_then_nothing_is_reported` always runs; five tests that need multicast are `#[ignore]`d); `apps/peerharness/tests/network.rs` (`members_find_each_other_on_the_local_network`, `#[ignore]`d for the same reason) |
+| 4.25 (recorded opt-outs) | `apps/peerharness/src/governance.rs` (`a_stance_is_a_record_by_a_member_of_the_roll_and_counts_for_nothing`); `apps/peerharness/tests/circle_life.rs` (`an_opt_out_can_be_put_on_the_circles_record`: voluntary, refused for an agent while the opt-out itself stands, open to a member admitted after the rule passed); `crates/ph-protocol/tests/vectors.rs` (the STANCE vector) |
 
 Not covered by an automated test: 4.15 (untrusted repository content) beyond the
 project-scope symlink checks in `crates/ph-skills/tests/install.rs`, 4.18 (other local
-users: file modes are set, not tested against a second account) and 4.19 (supply
-chain), which CI checks with `cargo deny` and `cargo audit`.
+users: file modes are set, not tested against a second account), 4.19 (supply
+chain), which CI checks with `cargo deny` and `cargo audit`, and of 4.26 the timer
+itself: `sync` without an argument runs in `apps/peerharness/tests/network.rs`, while
+`daemon --sync-every` has no test beyond argument parsing. The tests of 4.27 that
+exercise real announcements need multicast on the local network and do not run in CI;
+they are run by hand with `-- --ignored`.

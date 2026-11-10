@@ -798,6 +798,11 @@ pub async fn sync(run: &Running, addr: &Multiaddr) -> Result<SyncReport> {
         .as_deref()
         .map(|t| both(&mine, t))
         .unwrap_or_default();
+    // A list at its maximum may have been cut short: a circle missing from it then says
+    // nothing about this node's membership there.
+    let cut_short = theirs
+        .as_ref()
+        .is_some_and(|t| t.len() >= ph_protocol::limits::MAX_SHARED_CIRCLES);
     let mut report = SyncReport {
         peer_id: peer.to_string(),
         circles: shared.len(),
@@ -810,7 +815,7 @@ pub async fn sync(run: &Running, addr: &Multiaddr) -> Result<SyncReport> {
         exchange(run, peer, peer_key, *circle, &mut report).await?;
     }
     // Circles this node believes it shares with the peer, and the peer does not.
-    for circle in mine.iter().filter(|c| !shared.contains(c)) {
+    for circle in mine.iter().filter(|c| !shared.contains(c) && !cut_short) {
         let circle = *circle;
         let (off, changes) = learn_of_removal(run, peer, circle).await?;
         let name = run

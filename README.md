@@ -12,13 +12,15 @@ Agents can suggest rules. Only people decide: your agent may write a rule down f
 to review, and every step that approves, shares, votes or installs refuses to run
 inside an agent's session.
 
-> **Status: pre-release, not audited.** Writing rules down, reviewing and installing
-> them, founding a circle, admitting and removing members by vote, proposing, voting,
-> repealing and installing passed rules all work today from the command line.
-> Nodes exchange their signed events directly over QUIC, through a directory in a git
-> repository you already share, or as a file you send however you like. There is no
-> discovery or NAT traversal yet: for a direct sync one node must be reachable by the
-> other. See [What works today](#what-works-today) before relying on anything.
+> **Status: pre-release, not audited.** Everything in the command reference works today
+> and is tested end to end: writing rules down, reviewing and installing them, asking
+> the circle a question, founding a circle, admitting and removing members by vote,
+> proposing, voting, repealing, changing the rules of the vote, and leaving.
+> Nodes exchange their signed events directly over QUIC (finding each other on a local
+> network if you ask them to), through a directory in a git repository you already
+> share, or as a file you send however you like. There are no relays: for a direct
+> sync one node must be reachable by the other. See
+> [What works today](#what-works-today) before relying on anything.
 
 ## See it run
 
@@ -119,17 +121,19 @@ The precise rules are in [docs/architecture.md](docs/architecture.md), section 1
 | Voting core: charter, roll, proposals, ballots, result certificates, rule set, charter succession | works, tested |
 | `peerharness demo` | works, tested end to end |
 | `note`, `review`, `skills list/show/install/uninstall/rollback` (the loop for one person) | work, tested end to end |
-| `circle create`, `circle invite`, `circle join`, `circle members`, `circle remove` | work, tested end to end with three separate nodes |
+| `circle create`, `invite`, `join`, `members`, `remove` | work, tested end to end with three separate nodes |
+| `circle leave`, `amend` (thresholds, binding or advisory), `device add/remove`, `mode`, `place`, `revoke` | work, tested end to end |
+| `question send`, `list`, `answer`, `dismiss` (ask the circle before proposing) | work, tested end to end |
 | `proposal create`, `list`, `show`, `vote`, `adopt`, `refuse` | work, tested end to end |
-| `rule list`, `rule opt-out`, `rule opt-in`, `rule repeal` | work, tested end to end |
+| `rule list`, `rule opt-out`, `rule opt-in`, `rule repeal`; `--announce` puts an opt-out on the circle's record | work, tested end to end |
 | `events export`, `events import` (signed events as a file) | work, tested end to end |
 | `events sync <dir>` (the circle as a directory in a repository you already share) | works, tested end to end |
 | `init`, `status`, `doctor`, `observe demo`, `inbox`, `export --local` | work |
 | `watch claude --install` / `--remove`: the hooks, and the skill that asks your agent to report corrections | work, tested; other hooks and settings in the file are kept, with a backup |
 | `reset` (delete this node and its keys; explains first, deletes only with `--confirm`) | works, tested |
-| `question`, `circle revoke` | not implemented yet (they say so) |
-| `daemon`, `sync`, `connect` (direct peer-to-peer over QUIC) | work, tested with separate processes on loopback. No discovery, relays or NAT traversal: one side must be reachable |
-| Finding corrections | you write the rule down, or your agent reports it when you correct it (best effort: it depends on the agent noticing). The built-in pattern detector only knows "use X, not Y" |
+| `daemon`, `sync`, `connect` (direct peer-to-peer over QUIC), joining a circle from a member's node | work, tested with separate processes on loopback. No relays or hole punching: one side must be reachable |
+| `daemon --lan`, `sync --lan` (members find each other on a local network) | work on macOS, tested there with separate processes; the test needs real multicast and does not run in CI. Not tried on Linux |
+| Finding corrections | you write the rule down, or your agent reports it when you correct it (best effort: it depends on the agent noticing). The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our own test set, none of 52 ordinary prompts); it does not recognize whole-sentence rules such as "always run the tests first" |
 | Windows | not supported yet |
 
 ## Start alone
@@ -212,14 +216,38 @@ With three or more members a rule passes on a majority, and admitting or removin
 someone takes a vote of the current members. What else there is:
 
 ```sh
+# Before you propose: ask. Answers are opinions on the record, not ballots.
+peerharness question send <candidate-id> --circle team
+peerharness question list
+peerharness question answer <question-id> --answer agree --rationale "we already do"
+
+# The rules in force, and your own machine.
 peerharness rule list                              # what is in force, and where it stands on this machine
-peerharness rule opt-out <name> --circle team      # keep one rule off your own machine
+peerharness rule opt-out <name> --circle team      # keep one rule off your own machine; nobody is told
+peerharness rule opt-out <name> --circle team --announce --reason "..."   # ...and put that on the circle's record
 peerharness rule repeal <name> --circle team       # ask the members to vote it out
-peerharness circle remove <member> --circle team   # ask the members to vote someone off the roll
+peerharness circle mode ask --circle team          # be asked before any rule is installed (or: follow)
+peerharness circle place repo/web --circle team --project ~/code/web   # rules of that scope go in that repository only
+
+# The circle itself. Each of these is put to the vote.
+peerharness circle remove <member> --circle team   # vote someone off the roll
+peerharness circle device add <ed25519: key> --circle team   # a second device for you; still one vote
+peerharness circle amend --circle team --pass 2/3  # change the rules of the vote (needs the amend threshold)
+peerharness circle leave --circle team             # stop following now, and ask to be taken off the roll
 ```
 
 A rule binds the members who were entitled to vote on it. A repeal removes the rule
 from every member's machine, and never a skill someone installed for themselves.
+
+A rule about one repository should not follow you into every other one. Propose it in
+a scope your team uses for that repository (`proposal create ... --scope repo/web`),
+and let each member say once where their checkout is with `circle place`. Rules with
+other scopes still apply everywhere.
+
+One thing is not voted on. If a device is lost or stolen, the founder's node can cut
+that device key off at once with `peerharness circle revoke <member or key> --circle
+team`. That stops the device from syncing and from being counted. It cannot add a vote,
+and it does not take the member off the roll: that is still `circle remove`.
 
 An exported file contains the circle's roll and proposals in clear text. Send it only
 to members. Every node verifies each line itself, so the channel you send it over does
@@ -233,16 +261,43 @@ answers the other only because that key is on the roll you all voted on.
 
 ```sh
 peerharness daemon --listen /ip4/0.0.0.0/udp/4001/quic-v1    # prints the address to give the others
-peerharness sync /ip4/192.0.2.7/udp/4001/quic-v1/p2p/<peer id>   # the others; later just: sync <peer id>
+peerharness sync /ip4/192.0.2.7/udp/4001/quic-v1/p2p/<peer id>   # the others; after that just: peerharness sync
 ```
 
 A sync fetches what the peer has, sends what it lacks, and applies what has passed:
-when your ballot completes a majority, the rule is installed on both sides. A device
-that is not on the roll gets no answer beyond a version greeting, and learns nothing
-about the circle, not even whether it exists there. A new member joins from a file or
-the shared directory first, since nobody is on a roll they do not hold yet. There is
-no discovery and no relay: one of the two machines has to be reachable by the other
-(same network, VPN, or a forwarded UDP port).
+when your ballot completes a majority, the rule is installed on both sides. After the
+first sync a node remembers the peer and how far it got, so `peerharness sync` with no
+argument syncs with everyone it knows and moves only what is new. A daemon started with
+`--sync-every 300` does that by itself every five minutes.
+
+A device that is not on the roll gets no answer beyond a version greeting, and learns
+nothing about the circle, not even whether it exists there. Once your admission has
+passed you are on the roll, so you can get the circle straight from a member's node,
+without a file:
+
+```sh
+peerharness circle join /ip4/192.0.2.7/udp/4001/quic-v1/p2p/<peer id> --expect-fingerprint <fingerprint>
+```
+
+If the members vote you off, the next node you sync with shows your node the vote, and
+your node checks it before it believes it and removes that circle's rules.
+
+On a network you share (an office, a home), nodes can find each other instead of being
+given addresses:
+
+```sh
+peerharness daemon --listen /ip4/0.0.0.0/udp/4001/quic-v1 --lan   # announces itself
+peerharness sync --lan                                            # finds members and syncs
+```
+
+Announcing is off unless you ask for it. It tells everyone on that network this
+device's public key and port, and nothing about any circle. A node only contacts
+announced devices that are on a roll it holds.
+
+There is no relay: for a direct sync one of the two machines has to be reachable by the
+other (same network, VPN, or a forwarded UDP port). You do not need every pair to
+connect, though. One member's node that the others can reach carries everyone's records
+to everyone else, and it hands each member only what the roll lets them read.
 
 ### Through a repository you already share
 
@@ -277,9 +332,15 @@ vote.
 * **The agent guard is not a wall.** Consent steps recognize an agent's session by an
   environment variable. That stops an agent that is trying to help; it does not stop a
   process that deliberately hides the variable.
-* **No way to leave on your own yet.** You can opt out of any rule, but coming off the
-  roll takes a vote, like any change to it.
+* **Leaving takes effect on your machine at once, and on the roll by vote.** `circle
+  leave` removes the circle's rules from your agent immediately. Your name stays on the
+  roll, and counts toward every threshold, until the members approve the removal.
+* **The founder can revoke any device without a vote.** It is meant for a lost laptop.
+  It cannot pass anything, and everyone sees it, but it is a power the other members
+  do not have.
 * **A compromised device** counts until its revocation reaches each node.
+* **Announcing on a local network identifies your device.** With `--lan`, anyone on that
+  network sees the same public key wherever you connect.
 
 The full list is in [docs/security-model.md](docs/security-model.md).
 

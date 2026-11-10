@@ -6,15 +6,17 @@ something here, update the code that depends on it and record the change in
 `docs/decisions.md`.
 
 Implementation status at this revision: the nine library crates implement and test this
-contract. `apps/peerharness` wires the local commands (`init`, `status`, `doctor`,
-`observe`, `note`, `inbox`, `review`, `skills`, `watch`, `hook`, `export`, `reset`) and
-governance (`circle create`, `circle invite`, `circle remove`, `circle join`,
-`circle members`, `proposal`, `rule`, `events`, `demo`). Nodes exchange signed events
-as a file or as a directory of small files (`events export`, `events import`,
-`events sync`; ADR-019, ADR-025), or directly over QUIC (`daemon`, `connect`, `sync`;
-section 7, ADR-026). Not wired: `question`, `circle revoke`, a delivery loop, and
-gossip. Where this file departs from `docs/spec.md`, the ADRs in `docs/decisions.md` say
-why; the largest departure is governance (section 10, ADR-012 onwards).
+contract. `apps/peerharness` wires every command of the CLI contract: the local ones
+(`init`, `status`, `doctor`, `observe`, `note`, `inbox`, `review`, `skills`, `watch`,
+`hook`, `export`, `reset`) and governance (`circle create`, `invite`, `join`, `members`,
+`remove`, `leave`, `amend`, `device`, `mode`, `place`, `revoke`; `question`; `proposal`;
+`rule`; `events`; `demo`). Nodes exchange signed events as a file or as a directory of
+small files (`events export`, `events import`, `events sync`; ADR-019, ADR-025), or
+directly over QUIC (`daemon`, `connect`, `sync`; section 7, ADR-026, ADR-028), with
+optional discovery on the local network (ADR-031). Not built: gossip, relays and hole
+punching (ADR-031 says why), and Windows support. Where this file departs from
+`docs/spec.md`, the ADRs in `docs/decisions.md` say why; the largest departure is
+governance (section 10, ADR-012 onwards).
 
 ## 1. Process model
 
@@ -151,23 +153,30 @@ Envelope fields: `schema`, `type`, `circle_id`, `scope`, `author`, `nonce`, `cre
 
 | type | body | authorized by | lifetime |
 |---|---|---|---|
-| `QUESTION` | `{question: str<=2000, topic: str<=128, related_candidate?: digest}` | credential capability `ask` | 30 d |
-| `ANSWER` | `{question_id: event_id, answer: "agree"\|"disagree"\|"unsure", rationale?: str<=2000}` | credential capability `answer` | 30 d |
+| `QUESTION` | `{question: str<=2000, topic: str<=128, related_candidate?: digest}` | the membership oracle, capability `ask`: in the application, the roll of the current charter (ADR-027) | 30 d |
+| `ANSWER` | `{question_id: event_id, answer: "agree"\|"disagree"\|"unsure", rationale?: str<=2000}` | the membership oracle, capability `answer`: the roll of the current charter | 30 d |
 | `PROPOSAL` | `{kind: "adopt"\|"repeal"\|"amend", charter: digest, title<=200, summary<=1000, …}` plus the members of its kind (section 10.4) | the roll of the charter it names | permanent |
 | `VOTE` | `{proposal_id: event_id, decision: "approve"\|"reject"\|"revise", rationale?: str<=2000}` | the roll | permanent |
 | `RESULT` | `{proposal_id: event_id, approvals: [vote event_id]}` (1-64, sorted, unique) | the roll | permanent |
 | `CHARTER` | `{charter: Charter}` (author must be the circle root key, scope `*`) | root-key binding | permanent |
 | `MEMBERSHIP` | `{credential: MembershipCredential, acceptance: Acceptance}` (author must equal credential subject) | the embedded credential (control plane) | credential expiry |
 | `REVOCATION` | `{revocation: Revocation}` (author must be the circle root key) | root-key binding | permanent |
+| `STANCE` | `{proposal_id: event_id, charter: digest, stance: "opted_out"\|"following", reason?: str<=2000}` | the roll of the charter **it** names (ADR-029) | permanent |
 
 Three planes:
 
-* **Deliberation** (`QUESTION`, `ANSWER`): authorized by credential, expiring.
+* **Deliberation** (`QUESTION`, `ANSWER`): authorized by the membership oracle, which the
+  application backs with the roll of the circle's current charter (ADR-027), judged
+  when the event arrives; expiring. They decide nothing.
 * **Decision** (`PROPOSAL`, `VOTE`, `RESULT`): authorized by the roll of the charter the
   proposal names, never by a credential, and permanent. The answer depends only on
   signed records, so it is the same on every node and at every time.
 * **Control** (`MEMBERSHIP`, `REVOCATION`, `CHARTER`): readable by every active member of
   the circle regardless of scope.
+
+`STANCE` belongs to none of them. It is a member's public statement about a rule in
+force, authorized like a ballot and read like the decision events of its rule, and it
+is a record only: no tally, result, rule set or installation reads it (section 10.9).
 
 Validation (stateless part in ph-protocol, stateful part in ph-governance):
 
@@ -280,10 +289,11 @@ Request                                   Response
 Hello { versions: ["0.1"] }           ->  Hello { versions, capabilities: ["events","bundles"] }
 Authenticate { memberships: [ {credential, acceptance} ] (<=16),
                listen_addrs: [multiaddr] (<=8) }
-                                      ->  Authenticated { memberships: [ {credential, acceptance} ] }
-                                          // only for circles where the REQUESTER proved membership
+                                      ->  Authenticated { memberships: [], circles?: [circle_id] (<=64) }
+                                          // only to a requester on a roll here; `circles` are
+                                          // the circles whose roll lists the requester
 PushEvents { events: [Envelope] (<=64) }  ->  PushResult { results: [{event_id, status: "accepted"|"duplicate"|"rejected"}] }
-FetchEvents { circle_id, known: [event_id] (<=4096), limit (<=256) }
+FetchEvents { circle_id, known: [event_id] (<=4096), limit (<=256), after?: event_id }
                                       ->  Events { events: [Envelope], more: bool }
 FetchBundle { circle_id, digest }     ->  Bundle { digest, files: [{path, content_b64}] }
 any                                   ->  Error { code: "unauthorized"|"rate_limited"|"bad_request"|"too_large"|"unavailable" }
@@ -302,8 +312,21 @@ any                                   ->  Error { code: "unauthorized"|"rate_lim
   cached. A member removed by a charter this node has accepted, or revoked, is a
   stranger from the next request on.
 * `Authenticate` proves nothing any more and its `memberships` may be empty. A peer on
-  the roll of a circle this node holds gets `Authenticated` with an empty list, and its
-  `listen_addrs` are stored; anyone else gets `unauthorized`.
+  the roll of a circle this node holds gets `Authenticated` with the ids of the circles
+  whose roll lists it; anyone else gets `unauthorized`. The `listen_addrs` it announces
+  are not stored: a node dials only addresses its own owner gave it, so a member cannot
+  point another member's node at an address of its choosing. A device that was just admitted holds no circle yet; this answer is
+  how it learns which circle to fetch (`circle join <address>`, ADR-028). It then
+  stores nothing until its owner has seen the charter and the root fingerprint and
+  confirmed.
+* **One exception: the removal notice** (`peer::farewell`, ADR-028). A `FetchEvents`
+  from a device that is not an active member, is not revoked, and is on the roll of an
+  earlier charter this node holds, is answered with the CHARTER events up to the first
+  charter without it, each with the amendment, the ballots and the result that justify
+  it, and nothing else. Every one of those records was readable by it as a member, and
+  the removing charter is word for word the amendment it could vote on. Its node
+  verifies them like any records and only then treats itself as removed. Every other
+  request from it is refused.
 * A syncing node sends a circle id only to a peer whose device is on that circle's roll
   as this node holds it. To a peer it shares no circle with it sends `Hello` and nothing
   more.
@@ -318,29 +341,46 @@ any                                   ->  Error { code: "unauthorized"|"rate_lim
   circle and its electorate is the whole roll, and members cannot vote on what they
   cannot read. A vote on a rule never widens read access.
 * `FetchEvents` returns the events of that circle the requester may read under that
-  rule. Permanent events are served however old they are; expired QUESTION, ANSWER and
-  MEMBERSHIP events are not. `FetchBundle` succeeds only when a stored `adopt` PROPOSAL
-  with that digest is readable by the requester.
+  rule, in the order this node stored them, starting after the event `after` names
+  (absent or unknown: from the beginning). Stored order, not `created_at`, because an
+  event can arrive long after it was created and would fall behind a time-based
+  cursor. Permanent events are served however old they are; expired QUESTION, ANSWER
+  and MEMBERSHIP events are not. `FetchBundle` succeeds only when a stored `adopt`
+  PROPOSAL with that digest is readable by the requester.
+* **Cursors.** A syncing node keeps, per peer and circle, the last event the peer served
+  (the next `after`) and the last event of its own log the peer took
+  (`sync_cursors`). Events it cannot place yet stay in a pool that is offered again
+  with every later batch, and the fetch cursor moves only when that pool is empty; the
+  push cursor moves up to the first event the peer refused. So a sync transfers what
+  is new, and no event is skipped for good because of the order it arrived in.
 * A node that accepts pushed `adopt` proposals whose bundle it lacks fetches those
-  bundles back from the pusher over the same connection, then settles.
+  bundles back from the pusher over the same connection, then settles. The pusher's
+  next request (other than `Hello` and `FetchBundle`) waits for that to finish, at most
+  15 seconds, so what settling produced is there to be fetched.
+* **Who is dialed.** `sync <address>` dials the address its owner gave. `sync` without
+  one, and `daemon --sync-every`, dial the peers whose addresses earlier syncs stored.
+  With `--lan`, members announce themselves over mDNS (`ph-network`'s `lan_discovery`,
+  off by default) and a node dials only announced device keys that are on a roll it
+  holds, at an address ending in that key's peer id (ADR-031). Nobody else is dialed.
 * Rate limits, enforced in ph-network before the handler runs: per-peer token bucket
   (default 20 requests/s, burst 40), at most 512 KiB/s inbound bytes, at most 8
   concurrent inbound streams per peer. Over the limit gets `rate_limited` and a tracing
   warning with no content.
-* Limits of this transport in v0: no discovery, relays or NAT traversal (a peer must be
-  directly reachable); a new member joins from a file or shared directory first, since
-  it is on no roll it holds yet; a removed member is refused by its peers and is not
-  told why, so its own node learns of the removal only from a file or directory;
-  `FetchEvents` has no cursor (section 10.12).
+* Limits of this transport in v0: no relays, hole punching or port mapping, so one of
+  two syncing nodes must be reachable by the other. A circle still converges across
+  networks through any one reachable member, or through the shared directory of
+  ADR-025, because every member's node carries what the roll lets it read (ADR-031).
 
 ## 8. SQLite schema (ph-store)
 
-Migrations use `PRAGMA user_version` (currently version 2). The database runs with WAL,
+Migrations use `PRAGMA user_version` (currently version 4). The database runs with WAL,
 `foreign_keys=ON` and `busy_timeout`. It never stores private key bytes. Tables (the
 columns listed are the minimum):
 
 * `identity_metadata(device_key, keystore_backend, keystore_ref, created_at)`, a single row.
-* `circles(circle_id PK, name, root_key, is_founder, root_keystore_ref NULL, adoption_mode, accepted_charter NULL, created_at)`.
+* `circles(circle_id PK, name, root_key, is_founder, root_keystore_ref NULL, adoption_mode, accepted_charter NULL, left_at NULL, created_at)`.
+  `left_at` is set when the owner left the circle on this machine (`circle leave`):
+  nothing of that circle is installed here while it is set.
   `adoption_mode` is `"follow"` or `"ask"` (default `"ask"`): the owner's standing
   decision about rules that pass (section 10.9). `accepted_charter` is the digest of the
   charter the owner was last shown and accepted. There is no per-node quorum policy any
@@ -359,11 +399,13 @@ columns listed are the minimum):
   naming it can be verified and kept.
 * `rule_optouts(circle_id, skill_name, opted_out_at, PRIMARY KEY(circle_id, skill_name))`:
   rules the owner opted out of on this machine.
-* `rule_installs(circle_id, skill_name, bundle_digest, installed_at, PRIMARY KEY(circle_id, skill_name))`:
-  skills that were installed on this machine because a rule passed in that circle. A
-  repeal, a superseding rule or an opt-out removes only what is recorded here with the
-  digest still in place, so a skill the owner installed personally is never removed by
-  a vote.
+* `rule_installs(circle_id, skill_name, bundle_digest, installed_at, project_dir NULL, PRIMARY KEY(circle_id, skill_name))`:
+  skills that were installed on this machine because a rule passed in that circle, and
+  where (`project_dir` is NULL for the user's skills directory). A repeal, a
+  superseding rule or an opt-out removes only what is recorded here with the digest
+  still in place, so a skill the owner installed personally is never removed by a vote.
+* `rule_places(circle_id, scope, project_dir, PRIMARY KEY(circle_id, scope))`: the
+  project directory the owner chose for rules of a scope (`circle place`, ADR-030).
 * `memberships(credential_digest PK, circle_id, subject_key, roles_json, scopes_json, issued_at, expires_at, credential_json, acceptance_json NULL, is_self, received_at)`.
 * `issued_invites(credential_digest PK, circle_id, invitee_key, created_at, invite_expires_at)`.
 * `revocations(id PK, circle_id, subject_key, revoked_at, revocation_json, received_at)` with `UNIQUE(circle_id, subject_key)` and a per-circle epoch.
@@ -372,15 +414,17 @@ columns listed are the minimum):
 * `candidates(id PK, concept_key, repo_key, status, statement, preferred, avoided, confidence, evidence_json, skill_name, skill_draft, circle_id NULL, scope NULL, question_event_id NULL, proposal_event_id NULL, created_at, updated_at)` with `UNIQUE(concept_key, repo_key)`.
 * `questions(event_id PK, circle_id, scope, author, question, topic, is_local, status, received_at)`, where status is `new|answered|muted|dismissed`.
 * `events(event_id PK, type, circle_id, scope, author, created_at, expires_at, received_at, origin_peer NULL, ref_event_id NULL, bundle_digest NULL, envelope_json)`.
-  `ref_event_id` is the `question_id` of an ANSWER, the `proposal_id` of a VOTE or
-  RESULT, or the `target` of a `repeal` PROPOSAL; `bundle_digest` is set for an `adopt`
+  `ref_event_id` is the `question_id` of an ANSWER, the `proposal_id` of a VOTE,
+  RESULT or STANCE, or the `target` of a `repeal` PROPOSAL; `bundle_digest` is set for an `adopt`
   PROPOSAL. Queries that filter on expiry (`event_ids_for_circle`, `missing_for_peer`,
   `list_events`) treat the permanent types as never expired.
 * `outbox(event_id, peer_id, delivered_at NULL, attempts, PRIMARY KEY(event_id, peer_id))`.
 * `bundles(digest PK, skill_name, manifest_json, rel_path, size, created_at)`.
 * `skills(id PK, name, bundle_digest, origin_kind ("local"|"proposal"), origin_ref, status, created_at)`.
 * `installations(id PK, skill_name, agent, install_scope, path, bundle_digest, previous_digest NULL, installed_at, removed_at NULL)`.
-* `sync_cursors(peer_id, circle_id, last_sync_at, PRIMARY KEY(peer_id, circle_id))`.
+* `sync_cursors(peer_id, circle_id, last_sync_at, after_event_id NULL, pushed_event_id NULL, PRIMARY KEY(peer_id, circle_id))`:
+  how far a sync with that peer got (section 7, "Cursors"). `after_event_id` names an
+  event in the peer's log and means something only to that peer.
 * `notifications(id PK, topic, shown_at)`, used to enforce at most 2 unsolicited notifications per day and the per-topic cooldown.
 
 State transitions run inside transactions. Inserting an event returns `Inserted` or
@@ -672,6 +716,9 @@ votes keep working meanwhile.
   (section 6). New ballots from it are refused and its ballots are not counted in
   tallies and certificates verified after the revocation is known. It can therefore
   block but never pass anything, and it does not change the size of the electorate.
+  This is the one thing the founder's node does alone (`circle revoke`, ADR-027): it
+  refuses to revoke the device it runs on, and removing the member from the roll is
+  still a vote.
 
 ### 10.9 Binding rules, consent and opting out
 
@@ -692,8 +739,19 @@ what one rule in force means on this machine, in this order:
   binding charter and in `ask` otherwise (`AdoptionMode::default_for`); the database
   default is `ask`. A member may choose `ask` in a binding circle at any time.
 * **Opt-out** is a local, reversible choice recorded in `rule_optouts`. A member's
-  public record of disagreement is their `reject` ballot. v0 does not broadcast
-  opt-outs.
+  public record of disagreement is their `reject` ballot, or, if they choose, a
+  `STANCE` (`rule opt-out --announce`, ADR-029): a signed statement that they do not
+  follow the rule, under the charter that lists them, so a member admitted after the
+  vote can make one too. A member's latest stance on a rule is their current one. It
+  is a record and nothing else: `tally`, `verify_result`, `rules_in_force` and
+  `adoption_step` never read it. The opt-out on the machine does not wait for the
+  announcement to be confirmed.
+* **Where a rule is installed.** By default in the user's skills directory, so it
+  applies in every project. The owner can place the rules of a scope in one project
+  directory instead (`circle place <scope> --project <dir>`, stored in `rule_places`,
+  ADR-030); the most specific placed scope that covers a rule wins. The directory comes
+  from the owner's command line only, and where a member keeps a checkout is never
+  shared.
 * A node's `LocalPolicy` (`required_members`, `min_approvals`; for example "only follow
   rules that member X approved") can hold a rule back for local confirmation. It never
   changes whether the rule passed. It is not met by a carried rule, whose ballots are
@@ -709,12 +767,19 @@ what one rule in force means on this machine, in this order:
   the recorded skill is removed, and only while the installed text still has the digest
   that was voted on. A skill the owner installed personally with `skills install` has
   no such record and is never removed by a vote (ADR-023).
+* **Leaving.** `circle leave` takes effect on the owner's machine at once
+  (`circles.left_at`: nothing of that circle stays installed or is installed again) and
+  puts the owner's removal from the roll to the vote. The roll changes only by that
+  vote. A node that is voted off learns of it from a peer (section 7, the removal
+  notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
-  mode. `rule list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in
-  force; `proposal adopt` confirms a rule that is waiting for the owner; `circle invite`
-  and `circle remove` propose amendments to the roll. Not written yet: changing the
-  thresholds or `binding` from the CLI, asking once before switching to `follow` when
-  an amendment turns `binding` from false to true, and a `circle leave` command.
+  mode; `circle mode` changes it (switching to `follow` is a confirmation step).
+  `rule list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force;
+  `proposal adopt` confirms a rule that is waiting for the owner. `circle invite`,
+  `remove`, `leave`, `amend` (the thresholds, binding or advisory) and `device add` /
+  `remove` propose amendments. `circle revoke` is the emergency of 10.8. Not written
+  yet: asking once before switching to `follow` when an amendment turns `binding` from
+  false to true.
 
 ### 10.10 Rights no vote can override
 
@@ -750,7 +815,7 @@ switch them off.
 
 Outcomes depend on signatures and on the charter, never on a clock.
 
-* `PROPOSAL`, `VOTE`, `RESULT`, `CHARTER` and `REVOCATION` are permanent records
+* `PROPOSAL`, `VOTE`, `RESULT`, `CHARTER`, `REVOCATION` and `STANCE` are permanent records
   (section 5, step 3): `expires_at` is not enforced for them at intake, in tallies or in
   `FetchEvents`. A `created_at` more than five minutes in the future is still refused,
   except for a `REVOCATION`.
@@ -772,7 +837,13 @@ Outcomes depend on signatures and on the charter, never on a clock.
 
 * **Founder liveness.** Without the root key holder no charter change can happen. The
   members keep exchanging records and voting on rules: access is the roll, which does
-  not expire (ADR-026).
+  not expire (ADR-026). A founder who leaves the roll keeps the root key, and their node
+  is then no member's peer: it can notarize later amendments only from records carried
+  to it as a file or directory.
+* **The founder's revocation is unilateral.** The root key can cut off any device key
+  without a vote. It cannot pass anything with that power, and every member sees the
+  revocation and its reason, but nothing stops a founder from using it against a
+  member they disagree with. The remedy is a new circle.
 * **Founder equivocation.** If two different amendments both pass under one charter,
   which needs some member to approve both, the root chooses which to notarize. A root
   that signs two successors can split the circle: a node keeps the first valid one it
@@ -787,8 +858,9 @@ Outcomes depend on signatures and on the charter, never on a clock.
 * **Trust anchor on joining.** A node that joins late takes its first charter, and the
   `carried` list in it, on the root's signature. It does not re-count the ballots behind
   carried rules.
-* **Growth.** Decision events are permanent and nothing prunes them, while
-  `FetchEvents.known` is capped at 4096 ids and has no cursor (section 7).
+* **Growth.** Decision events are permanent and nothing prunes them. Syncing no longer
+  degrades with the size of the log (section 7, "Cursors"), but a first sync and a join
+  transfer all of it.
 
 ### 10.13 Worked example
 
@@ -855,8 +927,11 @@ The golden vectors tell a similar story end to end, including a charter change:
 
 ### 12.1 Notes, and corrections reported by the agent
 
-The pattern detector recognizes a few shapes of "use X, not Y" in prompts. Most real
-corrections are sentences, so a rule can also be written down directly.
+The pattern detector recognizes corrections that name what to use, what to avoid, or
+both ("use X, not Y", "no, use X", "stop using Y", "this repo uses X"). A correction
+that names only one side becomes a candidate only when it was said twice. It does not
+recognize whole-sentence rules ("always run the tests first"), so a rule can also be
+written down directly.
 
 * `peerharness note "<one sentence>"` creates a candidate from free text
   (`ph_learning::note`): `concept_key = "note:" + ` the first 16 hex characters of

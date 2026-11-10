@@ -68,10 +68,12 @@ event itself, stores it in its own append-only log, and computes every outcome (
 proposals passed, which rules are in force, which charter is current) itself. Nothing is
 trusted because a peer says so.
 
-There is no server, no global ordering and no gossip in v0. A node dials only explicit
-addresses: one its owner gave it, or one it remembered from an earlier exchange with
-that peer. It does so when its owner runs a sync, or on a timer its owner set (section
-13.2).
+There is no server, no global ordering and no gossip in v0. A node dials an address its
+owner gave it, or one it remembered from an earlier exchange with that peer. Only when
+its owner turned on discovery on the local network does it also dial an address
+announced there, and then only for a device key that is on a roll the node holds
+(section 13.8). It dials when its owner runs a sync, or on a timer its owner set
+(section 13.2).
 
 ## 2. Primitive encodings
 
@@ -1031,7 +1033,8 @@ Reference: `crates/ph-protocol/src/wire.rs`, `crates/ph-network/src/`.
 ### 11.1 Transport and identity
 
 * libp2p over **QUIC v1** only (`/ip4/<addr>/udp/<port>/quic-v1`, or `/ip6/...`), with
-  the libp2p TLS 1.3 handshake. No TCP, no relays, no mDNS, DHT or gossip in v0.
+  the libp2p TLS 1.3 handshake. No TCP, no relays, no DHT and no gossip in v0. mDNS on
+  the local network is used only when the owner turns it on (section 13.8).
 * The libp2p identity key is the node's Ed25519 device key (the same 32-byte seed). The
   `PeerId` is the identity-multihash of the Ed25519 public key, so the authenticated
   `PeerId` yields the device key directly. Nodes refuse connections whose `PeerId` is not
@@ -1119,8 +1122,10 @@ Response:
   no access. The reference implementation sends an empty list in both directions and
   ignores any proof it receives.
 * `listen_addrs`: at most 8 multiaddr strings, each 1 to 256 bytes of printable,
-  non-space ASCII: where the requester can be dialed. It may be empty (a node that only
-  dials has none).
+  non-space ASCII: where the requester says it can be dialed. It may be empty (a node
+  that only dials has none). The reference responder validates the list and does not
+  store it: a node dials only addresses its own owner gave it, so a member cannot point
+  another member's node at an address of its choosing.
 * `circles` (response, optional): the ids of the circles the responder holds in which
   the requester's device is an active member by the roll (section 12.3), at most 64. A
   sender omits the member when the list is empty; an explicit `null` is rejected like
@@ -1554,7 +1559,8 @@ The reference implementation has no gossip and no delivery queue. Events move be
 two nodes when the owner of one of them runs a sync with the other, when a daemon whose
 owner set a sync interval syncs with a peer it already has an address for (section
 13.2), or when records are carried as files (Appendix B). A node never dials an address
-it was not given by its owner or by the peer itself in an earlier exchange.
+it was not given by its owner or by the peer itself in an earlier exchange, unless its
+owner turned on discovery on the local network (section 13.8).
 
 ### 13.2 Session
 
@@ -1563,18 +1569,22 @@ This is the session the reference implementation runs. A node takes one of two p
 A node running `daemon` listens and answers. It dials nobody unless its owner started it
 with a sync interval (`daemon --sync-every <seconds>`, 30 to 86,400). Then, on that
 timer, it runs the session below with every peer it has a stored address for, one after
-the other.
+the other, and, if it was also started with `--lan`, with the members it hears on the
+local network (section 13.8).
 
 A node running `sync` dials one peer, runs the steps below and disconnects. Run without
 an argument it does so with every peer it has a stored address for. It does not need to
 be listening, but while it is connected it answers requests like any node.
 
-A stored address has one of two sources: an address the owner dialed and that completed
-the handshake below (`connect`, `sync`, `circle join`), or the `listen_addrs` a member
-announced to this node in `authenticate` (section 11.5). Neither form of sync dials a
-peer this node has not exchanged with before, and step 2 applies to every peer in the
-same way. The forms that sync with every known peer skip a peer that is marked as
-blocked locally.
+A stored address has one of two sources: an address the owner dialed and that
+completed the handshake below (`connect`, `sync`, `circle join`), or an address at which
+a member was found on the local network and synced with (section 13.8). What a peer
+announces in `authenticate` is not stored (section 11.5). Syncing with
+every known peer dials no peer this node has not exchanged with before, and step 2
+applies to every peer in the same way. It skips a peer that is marked as blocked
+locally. Discovery on the local network is the only way a node dials a peer it has not
+exchanged with before without being given its address, and it is off unless the owner
+asks for it.
 
 The syncing node keeps two cursors per peer and circle: the **fetch cursor** (the last
 event that peer served it; it means something only to that peer) and the **push cursor**
@@ -1780,8 +1790,9 @@ contains, where the responder holds them:
 * that RESULT;
 * the CHARTER event that carries the charter,
 
-without the ids in `known`. It holds at most 256 events, with `more` `true` when the
-rest did not fit; the request's `limit` and `after` are not used. Nothing else is in it:
+without the ids in `known`. It holds at most `limit` events and stays within the frame
+size like any `events` answer, with `more` `true` when the rest did not fit; the
+requester asks again with what it received listed in `known`. `after` is not used. Nothing else is in it:
 no charter with a higher `seq`, so no later roll; no `adopt` or `repeal` proposal and no
 ballot on one; no QUESTION, ANSWER, MEMBERSHIP, REVOCATION or STANCE; and no bundle,
 because `fetch_bundle` stays refused. When the requester already has all of it the
@@ -1810,6 +1821,39 @@ then off the roll of its current charter does it treat itself as removed, and se
 which takes out the rules that circle installed. A peer cannot talk a node out of a
 circle: `unauthorized`, an empty answer, or records that do not verify change nothing
 on the asking node.
+
+### 13.8 Discovery on the local network (optional)
+
+Off by default: with it off a node opens no multicast socket and sends nothing. The
+owner turns it on per command, with `daemon --lan` and `sync --lan` (reference:
+`ph-network`, `NetworkConfig::lan_discovery`, libp2p mDNS; ADR-031). It is not part of
+the request/response protocol and a client need not implement it.
+
+With it on, a node:
+
+* queries the generic libp2p service `_p2p._udp.local` on each non-loopback IPv4
+  interface, and answers every such query with one
+  `dnsaddr=<listen address>/p2p/<peer id>` record per listen address it has on that
+  interface. That is all it announces: its device public key and where it listens,
+  nothing about circles, members or rules. A node with no listen address there (a `sync`
+  client, or a daemon that listens only on loopback) answers with an empty record, so it
+  finds others without being found;
+* treats what it hears as an unauthenticated hint. The transport reports announcements
+  (at most 256 peers with 8 addresses each) and does nothing else with them: it never
+  dials one and does not add an announced address to its address book.
+
+The application decides whom to dial: only a device key that is on the roll of a circle
+it holds, which it checks from its own records before anything is sent, and only at an
+announced address that ends in that key's `/p2p/<peer id>`, so the handshake must prove
+the key. It then runs the session of section 13.2, where the peer is judged by the roll
+like any other. A device on no roll of this node is never dialed and is sent nothing,
+not even `hello`.
+
+`sync --lan` listens for 1 to 60 seconds (3 by default) and syncs with each member it
+found. A daemon started with both `--lan` and `--sync-every` also syncs, on its timer,
+with the members it currently hears. `daemon --lan` alone announces and dials nobody.
+The address at which a member was synced with is stored like any other. What discovery
+exposes on the local network is described in `docs/security-model.md` (4.27).
 
 ## 14. Governance: voting under a charter
 
@@ -2017,6 +2061,10 @@ its own charter.
 An owner can also stop following a circle altogether on their own machine (the
 reference `circle leave`): nothing of that circle stays installed there. Coming off the
 roll is a separate matter and is an amendment like any other (section 14.5).
+
+Where a rule in force is installed is local too. By default it applies to every project
+of the owner. An owner can instead place the rules of a scope in one project directory
+(the reference `circle place`, ADR-030). Nothing about that is shared or voted.
 
 ### 14.7 Conflicts and supersede
 
@@ -2270,8 +2318,9 @@ signing input, digest and signature were reproduced the same way.
 | reference `sync`, per circle | at most 64 `fetch_events` rounds per fetch; at most 8192 events kept aside while the records they depend on are missing |
 | reference join from a peer, per circle | at most 256 `fetch_events` rounds and 64 MiB of records in all |
 | reference responder | holds a peer's next request, other than `hello` and `fetch_bundle`, until its own bundle fetch-back from that peer and the settling after it are done, at most 15 s |
-| removal notice | at most 256 events per answer |
+| removal notice | at most `limit` (1-256) events per answer, within the frame size |
 | reference `daemon --sync-every` | 30 to 86,400 seconds |
+| reference discovery on the local network | off by default; at most 256 announced peers with 8 addresses each; `sync --lan` listens 1 to 60 s (default 3) |
 | reference question guard | 20 questions per author and 100 per circle per 24 h |
 | default lifetimes | QUESTION, ANSWER 30 d; permanent types 400 d (not enforced); invite 24 h (max 7 d); member credential 30 d; founder credential 365 d |
 
@@ -2327,8 +2376,8 @@ or different:
   and `peerharness sync` runs the session of section 13.2, so two reference nodes can be
   run against each other over QUIC. `sync` without an argument, and
   `daemon --sync-every`, run it with every peer whose address the node has stored.
-  `circle join <address>` runs the exchange of section 13.6. Not implemented: gossip,
-  dialing a peer the node has not exchanged with before, a delivery queue, a local
+  `circle join <address>` runs the exchange of section 13.6, and `--lan` turns on the
+  discovery of section 13.8. Not implemented: gossip, relays, a delivery queue, a local
   control endpoint, and disconnecting a peer when its revocation arrives (it is refused
   on its next request instead).
 * **Sync order and cursor.** Architecture describes `fetch_events` by `known` alone. In

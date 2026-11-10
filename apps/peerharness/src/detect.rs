@@ -93,6 +93,14 @@ pub fn run_detection(
                 if skill_names.contains(&c.suggested_skill_name) {
                     continue;
                 }
+                // A correction that names only one side ("no, use pnpm", "stop using
+                // npm") is easy to mistake for an ordinary request, so it becomes a
+                // candidate only when it was said twice. One that names both what to
+                // use and what to avoid stands on one sentence, as before.
+                let one_sided = c.preferred.is_none() || c.avoided.is_none();
+                if one_sided && c.evidence.len() < 2 {
+                    continue;
+                }
                 let (id, created) = store.insert_or_merge_candidate(&c, now)?;
                 if created {
                     summary.created.push(id);
@@ -147,6 +155,18 @@ mod tests {
         let row = s.candidate(&a.created[0]).unwrap().unwrap();
         assert_eq!(row.evidence.len(), 2);
         assert_eq!(row.confidence, ph_core::Confidence::Medium);
+        // A one-sided correction needs to be said twice before it is worth a review.
+        store_observation(&s, &prompt("no, use ripgrep", "r3", now), ret).unwrap();
+        assert!(run_detection(&s, Some("r3"), ret, now)
+            .unwrap()
+            .created
+            .is_empty());
+        store_observation(&s, &prompt("No, use ripgrep.", "r3", now), ret).unwrap();
+        let again = run_detection(&s, Some("r3"), ret, now).unwrap();
+        assert_eq!(again.created.len(), 1);
+        let row = s.candidate(&again.created[0]).unwrap().unwrap();
+        assert_eq!(row.preferred.as_deref(), Some("ripgrep"));
+        assert!(row.avoided.is_none());
         // Benign prompts give nothing.
         store_observation(&s, &prompt("Please add a README section.", "r2", now), ret).unwrap();
         assert!(run_detection(&s, Some("r2"), ret, now)

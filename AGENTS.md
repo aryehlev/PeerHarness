@@ -61,6 +61,9 @@ stop, leave the feature disabled, and document the blocker.
   consent step run there, and do not let `note` approve, install or share anything.
 * Nothing is saved to the library, installed or signed before the confirmation it
   belongs to: build previews from drafts, and persist only after `confirm` returns.
+* The reverse holds for an opt-out: it never waits for anyone. `rule opt-out --announce`
+  and `circle leave` change the owner's machine first and ask about what is published
+  after.
 * Observation text, prompts, transcripts, tool output, skill text, circle names,
   revocation reasons and passphrases never appear in logs, error `Display` strings,
   panic messages or network payloads. Log ids and counts only. `Debug` of types holding
@@ -90,15 +93,28 @@ stop, leave the feature disabled, and document the blocker.
   scopes of its roll entry and unless the device is revoked (`RollOracle`, ADR-026).
   Never answer a request on the strength of a credential, a claimed id or an earlier
   `authenticate`. A pushed event gets no standing from who pushed it.
+* One exception, and do not widen it: the removal notice (`peer::farewell`, ADR-028). A
+  device that is not revoked and is on the roll of an **earlier** charter this node
+  holds gets, for `fetch_events` only, the charters up to the first one without it and
+  the amendment, ballots and result behind each. Nothing later, nothing else.
 * A syncing node sends nothing circle-specific, not even a circle id, to a peer it does
-  not share that circle's roll with.
+  not share that circle's roll with. A node that is joining (`circle join <address>`)
+  sends back only circle ids the peer itself just named, and stores nothing before its
+  owner has confirmed the charter.
+* A node dials only an address its owner gave, a peer an earlier sync stored, or, with
+  `--lan`, an announced device key that is on a roll it holds. An mDNS announcement is
+  an unauthenticated hint: never treat it as membership, and never dial a key that is
+  on no roll (ADR-031). Discovery stays off unless asked for.
+* Never move a fetch cursor past an event that could not be placed yet, and never move
+  a push cursor past an event the peer refused (ADR-028).
 * A credential counts only with a matching subject-signed acceptance, only from the
   circle root, only within its scopes and roles, and never after revocation or expiry.
-* Four ways to authorize an event, never interchangeable (ADR-010, ADR-012): QUESTION and
-  ANSWER by credential capability; PROPOSAL, VOTE and RESULT by the roll of the charter
-  the proposal names; MEMBERSHIP by its embedded proof; REVOCATION and CHARTER by the
-  root-key binding. A valid credential does not make a voter, and the root key has no
-  vote.
+* How each event type is authorized, never interchangeable (ADR-010, ADR-012, ADR-027,
+  ADR-029): QUESTION and ANSWER by the roll of the circle's **current** charter, judged
+  when they arrive; PROPOSAL, VOTE and RESULT by the roll of the charter the proposal
+  names; STANCE by the roll of the charter the stance names; MEMBERSHIP by its embedded
+  proof; REVOCATION and CHARTER by the root-key binding. A valid credential makes
+  neither a voter nor a member, and the root key has no vote.
 * Strict parsing: integer-only JCS, duplicate keys rejected, unknown members rejected at
   every level, explicit `null` rejected, size and depth limits enforced before parsing
   further.
@@ -115,17 +131,25 @@ stop, leave the feature disabled, and document the blocker.
   the exact proposal id it signs.
 * Counting, result verification, the rule set and charter succession never read a clock
   and never depend on arrival order. Do not add `now`, expiry or "latest wins" to them.
-  PROPOSAL, VOTE, RESULT, CHARTER and REVOCATION never expire, and a revocation is never
-  refused for its date (ADR-015, ADR-017).
+  PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION and STANCE never expire, and a revocation
+  is never refused for its date (ADR-015, ADR-017).
+* A STANCE is a record of what a member says about a rule. Never read one in a tally, a
+  result, the rule set or an installation decision (ADR-029).
 * A RESULT and a root-signed CHARTER carry no authority. Nothing takes effect before
   `verify_result` or `check_successor` passes locally. The root key notarizes: never
   accept a charter (other than a node's first) that a passed amendment does not justify
   with exactly the content that was voted on.
+* The founder's node does exactly one thing alone: `circle revoke`, a REVOCATION of one
+  device key. It can block and never pass, and it never changes the roll. Do not give
+  the root key any other power. Every other change to a charter (`invite`, `remove`,
+  `leave`, `amend`, `device`) is an amendment that needs its threshold.
 * A proposal counts only under the current charter. Only `Passed::by_vote` and
   `Passed::carried` feed `rules_in_force`; do not add another way in.
 * A rule binds only the members of its electorate. A vote removes only what a vote
-  installed (`rule_installs`): never uninstall a skill the owner installed personally
-  because of a vote (ADR-023).
+  installed (`rule_installs`), from where it was put: never uninstall a skill the owner
+  installed personally because of a vote (ADR-023). Where a rule is installed
+  (`circle place`) comes from the owner's command line only, never from a hook payload
+  or a peer (ADR-030).
 * Rights no vote overrides (10.10): no vote widens read access; a bundle that fails its
   digest or validity check is never installed; a high-risk finding always asks the
   owner; an opt-out always wins. `LocalPolicy` can hold a rule back on one node and can

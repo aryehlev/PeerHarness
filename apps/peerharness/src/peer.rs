@@ -36,7 +36,7 @@ use ph_protocol::limits::{MAX_FETCH_LIMIT, MAX_KNOWN_IDS, MAX_PUSH_EVENTS, MAX_S
 use ph_protocol::wire::{ErrorCode, PushOutcome, PushStatus, Request, Response, WireFile};
 use ph_protocol::{EventBody, EventType};
 use ph_skills::BundleStore;
-use ph_store::{EventFilter, MissingQuery, Store, StoredEvent};
+use ph_store::{EventFilter, MissingQuery, Store, StoredEvent, DEFAULT_SYNC_MAX_BYTES};
 use serde_json::Value;
 
 use crate::governance::{self, Ingest};
@@ -122,7 +122,11 @@ pub fn answer(
             if circles.is_empty() {
                 return Ok(Answer::only(unauthorized()));
             }
-            remember_peer(store, peer_id, peer, &listen_addrs, &circles, now)?;
+            // The peer is remembered as a member seen here. Where it says it listens is
+            // not stored: a node dials only addresses its own owner gave it, so a member
+            // cannot point another member's node at an address of its choosing.
+            let _ = listen_addrs;
+            remember_peer(store, peer_id, peer, &[], &circles, now)?;
             // The peer is on these rolls, so it may know that this node holds them. A
             // device that was just admitted learns here which circle to fetch.
             circles.truncate(MAX_SHARED_CIRCLES);
@@ -163,7 +167,7 @@ pub fn answer(
                 // Not a member. A device that used to be one and was voted off is told
                 // of that; everyone else gets the answer a stranger gets.
                 return Ok(Answer::only(
-                    match farewell(store, &oracle, &circle_id, peer, &known)? {
+                    match farewell(store, &oracle, &circle_id, peer, &known, limit as usize)? {
                         Some((events, more)) => Response::Events { events, more },
                         None => unauthorized(),
                     },
@@ -223,6 +227,7 @@ fn farewell(
     circle: &CircleId,
     device: &DeviceKey,
     known: &HashSet<EventId>,
+    limit: usize,
 ) -> Result<Option<(Vec<Value>, bool)>> {
     if oracle.is_revoked(circle, device) {
         return Ok(None);
@@ -273,17 +278,25 @@ fn farewell(
             chain.push(ev.clone());
         }
     }
+    // Bounded like any other answer: by the requester's limit and by what fits a frame.
+    // What does not fit is asked for again, with what was received listed as known.
+    let limit = limit.clamp(1, MAX_FETCH_LIMIT as usize);
     let mut events = Vec::new();
     let mut more = false;
+    let mut bytes = 0usize;
     let mut seen = HashSet::new();
     for ev in chain {
         if known.contains(&ev.event_id) || !seen.insert(ev.event_id) {
             continue;
         }
-        if events.len() >= MAX_FETCH_LIMIT as usize {
+        let size = ev.envelope_json.len() + 1;
+        if events.len() >= limit
+            || (!events.is_empty() && bytes.saturating_add(size) > DEFAULT_SYNC_MAX_BYTES)
+        {
             more = true;
             break;
         }
+        bytes = bytes.saturating_add(size);
         events.push(ev.to_value()?);
     }
     Ok(Some((events, more)))
@@ -748,7 +761,8 @@ mod tests {
             },
         );
         assert!(matches!(got.response, Response::Bundle { digest, .. } if digest == f.digest));
-        // Announcing addresses stores them, bounded and validated.
+        // Announcing makes the member known here. The addresses it claims are not kept:
+        // this node dials only addresses its own owner gave it.
         let a = ask(
             &f,
             2,
@@ -768,8 +782,30 @@ mod tests {
             }
         );
         let peer = f.store.peer(&pid(2)).unwrap().unwrap();
-        assert_eq!(peer.addrs, ["/ip4/127.0.0.1/udp/4001/quic-v1"]);
+        assert!(peer.addrs.is_empty());
         assert_eq!(peer.circles, [f.circle]);
+        // An address the owner dialed earlier is not replaced by an announcement.
+        remember_peer(
+            &f.store,
+            &pid(2),
+            &device(2),
+            &["/ip4/192.0.2.7/udp/4001/quic-v1".to_owned()],
+            &[f.circle],
+            f.now,
+        )
+        .unwrap();
+        ask(
+            &f,
+            2,
+            Request::Authenticate {
+                memberships: Vec::new(),
+                listen_addrs: vec!["/ip4/203.0.113.9/udp/1/quic-v1".into()],
+            },
+        );
+        assert_eq!(
+            f.store.peer(&pid(2)).unwrap().unwrap().addrs,
+            ["/ip4/192.0.2.7/udp/4001/quic-v1"]
+        );
     }
 
     #[test]
@@ -1238,6 +1274,40 @@ mod tests {
         let current = bobs.current_charter(&f.circle).unwrap().unwrap();
         assert_eq!(current.seq, 2);
         assert!(current.content.member_of(&device(2)).is_none());
+        // A small limit pages through the same notice, with what was received listed
+        // as known.
+        let mut got: Vec<EventId> = Vec::new();
+        let mut rounds = 0;
+        loop {
+            rounds += 1;
+            let mut known = known_ids(&second_node(&f), &f.circle, f.now).unwrap();
+            known.extend(got.iter().copied());
+            let answer = ask(
+                &f,
+                2,
+                Request::FetchEvents {
+                    circle_id: f.circle,
+                    known,
+                    limit: 2,
+                    after: None,
+                },
+            );
+            let Response::Events { events, more } = answer.response else {
+                panic!("expected events");
+            };
+            assert!(events.len() <= 2);
+            got.extend(
+                events
+                    .iter()
+                    .map(|v| field::<EventId>(v, "event_id").unwrap()),
+            );
+            if !more {
+                break;
+            }
+            assert!(rounds < 10);
+        }
+        assert!(rounds > 1);
+        assert!(expected.iter().all(|id| got.contains(id)));
         // Asked again, there is nothing more to tell.
         let again = ask(&f, 2, request(known_ids(&bobs, &f.circle, f.now).unwrap()));
         assert_eq!(
