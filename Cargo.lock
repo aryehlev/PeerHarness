@@ -2696,7 +2696,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "peerharness"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2756,7 +2756,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "ph-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2773,7 +2773,7 @@ dependencies = [
 
 [[package]]
 name = "ph-governance"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ph-core",
  "ph-protocol",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "ph-identity"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -2807,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "ph-learning"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ph-core",
  "ph-protocol",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "ph-network"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ed25519-dalek",
  "futures",
@@ -2839,7 +2839,7 @@ dependencies = [
 
 [[package]]
 name = "ph-observer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "ph-core",
@@ -2853,7 +2853,7 @@ dependencies = [
 
 [[package]]
 name = "ph-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "ph-skills"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "libc",
@@ -2886,7 +2886,7 @@ dependencies = [
 
 [[package]]
 name = "ph-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "hex",
