@@ -1008,6 +1008,18 @@ written down directly.
   ballot on anything but a rule, and every other consent step refuse inside a session
   as before. The reporting skill then also names these three commands and `inbox`, and
   says that only the user's click decides.
+* **So can three steps about who is in a circle** (ADR-037), under a setting of their
+  own (`[agent] circle_windows`, turned on by the same command, which then previews all
+  six): `circle invite`, `proposal vote` on an amendment that admits one member and
+  changes nothing else, and `circle join`. They go through
+  `consent::confirm_circle_or_window`. The admission windows name the device
+  fingerprint from the amendment and tell the owner to check it with the invitee; the
+  join window is the terminal's preview, with the root fingerprint and the whole
+  charter. Inside a session `circle invite` writes no events file and refuses `--out`.
+  Every other `circle` step, and a ballot on any other amendment, refuse as before.
+  The reporting skill then has a third part: `status`, `circle create`, `circle
+  invite`, `circle join`, `sync --internet` and the daemon, with keys, peer ids and
+  fingerprints taken only from what the user said in the conversation.
 
 ## 13. Privacy invariants (all crates)
 

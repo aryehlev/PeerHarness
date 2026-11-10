@@ -6,11 +6,13 @@
 //! Consent steps are never answered from inside a coding agent's session
 //! ([`in_agent_session`]). An agent may write a rule down for its user to review
 //! (`peerharness note`); approving, sharing, voting and installing are the person's.
-//! Inside a session every step refuses, with one exception the owner has to turn on
-//! (ADR-033): proposing a rule, a ballot on a proposed rule and installing a rule that
-//! passed may be put to the person in a window of the operating system
-//! ([`confirm_or_window`]). The session can make that window appear and cannot answer
-//! it: nothing it writes, passes or sets counts, `--yes` included.
+//! Inside a session every step refuses, with one exception the owner has to turn on:
+//! a few steps may be put to the person in a window of the operating system. They are
+//! proposing a rule, a ballot on a proposed rule and installing a rule that passed
+//! (ADR-033, [`confirm_or_window`]), and admitting a member, a ballot on an admission
+//! and joining a circle (ADR-037, [`confirm_circle_or_window`]). The session can make
+//! that window appear and cannot answer it: nothing it writes, passes or sets counts,
+//! `--yes` included.
 //!
 //! The check reads environment variables the agent's shell sets, so it stops an agent
 //! that is being helpful, not one that is trying to get around it: it is a guard
@@ -19,7 +21,7 @@ use std::io::{BufRead, IsTerminal, Read as _, Write};
 
 use anyhow::Result;
 
-use crate::config::Config;
+use crate::config::{Asked, Config};
 use crate::error::refused;
 use crate::output::Output;
 use crate::window::{self, Answer, Ask, Window};
@@ -72,10 +74,16 @@ const WINDOW_HEADER: &str =
 /// Whether a step that goes through [`confirm_or_window`] would be put to the owner in
 /// a window if it ran now: this is an agent session and the owner allowed windows.
 pub fn asks_in_window(config: &Config) -> bool {
-    in_agent_session() && config.agent.windows
+    in_agent_session() && config.agent.asked() >= Asked::Rules
 }
 
-/// [`confirm`] for the few steps the owner may be asked about in a window (ADR-033).
+/// The same for a step that goes through [`confirm_circle_or_window`].
+pub fn asks_circle_in_window(config: &Config) -> bool {
+    in_agent_session() && config.agent.asked() >= Asked::RulesAndCircle
+}
+
+/// [`confirm`] for the steps about rules that the owner may be asked about in a window
+/// (ADR-033).
 ///
 /// In the person's own terminal this is exactly [`confirm`]. Inside an agent session
 /// it refuses unless the owner turned windows on; then the exact `preview` is shown in
@@ -89,11 +97,35 @@ pub fn confirm_or_window(
     what: &str,
     config: &Config,
 ) -> Result<()> {
+    confirm_or_window_for(out, preview, yes, what, config, Asked::Rules)
+}
+
+/// [`confirm_or_window`] for the steps about who is in a circle (ADR-037). The owner
+/// allowed these apart from the steps about rules, so windows that were turned on
+/// before they existed do not cover them.
+pub fn confirm_circle_or_window(
+    out: &Output,
+    preview: &str,
+    yes: bool,
+    what: &str,
+    config: &Config,
+) -> Result<()> {
+    confirm_or_window_for(out, preview, yes, what, config, Asked::RulesAndCircle)
+}
+
+fn confirm_or_window_for(
+    out: &Output,
+    preview: &str,
+    yes: bool,
+    what: &str,
+    config: &Config,
+    needs: Asked,
+) -> Result<()> {
     if !in_agent_session() {
         return confirm_in(out, preview, yes, what, false);
     }
     let window = Window::find();
-    if !config.agent.windows {
+    if config.agent.asked() < needs {
         return Err(windows_off(what, window.is_some()));
     }
     ask_in_window(preview, what, window.as_ref().map(|w| w as &dyn Ask))

@@ -208,9 +208,10 @@ pub struct WatchClaudeArgs {
     /// With --install: do not install the skill that asks the agent to report corrections.
     #[arg(long, requires = "install")]
     pub no_agent_notes: bool,
-    /// With --install: let your agent put three decisions in front of you in a window on
-    /// your screen (proposing a rule, your ballot on a proposed rule, installing a rule
-    /// that passed). Only your click in that window decides. macOS only.
+    /// With --install: let your agent put six decisions in front of you in a window on
+    /// your screen (proposing a rule, your ballot on one, installing one that passed,
+    /// inviting someone to a circle, your ballot on admitting someone, joining a circle).
+    /// Only your click in that window decides. macOS only.
     #[arg(long, requires = "install", conflicts_with = "no_windows")]
     pub windows: bool,
     /// With --install: turn those windows off again.

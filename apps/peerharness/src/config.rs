@@ -42,6 +42,46 @@ pub struct AgentConfig {
     /// it on with `watch claude --install --windows`, in their own terminal.
     #[serde(default)]
     pub windows: bool,
+    /// Whether the steps about who is in a circle may be asked in a window as well
+    /// (ADR-037): admitting a member, a ballot on an admission and joining a circle.
+    /// Its own setting because the owner allowed `windows` after reading a list of
+    /// steps, and these were not on the list before ADR-037. `watch claude --install
+    /// --windows` turns both on; it means nothing while `windows` is off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub circle_windows: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // the signature serde asks for
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Which consent steps the owner allowed to be asked in a window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Asked {
+    /// None: every decision needs the owner's own terminal.
+    Nothing,
+    /// The three steps about rules (ADR-033).
+    Rules,
+    /// Those, and the three about who is in a circle (ADR-037).
+    RulesAndCircle,
+}
+
+impl AgentConfig {
+    /// What the owner allowed, read from the two settings.
+    pub const fn asked(&self) -> Asked {
+        match (self.windows, self.circle_windows) {
+            (false, _) => Asked::Nothing,
+            (true, false) => Asked::Rules,
+            (true, true) => Asked::RulesAndCircle,
+        }
+    }
+
+    /// Sets both settings from what the owner allowed.
+    pub const fn set_asked(&mut self, asked: Asked) {
+        self.windows = !matches!(asked, Asked::Nothing);
+        self.circle_windows = matches!(asked, Asked::RulesAndCircle);
+    }
 }
 
 /// Argon2id parameters for newly written key files.
@@ -283,6 +323,33 @@ mod tests {
         assert_eq!(Config::parse(&on.to_toml().unwrap()).unwrap(), on);
         assert!(Config::parse("[agent]\nwindows = \"yes\"\n").is_err());
         assert!(Config::parse("[agent]\nanything_else = true\n").is_err());
+    }
+
+    #[test]
+    fn the_circle_steps_are_allowed_apart_from_the_rule_steps() {
+        assert_eq!(Config::default().agent.asked(), Asked::Nothing);
+        // What `--windows` wrote before ADR-037 allows the rule steps and no more.
+        let rules = Config::parse("[agent]\nwindows = true\n").unwrap();
+        assert_eq!(rules.agent.asked(), Asked::Rules);
+        // Saved again it is the same text, so an older binary still reads it.
+        assert!(!rules.to_toml().unwrap().contains("circle_windows"));
+
+        let both = Config::parse("[agent]\nwindows = true\ncircle_windows = true\n").unwrap();
+        assert_eq!(both.agent.asked(), Asked::RulesAndCircle);
+        assert_eq!(Config::parse(&both.to_toml().unwrap()).unwrap(), both);
+        // The second setting means nothing without the first.
+        let alone = Config::parse("[agent]\ncircle_windows = true\n").unwrap();
+        assert_eq!(alone.agent.asked(), Asked::Nothing);
+
+        for asked in [Asked::Nothing, Asked::Rules, Asked::RulesAndCircle] {
+            let mut c = Config::default();
+            c.agent.set_asked(asked);
+            assert_eq!(c.agent.asked(), asked);
+        }
+        // Turning windows off leaves nothing of the second setting behind.
+        let mut c = both;
+        c.agent.set_asked(Asked::Nothing);
+        assert_eq!(c.agent, AgentConfig::default());
     }
 
     #[test]

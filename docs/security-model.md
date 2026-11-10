@@ -450,6 +450,16 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   or the step is refused. A rule with a high-risk finding is never decided in a window.
   Every other consent step refuses inside a session as before, including the one that
   turns windows on.
+* **Windows for inviting and joining (ADR-037).** Three steps about who is in a circle
+  can be asked the same way, under a setting of their own that the same command turns
+  on after previewing all six steps: proposing to admit a member, a ballot on an
+  amendment that admits one member and changes nothing else, and joining a circle.
+  Windows that were turned on before these steps existed do not cover them. The window
+  shows the device fingerprint or the root fingerprint and the whole charter, taken
+  from the signed content and not from a title, and says to check it with the other
+  person. Inside a session `circle invite` writes no file with the circle's records.
+  Removing a member, leaving, changing the rules of the vote, devices, revoking and
+  every other ballot on the charter still refuse inside a session.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,
@@ -464,7 +474,15 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   click the button; macOS asks the owner before it lets a program do that. And the
   agent's skill then tells it to read the inbox, so single-line titles and questions
   written by other members reach its context before any vote; the text of a rule still
-  reaches an agent only after the rule passed.
+  reaches an agent only after the rule passed. With the windows for inviting and
+  joining, a click decides more than a rule: whoever is admitted gets a vote and reads
+  the circle's records, and joining a circle with binding rules installs its rules for
+  the person's agent, the ones in force at once. An agent that was talked into
+  starting a join cannot finish it, since the other circle must already have admitted
+  this device and the person must click "Proceed" in a window that names the circle's
+  fingerprint and roll. A person who clicks out of habit is not protected by that.
+  Device keys, peer ids and fingerprints reach the command through the agent, so the
+  window's fingerprint is the thing to compare with what the other person said.
 
 ### 4.18 Other local users and processes
 
@@ -823,7 +841,7 @@ directory and QUIC on loopback.
 | 4.10 to 4.12 (hostile skills, paths, script execution) | `crates/ph-skills/tests/malicious.rs`, `bundles.rs`, `install.rs`, `frontmatter_props.rs` |
 | 4.13 (secrets and transcripts) | `crates/ph-core/src/redact.rs` (unit tests), `crates/ph-store/tests/privacy.rs`, `apps/peerharness/tests/local_loop.rs` |
 | 4.14 (hook payloads, settings) | `crates/ph-observer/tests/hooks.rs`, `settings.rs`, `spool.rs` |
-| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope); `apps/peerharness/tests/agent_windows.rs` (confirmation windows, with a stand-in window program: off until the owner turns them on, which a session cannot do; only "Proceed" decides, and a decline, no answer, an unknown answer, a failing or missing window program and a text too long to show all leave nothing behind; every other consent step is still refused with windows on); `apps/peerharness/src/window.rs` (unit tests: the height estimate against measured dialogs, the text read back exactly by the real `osascript` on macOS) |
+| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope); `apps/peerharness/tests/agent_windows.rs` (confirmation windows, with a stand-in window program: off until the owner turns them on, which a session cannot do; only "Proceed" decides, and a decline, no answer, an unknown answer, a failing or missing window program and a text too long to show all leave nothing behind; every other consent step is still refused with windows on; inviting, a ballot on a plain admission and joining are asked in a window only under their own setting, show the fingerprints from the signed content, leave nothing behind when declined, and write no events file from a session; removing, leaving, changing the rules of the vote and a ballot on any other amendment are still refused); `apps/peerharness/src/window.rs` (unit tests: the height estimate against measured dialogs, the text read back exactly by the real `osascript` on macOS) |
 | 4.19 (the install script) | `apps/peerharness/tests/install_script.rs` (against a release in a temporary folder: a matching checksum installs one file that runs; a changed archive, a missing checksum and a version that is not a tag install nothing) |
 | 4.21, 4.22 (joining from a node, the removal notice) | `apps/peerharness/tests/network.rs` (separate processes over QUIC: a new member joins from a member's node, the wrong root fingerprint is refused and stores nothing, a device on no roll is offered nothing; a removed member's node is shown the vote, verifies it, drops the circle's rule, and can neither sync nor rejoin afterwards); `apps/peerharness/src/peer.rs` (`a_member_voted_off_is_told_of_the_vote_and_nothing_else`: the exact set of records, no later charter, every other request refused, a never-member and a revoked device refused) |
 | 4.23 (questions and answers) | `apps/peerharness/src/governance.rs` (`questions_and_answers_are_authorized_by_the_roll`: a device on no roll, a member outside its scopes, a revoked device, an answer without its question or in another scope; `the_local_guard_keeps_noise_out_of_the_inbox`: duplicate, muted, blocked, over quota); `apps/peerharness/tests/circle_life.rs` (`a_question_is_asked_and_answered_by_members_of_the_roll`) |

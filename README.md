@@ -125,8 +125,9 @@ On macOS, add `--windows` to decide without leaving the agent. When you tell it
 "propose that to the team" or "vote approve on it", a window opens on your screen with
 the exact text and the buttons Cancel and Proceed. Only your click on Proceed counts:
 the agent cannot answer the window and `--yes` does not skip it. It covers proposing a
-rule, your ballot on a proposed rule and installing a rule that passed. Everything
-else, and any text too long to show in full, still needs your own terminal.
+rule, your ballot on one, installing one that passed, inviting someone, your ballot on
+admitting someone and joining a circle. Everything else, and any text too long to show
+in full, still needs your own terminal.
 
 To experiment without touching your real setup:
 
@@ -140,6 +141,33 @@ peerharness init --keystore insecure-dev --insecure-dev-keystore   # plaintext k
 
 Each member runs their own node. With `--internet`, nodes find each other from
 anywhere by peer id: no address, no port forwarding, no server of ours.
+
+### From inside Claude Code (macOS)
+
+Each of you runs this once, in your own terminal. It is the step that allows the rest:
+
+```sh
+peerharness init
+peerharness watch claude --install --windows
+```
+
+From then on you ask your agent, and decide in the window it opens:
+
+| You say | What happens |
+|---|---|
+| "What is my PeerHarness device key?" | It reads the key out. Whoever wants to join sends theirs to a member |
+| "Create a PeerHarness team called team" | It founds the circle and shows its root fingerprint |
+| "Invite Bob to team, his device key is ed25519:…" | A window names Bob's device. Proceed admits him, and the agent tells you what to send him: a peer id and the fingerprint |
+| "Join that team: peer id 12D3…, fingerprint dd63-…" | A window shows the fingerprint and who is in the circle. Proceed joins |
+| "Propose that rule to the team", "vote approve on it" | A window shows the exact rule. Proceed shares it, or signs your ballot |
+| "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
+
+Tell the fingerprint by phone or in person: it is how the one who joins knows the
+circle is yours. With three or more members, admitting someone takes the others' votes
+too, asked in the same kind of window. The agent keeps your node reachable only while
+its session is open; for a node that stays up, run the daemon yourself (below).
+
+### In a terminal
 
 ```sh
 # Both: create a node. `peerharness status` prints its device key and peer id.
@@ -263,7 +291,7 @@ command has `--help`.
 | Exchange across the internet (`--internet`) | works. Tested with separate processes against a private stand-in network, and by hand on the real one from a single machine. Not yet tested between two different routers |
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
-| Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. The logic is tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not |
+| Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. That an agent runs the right command when you ask in your own words depends on the agent, and no test covers it. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
 | The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.1.0 on an Apple Silicon Mac. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet |
 | Windows | not supported yet |

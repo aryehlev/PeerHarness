@@ -5,10 +5,13 @@
 //! with `peerharness note --from-agent` (see `crate::agent_notes`), unless
 //! `--no-agent-notes` is given. `--remove` removes both.
 //!
-//! `--install --windows` is where the owner allows confirmation windows (ADR-033), and
-//! `--install --no-windows` or `--remove` is where they take that back. Like every
-//! change here it is previewed and confirmed in the owner's own terminal: an agent's
-//! session cannot turn windows on, with or without a window.
+//! `--install --windows` is where the owner allows confirmation windows (ADR-033 for the
+//! steps about rules, ADR-037 for the steps about who is in a circle), and `--install
+//! --no-windows` or `--remove` is where they take that back. Like every change here it
+//! is previewed and confirmed in the owner's own terminal: an agent's session cannot
+//! turn windows on, with or without a window. Windows that were turned on before
+//! ADR-037 cover the steps about rules only, until the owner runs `--install --windows`
+//! again and confirms the longer list.
 
 use anyhow::Result;
 use ph_observer::{HookEvent, HookStatus};
@@ -18,7 +21,7 @@ use serde_json::json;
 use super::{claude_settings_path, hook_command, Ctx};
 use crate::agent_notes;
 use crate::cli::WatchClaudeArgs;
-use crate::config::Config;
+use crate::config::{Asked, Config};
 use crate::consent::confirm;
 use crate::output::{Report, Text};
 use crate::window::Window;
@@ -74,14 +77,17 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
     } else {
         None
     };
-    let windows_now = config.as_ref().is_some_and(|c| c.agent.windows);
-    let windows_after = if a.install {
-        (windows_now || a.windows) && !a.no_windows
-    } else {
-        windows_now && !a.remove
+    let asked_now = config.as_ref().map_or(Asked::Nothing, |c| c.agent.asked());
+    let asked_after = match (a.install, a.remove) {
+        (true, _) if a.no_windows => Asked::Nothing,
+        // `--windows` always means every step this build can ask in a window.
+        (true, _) if a.windows => Asked::RulesAndCircle,
+        (false, true) => Asked::Nothing,
+        _ => asked_now,
     };
+    let windows_now = asked_now != Asked::Nothing;
     // The reporting skill says what the agent may start, so it follows the setting.
-    let notes_bundle = agent_notes::bundle(&cmd.render_program(), windows_after)?;
+    let notes_bundle = agent_notes::bundle(&cmd.render_program(), asked_after)?;
     let notes = notes_state(&installer, &notes_bundle);
 
     if a.install {
@@ -95,7 +101,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                 "confirmation windows need macOS in this build: nothing was changed",
             ));
         }
-        let want_windows = windows_after != windows_now;
+        let want_windows = asked_after != asked_now;
         let want_hooks = !status.is_installed_for(&cmd);
         // Never replace a skill the owner wrote or edited.
         let want_notes = !a.no_agent_notes && matches!(notes, Notes::Absent | Notes::Outdated);
@@ -108,29 +114,41 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                 &status,
                 Setup {
                     notes,
-                    windows: windows_now,
+                    asked: asked_now,
                 },
                 "Already installed; nothing changed.",
             ));
         }
         let mut preview = Text::new();
-        if want_windows && windows_after {
-            preview.line(
-                "This lets your agent put three decisions in front of you while you work with it:",
-            );
+        if want_windows && asked_after != Asked::Nothing {
+            preview.line(if asked_now == Asked::Rules {
+                "Your agent may already put three decisions about rules in front of you. This \
+                 adds three about who is in a circle. All six:"
+            } else {
+                "This lets your agent put six decisions in front of you while you work with it:"
+            });
             preview.line("  proposing a rule to a circle,");
             preview.line("  your ballot on a proposed rule,");
-            preview.line("  installing a rule that passed and waits for you.");
+            preview.line("  installing a rule that passed and waits for you,");
+            preview.line("  proposing to admit someone to a circle you are in (`circle invite`),");
+            preview.line("  your ballot on admitting someone,");
+            preview.line("  joining a circle that admitted you (`circle join`).");
             preview.line(
                 "Each one opens a window on your screen that shows exactly what would be shared, \
-                 signed or installed. Nothing happens unless you click Proceed in that window. \
-                 Your agent cannot answer it and --yes does not skip it. Every other decision \
-                 still needs your own terminal.",
+                 signed, installed or joined. Nothing happens unless you click Proceed in that \
+                 window. Your agent cannot answer it and --yes does not skip it. Every other \
+                 decision still needs your own terminal.",
+            );
+            preview.line(
+                "When you ask it to, your agent may also found a circle, exchange with the \
+                 members of your circles and keep this node reachable, over the public network \
+                 too (`--internet`). That network's servers then see this device's public key \
+                 and IP address, and never a circle, a roll or anything said in one.",
             );
             preview.line("Turn it off with `peerharness watch claude --install --no-windows`.");
             preview.line("");
         }
-        if want_windows && !windows_after {
+        if want_windows && asked_after == Asked::Nothing {
             preview.line(
                 "This turns confirmation windows off: every decision needs your own terminal again.",
             );
@@ -157,10 +175,10 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                 agent_notes::SKILL_NAME,
                 dir.display()
             ));
-            preview.line(if windows_after {
+            preview.line(if asked_after != Asked::Nothing {
                 "It asks your agent to write down a rule when you correct it, and tells it which \
-                 three steps it may start when you ask. The agent cannot approve, share or \
-                 install anything: that is your click in the window. \
+                 steps it may start when you ask. The agent cannot approve, share, install or \
+                 join anything: that is your click in the window. \
                  Skip it with --no-agent-notes. Its exact text:"
             } else {
                 "It asks your agent to write down a rule when you correct it. The agent can only \
@@ -182,7 +200,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         if want_windows {
             // The setting first: if a later step fails, windows that were turned off
             // are off.
-            config.agent.windows = windows_after;
+            config.agent.set_asked(asked_after);
             config.save(&ctx.home)?;
             changed = true;
         }
@@ -208,7 +226,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             &st,
             Setup {
                 notes: notes_state(&installer, &notes_bundle),
-                windows: windows_after,
+                asked: asked_after,
             },
             "Installed.",
         ));
@@ -231,7 +249,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                 &status,
                 Setup {
                     notes,
-                    windows: false,
+                    asked: Asked::Nothing,
                 },
                 "No PeerHarness hooks for this home; nothing changed.",
             ));
@@ -265,7 +283,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         let mut backup = None;
         let mut removed_entries = 0;
         if let Some(config) = config.as_mut().filter(|_| windows_now) {
-            config.agent.windows = false;
+            config.agent.set_asked(Asked::Nothing);
             config.save(&ctx.home)?;
             changed = true;
         }
@@ -292,7 +310,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             &st,
             Setup {
                 notes: notes_state(&installer, &notes_bundle),
-                windows: false,
+                asked: Asked::Nothing,
             },
             &format!(
                 "Removed {removed_entries} hook entr{}{}.",
@@ -316,6 +334,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         "foreign_hooks": status.foreign_hook_count,
         "agent_notes": notes.as_str(),
         "windows": windows_now,
+        "circle_windows": asked_now == Asked::RulesAndCircle,
         "windows_available": Window::find().is_some(),
     });
     let mut t = Text::new();
@@ -331,22 +350,26 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
     t.kv("PeerHarness entries", status.entries.len());
     t.kv("other hooks", status.foreign_hook_count);
     t.kv("reporting skill", notes.as_str());
-    t.kv("windows", windows_label(windows_now));
+    t.kv("windows", windows_label(asked_now));
     Ok(Report::new(json, t.finish()))
 }
 
-fn windows_label(on: bool) -> &'static str {
-    match (on, Window::find().is_some()) {
-        (true, true) => "on (your agent may put three decisions in front of you)",
-        (true, false) => "on, but this machine has no window PeerHarness can show",
-        (false, _) => "off (every decision needs your own terminal)",
+fn windows_label(asked: Asked) -> &'static str {
+    match (asked, Window::find().is_some()) {
+        (Asked::Nothing, _) => "off (every decision needs your own terminal)",
+        (_, false) => "on, but this machine has no window PeerHarness can show",
+        (Asked::Rules, true) => {
+            "on for rules only (run `watch claude --install --windows` again to add \
+             inviting and joining)"
+        }
+        (Asked::RulesAndCircle, true) => "on (your agent may put six decisions in front of you)",
     }
 }
 
 /// What the agent has been given after a command: the reporting skill and the windows.
 struct Setup {
     notes: Notes,
-    windows: bool,
+    asked: Asked,
 }
 
 fn done(
@@ -358,7 +381,7 @@ fn done(
     setup: Setup,
     headline: &str,
 ) -> Report {
-    let Setup { notes, windows } = setup;
+    let Setup { notes, asked } = setup;
     let json = json!({
         "action": action,
         "settings": settings,
@@ -367,13 +390,14 @@ fn done(
         "installed_events": st.installed_events.iter().map(|e| e.event_name()).collect::<Vec<_>>(),
         "foreign_hooks": st.foreign_hook_count,
         "agent_notes": notes.as_str(),
-        "windows": windows,
+        "windows": asked != Asked::Nothing,
+        "circle_windows": asked == Asked::RulesAndCircle,
     });
     let mut t = Text::new();
     t.line(headline);
     t.kv("settings", settings.display());
     t.kv("reporting skill", notes.as_str());
-    t.kv("windows", windows_label(windows));
+    t.kv("windows", windows_label(asked));
     if notes == Notes::Edited {
         t.line("  You edited the reporting skill, so it was left as it is.");
     }
