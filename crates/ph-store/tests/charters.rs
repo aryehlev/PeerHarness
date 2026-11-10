@@ -215,3 +215,42 @@ fn rule_opt_outs() {
         Err(StoreError::MissingReference)
     ));
 }
+
+#[test]
+fn rule_installs_remember_what_a_vote_put_on_this_machine() {
+    let s = store_with_circle();
+    let d1 = ph_core::Digest::domain("test", b"one");
+    let d2 = ph_core::Digest::domain("test", b"two");
+    assert!(s.rule_installs(&circle()).unwrap().is_empty());
+
+    s.record_rule_install(&circle(), "pnpm", &d1, now())
+        .unwrap();
+    s.record_rule_install(&circle(), "avoid-pip", &d1, now())
+        .unwrap();
+    // A later version of the same rule replaces the record.
+    s.record_rule_install(&circle(), "pnpm", &d2, now().plus_secs(5))
+        .unwrap();
+    assert_eq!(
+        s.rule_installs(&circle()).unwrap(),
+        vec![
+            ("avoid-pip".to_owned(), d1, now()),
+            ("pnpm".to_owned(), d2, now().plus_secs(5)),
+        ]
+    );
+
+    assert!(s.clear_rule_install(&circle(), "pnpm").unwrap());
+    assert!(!s.clear_rule_install(&circle(), "pnpm").unwrap());
+    assert_eq!(s.rule_installs(&circle()).unwrap().len(), 1);
+
+    assert!(matches!(
+        s.record_rule_install(&circle(), "../x", &d1, now()),
+        Err(StoreError::Invalid { .. })
+    ));
+    assert!(matches!(
+        s.record_rule_install(&ph_core::CircleId::derive(&pk(9)), "pnpm", &d1, now()),
+        Err(StoreError::MissingReference)
+    ));
+    // It is part of the owner's export.
+    let export = s.export_owned_json().unwrap();
+    assert_eq!(export["rule_installs"][0]["skill_name"], "avoid-pip");
+}

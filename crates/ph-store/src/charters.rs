@@ -1,5 +1,6 @@
-//! `charters` and `rule_optouts`: the chain of charters this node has accepted for each
-//! circle, and the rules its owner opted out of (architecture section 10).
+//! `charters`, `rule_optouts` and `rule_installs`: the chain of charters this node has
+//! accepted for each circle, the rules its owner opted out of, and the skills a circle's
+//! vote installed on this machine (architecture section 10).
 //!
 //! The charter with the greatest `seq` is the circle's current charter. A node that
 //! founded the circle holds the chain from `seq` 1; a node that joined later starts at
@@ -189,6 +190,62 @@ impl Store {
         )?;
         let rows = st
             .query_map([circle.to_string()], |r| Ok((r.get(0)?, sql::ts(r, 1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Records that the rule `skill_name` of `circle` was installed on this machine with
+    /// `digest` because it passed a vote. Replaces an earlier record for the same rule.
+    pub fn record_rule_install(
+        &self,
+        circle: &CircleId,
+        skill_name: &str,
+        digest: &Digest,
+        at: Timestamp,
+    ) -> Result<()> {
+        if !ph_core::is_valid_skill_name(skill_name) {
+            return Err(StoreError::invalid("skill name", "not a valid skill name"));
+        }
+        self.conn.execute(
+            "INSERT INTO rule_installs (circle_id, skill_name, bundle_digest, installed_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(circle_id, skill_name)
+             DO UPDATE SET bundle_digest = excluded.bundle_digest,
+                           installed_at = excluded.installed_at",
+            params![
+                circle.to_string(),
+                skill_name,
+                digest.to_string(),
+                at.unix_seconds()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Forgets that `circle` installed `skill_name`. Returns whether a record existed.
+    pub fn clear_rule_install(&self, circle: &CircleId, skill_name: &str) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM rule_installs WHERE circle_id = ?1 AND skill_name = ?2",
+            params![circle.to_string(), skill_name],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The skills `circle`'s votes installed on this machine: name, bundle digest and
+    /// time, sorted by name.
+    pub fn rule_installs(&self, circle: &CircleId) -> Result<Vec<(String, Digest, Timestamp)>> {
+        let mut st = self.conn.prepare(
+            "SELECT skill_name, bundle_digest, installed_at FROM rule_installs
+             WHERE circle_id = ?1 ORDER BY skill_name",
+        )?;
+        let rows = st
+            .query_map([circle.to_string()], |r| {
+                Ok((
+                    r.get(0)?,
+                    sql::parse::<Digest>(r, 1, "rule install digest")?,
+                    sql::ts(r, 2)?,
+                ))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }

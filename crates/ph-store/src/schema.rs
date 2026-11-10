@@ -260,8 +260,23 @@ CREATE TABLE rule_optouts (
 ) STRICT;
 "#;
 
+/// Version 3: which installed skills a circle's vote put on this machine.
+///
+/// `rule_installs` records each skill that was installed because a rule passed in a
+/// circle, so that a repeal removes exactly what the vote installed and never a skill
+/// the owner installed for themselves.
+const V3: &str = r#"
+CREATE TABLE rule_installs (
+    circle_id     TEXT    NOT NULL REFERENCES circles(circle_id),
+    skill_name    TEXT    NOT NULL,
+    bundle_digest TEXT    NOT NULL,
+    installed_at  INTEGER NOT NULL,
+    PRIMARY KEY (circle_id, skill_name)
+) STRICT;
+"#;
+
 /// All migrations, in order. `MIGRATIONS[i]` moves from version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2];
+const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 /// Reads `PRAGMA user_version`.
 pub(crate) fn user_version(conn: &Connection) -> Result<u32> {

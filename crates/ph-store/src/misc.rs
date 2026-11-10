@@ -204,7 +204,16 @@ impl Store {
         let circles = self.circles()?;
         let mut charters = Vec::new();
         let mut optouts = Vec::new();
+        let mut rule_installs = Vec::new();
         for c in &circles {
+            for (skill_name, digest, at) in self.rule_installs(&c.circle_id)? {
+                rule_installs.push(json!({
+                    "circle_id": c.circle_id,
+                    "skill_name": skill_name,
+                    "bundle_digest": digest,
+                    "installed_at": at,
+                }));
+            }
             for charter in self.charters(&c.circle_id)? {
                 charters.push(charter.to_value()?);
             }
@@ -223,6 +232,7 @@ impl Store {
             "circles": rows_json(&circles)?,
             "charters": Value::Array(charters),
             "rule_optouts": Value::Array(optouts),
+            "rule_installs": Value::Array(rule_installs),
             "memberships": rows_json(&self.all_memberships()?)?,
             "issued_invites": rows_json(&self.issued_invites(None)?)?,
             "revocations": rows_json(&self.all_revocations()?)?,
