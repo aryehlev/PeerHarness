@@ -42,8 +42,7 @@ does not use it. If a future dependency makes the musl build infeasible, the fal
 the minimum glibc version.
 
 **Windows is not supported yet**, and no Windows binaries are published. The code has
-not been built or tested on Windows. (Some design choices, such as the loopback TCP
-control endpoint, were made with a future Windows port in mind.)
+not been built or tested on Windows.
 
 ## What a release contains
 
@@ -131,7 +130,8 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    binary. The README is packed into every archive, so what is tagged is what people
    read.
 4. Note in the release notes draft: user-visible changes, protocol version, database
-   migrations, and any change to `RELEASE_TOOLCHAIN`.
+   migrations, and any change to `RELEASE_TOOLCHAIN`. Move the "Unreleased" entries of
+   `CHANGELOG.md` under the new version in the same pull request.
 5. Tag and push:
 
    ```sh

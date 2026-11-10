@@ -1,10 +1,5 @@
 # Contributor Covenant Code of Conduct
 
-> **Placeholder contact.** The enforcement address below,
-> `conduct@peerharness.invalid`, is a placeholder that does not work. Maintainers must
-> replace it with a real, monitored address before the project accepts outside
-> contributions.
-
 ## Our Pledge
 
 We as members, contributors, and leaders pledge to make participation in our
@@ -64,8 +59,11 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-conduct@peerharness.invalid (placeholder: replace with a real address).
+reported to the community leaders responsible for enforcement through the
+repository's private reporting form, the one [SECURITY.md](SECURITY.md)
+describes (<https://github.com/aryehlev/peerharness/security/advisories/new>).
+Begin the report with the words "Conduct report". If the form is not available
+to you, open an issue that asks for a private contact and gives no details.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
