@@ -10,6 +10,10 @@
 //! Two commands act on this machine alone. `mode` is the owner's standing choice about
 //! rules that pass. `revoke` is the founder's emergency brake for a lost device: it cuts
 //! one device key off and leaves the roll as the members voted it.
+//!
+//! Inside a coding agent's session every step here is refused, except two that the
+//! owner may be asked about in a window when they allowed it (ADR-037): `invite` and
+//! `join`. `create` shares nothing and asks nothing, in a session as in a terminal.
 
 use anyhow::{anyhow, Context, Result};
 use ph_core::{DeviceKey, Scope};
@@ -30,8 +34,12 @@ use crate::cli::{
     CircleLeaveArgs, CircleModeArgs, CirclePlaceArgs, CircleRemoveArgs, CircleRevokeArgs,
     DeviceCommand, ModeArg,
 };
+use crate::commands::proposal::key_before_window;
 use crate::commands::Ctx;
-use crate::consent::confirm;
+use crate::config::Config;
+use crate::consent::{
+    asks_circle_in_window, confirm, confirm_circle_or_window, human_only, in_agent_session,
+};
 use crate::error::{refused, usage};
 use crate::governance::{self, NewProposal, Settled};
 use crate::node::Node;
@@ -272,7 +280,13 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
         .map_err(|e| usage(format!("cannot propose that admission: {e}")))?;
     let need = current.content.rules.pass.need(current.content.roll.len());
 
-    let preview = format!(
+    // A file with the circle's records is the person's own step (`events export`): inside
+    // an agent's session none is written, and asking for one there is refused.
+    let in_session = in_agent_session();
+    if args.out.is_some() {
+        human_only("writing a circle's records out")?;
+    }
+    let mut preview = format!(
         "This puts an amendment of {circle} to the vote and casts your approval:\n  \
          admit {member} (device {fp}) to the roll of charter {seq}\n  \
          it passes with {need} of {n} member approval(s); yours is one\n\
@@ -283,7 +297,19 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
         seq = current.seq,
         n = current.content.roll.len(),
     );
-    confirm(&ctx.out, &preview, args.yes, "the admission proposal")?;
+    let in_window = asks_circle_in_window(&node.config);
+    if in_window {
+        // In a terminal the person typed the key. Here their agent passed it on.
+        preview.push_str(&admission_check(&args.member, &circle.name));
+    }
+    key_before_window(&node, "the admission proposal", in_window)?;
+    confirm_circle_or_window(
+        &ctx.out,
+        &preview,
+        args.yes,
+        "the admission proposal",
+        &node.config,
+    )?;
 
     let key = node.device()?.signing_key();
     let title = format!("Admit {}", args.member);
@@ -323,53 +349,92 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             t.line(format!(
                 "  The admission passed. Charter {seq} is now in force."
             ));
-            let path = match args.out {
-                Some(p) => crate::home::absolute(&p)?,
-                None => std::env::current_dir()?.join(format!(
-                    "peerharness-{}-events.jsonl",
-                    circle.name.replace(' ', "-")
-                )),
-            };
-            let lines = governance::export_circle(
-                &node.store,
-                &crate::library::bundle_store(&node.home),
-                &id,
-            )?;
-            crate::home::write_private_file(&path, (lines.join("\n") + "\n").as_bytes())?;
-            t.line(format!("  Wrote {}", path.display()));
-            t.line(format!(
-                "Give that file to {} together with the root fingerprint {} (out of band).",
-                args.member,
-                circle.root_key.fingerprint()
-            ));
-            t.line(
-                "They run: `peerharness circle join <file> --expect-fingerprint <fingerprint>`.",
-            );
-            // A running daemon here already has them on its roll: no file is needed.
+            let fingerprint = circle.root_key.fingerprint();
+            let peer = node.peer_id();
             let daemon = crate::daemon_info::DaemonInfo::running(&node.home);
-            if let Some(d) = daemon.as_ref().filter(|d| d.internet.is_some()) {
+            if in_session {
+                // The fingerprint is what tells the invitee that the circle is the
+                // inviter's. It is named apart from everything that travels by chat, and
+                // the line to join with leaves it out.
+                let reachable = daemon.as_ref().filter(|d| d.internet.is_some());
+                let address = daemon
+                    .as_ref()
+                    .filter(|d| d.internet.is_none())
+                    .and_then(|d| d.listen_addrs.first().cloned());
+                let (what, how) = match (reachable, &address) {
+                    (Some(d), _) => (
+                        format!("this node's peer id, {}", d.peer_id),
+                        format!("{} --internet", d.peer_id),
+                    ),
+                    (None, Some(addr)) => (format!("this node's address, {addr}"), addr.clone()),
+                    (None, None) => (
+                        format!("this node's peer id, {peer}"),
+                        format!("{peer} --internet"),
+                    ),
+                };
                 t.line(format!(
-                    "Or, from anywhere, since your daemon is on the public network: \
-                     `peerharness circle join {} --internet --expect-fingerprint {}`.",
-                    d.peer_id,
-                    circle.root_key.fingerprint()
+                    "{} needs two things from you: {what}, by any channel, and the root \
+                     fingerprint {fingerprint}, by phone or in person.",
+                    args.member
                 ));
-            } else if let Some(addr) = daemon.and_then(|d| d.listen_addrs.into_iter().next()) {
                 t.line(format!(
-                    "Or, if they can reach your daemon: `peerharness circle join {addr} \
-                     --expect-fingerprint {}`.",
-                    circle.root_key.fingerprint()
+                    "With both they join: by asking their agent to, or in a terminal with \
+                     `peerharness circle join {how} --expect-fingerprint <the fingerprint \
+                     you told them>`."
                 ));
+                if reachable.is_none() && address.is_none() {
+                    t.line(
+                        "This node is not reachable yet, and has to be for them to join: \
+                         `peerharness daemon --internet` has to run here.",
+                    );
+                }
+                t.line(
+                    "No file with the circle's records was written: inside a coding agent's \
+                     session that stays your own step (`peerharness events export`).",
+                );
             } else {
+                let path = match args.out {
+                    Some(p) => crate::home::absolute(&p)?,
+                    None => std::env::current_dir()?.join(format!(
+                        "peerharness-{}-events.jsonl",
+                        circle.name.replace(' ', "-")
+                    )),
+                };
+                let lines = governance::export_circle(
+                    &node.store,
+                    &crate::library::bundle_store(&node.home),
+                    &id,
+                )?;
+                crate::home::write_private_file(&path, (lines.join("\n") + "\n").as_bytes())?;
+                t.line(format!("  Wrote {}", path.display()));
                 t.line(format!(
-                    "Or run `peerharness daemon --internet` and give them this node's peer \
-                     id instead of the file: `peerharness circle join {} --internet \
-                     --expect-fingerprint {}`.",
-                    node.peer_id(),
-                    circle.root_key.fingerprint()
+                    "Give that file to {} together with the root fingerprint {fingerprint} (out of band).",
+                    args.member,
                 ));
+                t.line(
+                    "They run: `peerharness circle join <file> --expect-fingerprint <fingerprint>`.",
+                );
+                // A running daemon here already has them on its roll: no file is needed.
+                if let Some(d) = daemon.as_ref().filter(|d| d.internet.is_some()) {
+                    t.line(format!(
+                        "Or, from anywhere, since your daemon is on the public network: \
+                         `peerharness circle join {} --internet --expect-fingerprint {fingerprint}`.",
+                        d.peer_id,
+                    ));
+                } else if let Some(addr) = daemon.and_then(|d| d.listen_addrs.into_iter().next()) {
+                    t.line(format!(
+                        "Or, if they can reach your daemon: `peerharness circle join {addr} \
+                         --expect-fingerprint {fingerprint}`."
+                    ));
+                } else {
+                    t.line(format!(
+                        "Or run `peerharness daemon --internet` and give them this node's peer \
+                         id instead of the file: `peerharness circle join {peer} --internet \
+                         --expect-fingerprint {fingerprint}`."
+                    ));
+                }
+                written = Some(path.display().to_string());
             }
-            written = Some(path.display().to_string());
         }
         None if tally.passed() => {
             t.line("  It passed. The node that founded the circle will issue the next charter");
@@ -398,9 +463,24 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             "need": tally.need(),
             "charter_seq": settled.charter_notarized,
             "events_file": written,
+            "peer_id": node.peer_id().to_string(),
+            "root_fingerprint": circle.root_key.fingerprint(),
         }),
         t.finish(),
     ))
+}
+
+/// What a window adds to the preview of an admission, whether the owner proposes it or
+/// votes on it. In a terminal the person typed or read the device key themselves; in a
+/// window all they have is what the window says.
+pub(crate) fn admission_check(member: &str, circle: &str) -> String {
+    format!(
+        "\n\nCheck the device with {member} first: `peerharness status` on their machine shows \
+         the same fingerprint. Whoever holds that device gets a vote in {circle} and can read \
+         its proposals and ballots.\n\
+         If you did not just ask your agent for this, choose Cancel.",
+        circle = safe(circle),
+    )
 }
 
 /// An amendment put to the vote by [`put_amendment`], and where it stands.
@@ -1075,13 +1155,16 @@ struct JoinPlan {
     member: String,
 }
 
-/// Shows the owner the circle `charter` belongs to and asks for the join. Refuses when
-/// the root fingerprint is not the one the owner expected.
+/// Shows the owner the circle `charter` belongs to and asks for the join: in their
+/// terminal, or in a window when their agent's session started the step and they
+/// allowed that (`config`, ADR-037). Refuses when the root fingerprint is not the one
+/// the owner expected.
 fn plan_join(
     ctx: &Ctx,
     charter: Charter,
     me: &DeviceKey,
     args: &CircleJoinArgs,
+    config: &Config,
 ) -> Result<JoinPlan> {
     let fingerprint = charter.issuer_key.fingerprint();
     if let Some(expected) = &args.expect_fingerprint {
@@ -1103,20 +1186,23 @@ fn plan_join(
         .ok_or_else(|| anyhow!("this device is not on the roll"))?
         .member
         .clone();
-    let preview = format!(
+    let mut preview = format!(
         "You are about to join a circle as {member}.\n  root fingerprint {fingerprint}\n\
          Check that fingerprint with the founder through another channel before you continue.\n\n{charter}\n\
          Joining means accepting this charter and the way it is amended.{binding}",
         charter = describe_charter(&charter, Some(me)).trim_end(),
         binding = if charter.content.rules.binding {
-            "\nRules that pass will be installed for your agent without asking each time; \
-             you can opt out of any rule, or switch to asking, at any time \
-             (`peerharness circle mode ask`)."
+            "\nThe rules this circle has passed are installed for your agent when you join, \
+             and the ones it passes later without asking each time; you can opt out of any \
+             rule, or switch to asking, at any time (`peerharness circle mode ask`)."
         } else {
             ""
         },
     );
-    confirm(&ctx.out, &preview, args.yes, "joining the circle")?;
+    if asks_circle_in_window(config) {
+        preview.push_str("\n\nIf you did not just ask your agent to join a circle, choose Cancel.");
+    }
+    confirm_circle_or_window(&ctx.out, &preview, args.yes, "joining the circle", config)?;
     Ok(JoinPlan {
         charter,
         name,
@@ -1211,7 +1297,13 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
             "this node is already in that circle: use `peerharness events import`",
         ));
     }
-    let plan = plan_join(ctx, charter, &me, &args)?;
+    // Settling after the join may sign with the device key.
+    key_before_window(
+        &node,
+        "joining the circle",
+        asks_circle_in_window(&node.config),
+    )?;
+    let plan = plan_join(ctx, charter, &me, &args, &node.config)?;
     let (json, t) = finish_join(&node, &plan, &lines)?;
     Ok(Report::new(json, t.finish()))
 }
@@ -1293,7 +1385,9 @@ fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, from: JoinFrom) -> Result<Rep
                 ));
             }
             let (offer, charter) = choices.remove(0);
-            let plan = plan_join(ctx, charter, &me, &args)?;
+            // The node is running by now, so its home holds a configuration.
+            let config = Config::load(&ctx.home)?;
+            let plan = plan_join(ctx, charter, &me, &args, &config)?;
             let circle = offer.circle;
             let last = offer.last;
             let lines = offer.lines;

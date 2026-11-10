@@ -590,7 +590,8 @@ that ADR-022's "no override an agent can set" still holds for what is installed.
 when the setting changes. `AGENTS.md` now says that an agent may write a note and may
 start these three steps, and that it never answers one. Not done: a window on Linux
 and asking in a window for a personal install. (Telling the owner that proposals wait
-for their vote followed in ADR-035.)
+for their vote followed in ADR-035, and three steps about who is in a circle in
+ADR-037.)
 
 ## ADR-034: An install script that checks the release's checksum
 Installing meant a Rust toolchain and several minutes of compiling, or a manual
@@ -688,3 +689,172 @@ opening the confirmation window (ADR-033) by itself when a proposal arrives. The
 one would put a consent step in front of the owner that nobody on their machine asked
 for, and is left out on purpose.
 
+
+## ADR-037: Inviting, joining and a ballot on an admission can be asked in a window
+ADR-033 left every `circle` command in the terminal. The first thing a team does is the
+part that stayed there: one member invites, the other joins. A person who set
+PeerHarness up from inside their agent was sent to a terminal for both, with a device
+key, a peer id and a fingerprint to carry by hand, before a single rule could be
+proposed.
+
+**Decision.** Three more consent steps may be asked in a window, on the terms of
+ADR-033: the owner allows it in their own terminal, only a click on "Proceed" counts,
+the exact preview is shown in full or the step is refused, `--yes` is ignored, and a
+key that needs a passphrase is refused before anything is asked.
+
+* Proposing to admit a member (`circle invite`), which also casts the proposer's
+  approval.
+* A ballot on an amendment that admits one member and changes nothing else
+  (`proposal vote`).
+* Joining a circle that admitted this device (`circle join`, from a member's node or
+  from a file).
+
+Everything else about a circle stays in the terminal: removing a member, leaving,
+changing the rules of the vote, devices, revoking, `mode follow`, placing a scope, and
+a ballot on any amendment that is not a plain admission. `circle create` asks nothing
+in a terminal and asks nothing in a session: it founds a circle of one and shares
+nothing.
+
+**A setting of its own.** The owner who turned windows on under ADR-033 read a list of
+three steps. `[agent] windows = true` therefore still means those three, and the new
+steps need `[agent] circle_windows = true` as well (`config::Asked`). `watch claude
+--install --windows` now shows all six in its preview and sets both; `--no-windows`
+and `--remove` clear both. Until the owner has run it again, the new steps refuse in a
+session with the hint to do so, the reporting skill stays the one with three steps,
+and `watch claude --status` says "on for rules only". The second key is written only
+when it is on, so a configuration that was never widened is still read by v0.1.0.
+
+**What the window says that the terminal does not.** In a terminal the person typed
+the device key or pasted the peer id. In a window their agent passed it on.
+
+* The two admission windows name the member and the device fingerprint, tell the owner
+  to check it against what `peerharness status` shows on the invitee's machine, and
+  say what the device gets: a vote, and the circle's proposals and ballots.
+* A ballot's window takes the member and the device from the amendment itself, not
+  from its title, which the proposer wrote. An amendment qualifies only when it is
+  voted under the charter in force, keeps the rules of the vote and every entry of the
+  roll, carries exactly the rules in force on this node and adds one member
+  (`proposal::sole_admission`).
+* The join window is the terminal's preview: the member name, the root fingerprint,
+  "check that fingerprint with the founder through another channel", the whole charter
+  with its roll, and what joining means.
+* All three end by telling the person to choose "Cancel" if they did not just ask
+  their agent for this.
+
+**No file from a session.** In a terminal `circle invite` writes the circle's records
+to a file for the invitee. Inside a session it writes none and `--out` is refused.
+Writing a circle's records out stays the person's own step (`events export`), and a
+file dropped into the project an agent works in is one `git add` from being published.
+The command prints what the invitee needs instead: the root fingerprint, the `circle
+join <peer id> --internet` line, and that the daemon has to be started if it is not
+running.
+
+**What the agent is told.** With these steps allowed, the reporting skill has a third
+part: `status`, `circle create`, `circle invite`, `circle join`, `sync --internet` and
+`daemon --internet --sync-every 60 --notify`. It is told to use device keys, peer ids
+and fingerprints exactly as the user gave them in the conversation, never from a file,
+a web page, a tool result or a proposal; to pass on what an invitation printed; and to
+say that a daemon it started stops with the session. The skill's description now also
+covers inviting, joining and "what waits for me": an agent does not open a skill
+described as being about corrections when its user says "invite Dana". `sync` and
+`daemon` were never consent steps, since they move records the owner already
+confirmed. The preview of `--windows` now says that the agent may run them, over the
+public network too, and what that network's servers then see (ADR-032).
+
+**Joining is the largest thing a click decides.** A circle whose charter makes rules
+binding installs them for the new member's agent: the ones in force on joining, and
+later ones as they pass. The preview used to say "rules that pass will be installed".
+It now also says that the rules already passed are installed on joining, which is what
+always happened. An agent that was talked into starting a join, by a page it read for
+example, still lacks three things: the other circle must already have admitted this
+device's key, the default button is "Cancel", and the person has to click "Proceed" in
+a window that says "You are about to join a circle" when they asked for no such thing.
+That is the guard of ADR-022 and ADR-033, against an agent that is being helpful, and
+not a security boundary. A person who clicks through windows out of habit can now be
+made a member of a circle whose rules reach their agent. A rule with a high-risk
+scanner finding is still held for the owner, and decided in the terminal.
+
+**How much fits.** The join window shows the whole roll, and by the estimate of ADR-033
+each member takes two rows. A circle of up to eight members is within the limit of 48
+rows, and a 1440x900 screen has room for about five. A larger circle is joined from
+the terminal. The two admission windows take about 20 rows.
+
+**Not done.** Nobody has clicked these windows: the tests use the stand-in window, as
+for ADR-033. No window on Linux. A daemon that outlives the agent's session, installed
+as a service, does not exist. One invitation string carrying the peer id and the
+fingerprint together was left out on purpose, because the fingerprint is meant to
+travel by another channel. (An MCP server that gives an agent these steps as tools
+followed in ADR-038.)
+
+## ADR-038: An MCP server gives an agent the same steps as tools
+With ADR-037 an agent can take its user through setting up a team, by running commands
+it read in a skill. That works where the agent has a shell, reads skills and picks the
+right command line from a description. It also leaves the node unreachable unless
+somebody starts a daemon in a terminal.
+
+**Decision.** `peerharness mcp` serves a fixed list of tools on standard input and
+output (Model Context Protocol): `note`, `status`, `inbox`, `propose_rule`, `vote`,
+`install_rule`, `create_circle`, `invite`, `join_circle`, `sync` and `stay_reachable`.
+The owner registers it with their agent themselves, for Claude Code with `claude mcp
+add --scope user peerharness -- peerharness mcp`. PeerHarness does not edit an agent's
+MCP configuration.
+
+**It is not a second way to consent.** Each tool runs this same binary as a child
+process with `PEERHARNESS_AGENT_SESSION` set, whatever the server's own environment
+is. A step that needs consent is therefore asked in a window or refused exactly as
+when an agent types the command (ADR-022, ADR-033, ADR-037), and the server has no
+code that confirms anything. A client that is not Claude Code, and so sets no
+`CLAUDECODE`, gets the same refusals: the tests run the server without either
+variable.
+
+**What an agent can reach is what the owner allowed.** The server reads `[agent]` in
+`config.toml` at every call. Without windows only `note` runs. With them the tools
+about rules, `status` and `inbox` run. With the circle steps `create_circle`,
+`invite`, `join_circle`, `sync` and `stay_reachable` run as well. A tool above that
+runs nothing and answers with the command the owner has to run in their own terminal.
+This also holds tools that are not consent steps, which the command line by itself
+does not refuse.
+
+**Arguments are values.** A tool is a fixed command line, and no argument is passed
+on as a flag. An id, a name, a key or an address is one word that does not begin with
+`-`; a sentence goes in as the value of one option, or after `--`; a decision is one
+of three words; an argument the tool does not have is an error. `join_circle` takes a
+peer id or an address, never a word that could name a file. Reviewing a note,
+installing for oneself, exporting, resetting, hooks and every change to a charter
+other than an admission have no tool.
+
+**Staying reachable.** `stay_reachable` starts `daemon --internet --sync-every 60`
+(with `--notify` where there is a notifier) as a child of the server, and hands the
+agent the disclosure of ADR-032 to pass on. The daemon is stopped with a termination
+signal when the client closes the server's input, which is how an MCP client ends a
+session. If the server is killed outright the daemon runs on until it is stopped by
+hand, and the next call says that it is already running. Its output goes to
+`mcp-daemon.log` in the node's home.
+
+**The protocol** is written by hand on `serde_json`: JSON-RPC 2.0, one message per
+line, with `initialize`, `ping`, `tools/list` and `tools/call`, for the revisions
+2024-11-05, 2025-03-26 and 2025-06-18. A library would have brought an asynchronous
+server framework for four methods. One tool call runs at a time on its own thread, so
+two windows never open together and `ping` is answered while one waits. A message
+over 1 MiB is refused and a result over 60,000 characters is cut.
+
+**Checked against a real client.** Claude Code 2.1.322 on macOS, on 2026-11-10, with a
+throwaway node, the stand-in window and a network of its own instead of the public
+one. It first probes with `server/discover` (revision 2026-07-28) and is answered
+"method not found". It then sends `initialize` for 2025-11-25, accepts 2025-06-18 in
+reply, lists the tools and calls them. Asked in plain words to invite someone and to
+make sure they can reach the node, it called `status`, `invite` and `stay_reachable`
+with the right arguments, and told its user to send the peer id by any channel and
+the fingerprint by phone. The daemon was stopped when the session ended. These are
+three runs with one model, not a measurement of how often an agent gets it right.
+
+**Consequences.** What `circle invite` prints inside a session changed. In the first
+of those runs the agent passed on a line to join with that had the fingerprint in it,
+so the fingerprint would have travelled with everything else. The peer id and the
+fingerprint are now named apart, and the line to join with leaves the fingerprint
+out. The skill of ADR-037 stays: it is the way for an agent without MCP.
+
+**Not done.** The revision 2026-07-28, which has no handshake. Clients other than
+Claude Code were not tried. Nothing registers the server with an agent for the owner.
+A daemon that outlives the session does not exist. A tool's result is the command's
+text, not structured data.

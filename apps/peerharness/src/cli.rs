@@ -57,6 +57,14 @@ pub enum Command {
     },
     /// Claude Code hook entry point (always exits 0).
     Hook(HookArgs),
+    /// Serve the steps an agent may start as tools of an MCP server, on standard input
+    /// and output. Register it with your agent, for Claude Code:
+    /// `claude mcp add --scope user peerharness -- peerharness mcp`.
+    ///
+    /// Every tool runs as an agent's session: a step that needs your consent is asked
+    /// in a window when you allowed that (`watch claude --install --windows`), and is
+    /// refused otherwise.
+    Mcp,
     /// Install or remove agent hooks.
     Watch {
         #[command(subcommand)]
@@ -208,9 +216,10 @@ pub struct WatchClaudeArgs {
     /// With --install: do not install the skill that asks the agent to report corrections.
     #[arg(long, requires = "install")]
     pub no_agent_notes: bool,
-    /// With --install: let your agent put three decisions in front of you in a window on
-    /// your screen (proposing a rule, your ballot on a proposed rule, installing a rule
-    /// that passed). Only your click in that window decides. macOS only.
+    /// With --install: let your agent put six decisions in front of you in a window on
+    /// your screen (proposing a rule, your ballot on one, installing one that passed,
+    /// inviting someone to a circle, your ballot on admitting someone, joining a circle).
+    /// Only your click in that window decides. macOS only.
     #[arg(long, requires = "install", conflicts_with = "no_windows")]
     pub windows: bool,
     /// With --install: turn those windows off again.

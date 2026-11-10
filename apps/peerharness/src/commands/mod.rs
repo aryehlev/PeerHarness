@@ -60,6 +60,9 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         Command::Watch { agent } => match agent {
             WatchAgent::Claude(a) => watch::claude(ctx, a),
         },
+        // Serves until its client closes standard input, and prints no report: standard
+        // output belongs to the protocol.
+        Command::Mcp => crate::mcp::serve_and_exit(ctx),
         Command::Note(a) => note::run(ctx, a),
         Command::Inbox(a) => inbox::run(ctx, a),
         Command::Review(a) => review::run(ctx, a),

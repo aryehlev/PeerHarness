@@ -1,9 +1,10 @@
-//! Confirmation windows (ADR-033), through the real binary.
+//! Confirmation windows (ADR-033, ADR-037), through the real binary.
 //!
 //! Inside a coding agent's session a consent step is refused. When the owner has turned
-//! windows on, three steps are instead put to the person in a window of the operating
-//! system: proposing a rule, a ballot on a proposed rule, and installing a rule that
-//! passed. These tests show both sides: what the click in the window does, and
+//! windows on, six steps are instead put to the person in a window of the operating
+//! system: proposing a rule, a ballot on a proposed rule and installing a rule that
+//! passed; and proposing to admit a member, a ballot on an admission and joining a
+//! circle. These tests show both sides: what the click in the window does, and
 //! everything that is not that click doing nothing.
 //!
 //! No test here opens a real window. Every command gets `PEERHARNESS_TEST_WINDOW_BIN`,
@@ -93,6 +94,13 @@ impl Node {
     }
 
     fn cmd(&self, by: By, args: &[&str]) -> Command {
+        let mut cmd = self.bare(by);
+        cmd.arg("--json").args(args);
+        cmd
+    }
+
+    /// The binary for this node, with no arguments yet.
+    fn bare(&self, by: By) -> Command {
         let mut cmd = Command::cargo_bin("peerharness").unwrap();
         cmd.current_dir(&self.cwd)
             .env("PEERHARNESS_HOME", &self.home)
@@ -102,13 +110,25 @@ impl Node {
             .env("PEERHARNESS_TEST_WINDOW_BIN", &self.window)
             .env("USER", "alice")
             .env_remove("CLAUDECODE")
-            .env_remove("PEERHARNESS_AGENT_SESSION")
-            .arg("--json")
-            .args(args);
+            .env_remove("PEERHARNESS_AGENT_SESSION");
         if let By::Agent = by {
             cmd.env("CLAUDECODE", "1");
         }
         cmd
+    }
+
+    /// The agent's session runs a command the way the skill tells it to, without
+    /// `--json`: the exit code and the text it reads.
+    fn agent_reads(&self, args: &[&str]) -> (i32, String) {
+        let out = self.bare(By::Agent).args(args).output().unwrap();
+        (
+            out.status.code().unwrap(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     }
 
     /// The person runs a command that must succeed.
@@ -155,6 +175,46 @@ impl Node {
     fn windows_on(&self) {
         let on = self.run(&["watch", "claude", "--install", "--windows", "--yes"]);
         assert_eq!(on["windows"], true);
+        assert_eq!(on["circle_windows"], true);
+    }
+
+    /// The setting as `--windows` wrote it before the circle steps existed (ADR-037):
+    /// windows on, for the steps about rules only.
+    fn windows_as_before_the_circle_steps(&self) {
+        let path = self.home.join("config.toml");
+        let config = std::fs::read_to_string(&path).unwrap();
+        assert!(config.contains("circle_windows = true\n"), "{config}");
+        std::fs::write(&path, config.replace("circle_windows = true\n", "")).unwrap();
+    }
+
+    fn device_key(&self) -> String {
+        self.run(&["status"])["device_key"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn fingerprint(&self) -> String {
+        self.run(&["status"])["fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn roll(&self) -> Vec<String> {
+        self.run(&["circle", "members", "--circle", "team"])["charter"]["roll"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["member"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// The person writes the circle's records to a file, for another node to read.
+    fn export(&self, to: &Path) -> String {
+        let path = to.to_str().unwrap().to_owned();
+        self.run(&["events", "export", "--circle", "team", "--out", &path]);
+        path
     }
 
     fn proposals(&self) -> Vec<Value> {
@@ -441,4 +501,242 @@ fn every_other_decision_still_needs_the_terminal() {
         .unwrap();
     assert_eq!(out.status.code(), Some(3));
     assert_eq!(node.proposals().len(), 2);
+}
+
+#[test]
+fn inviting_joining_and_admitting_are_asked_in_a_window() {
+    let tmp = TempDir::new().unwrap();
+    let alice = Node::new(&tmp.path().join("alice"));
+    let bob = Node::new(&tmp.path().join("bob"));
+    let carol = Node::new(&tmp.path().join("carol"));
+    let root = alice.run(&["circle", "create", "team"])["root_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let bob_key = bob.device_key();
+    let invite_bob = [
+        "circle",
+        "invite",
+        bob_key.as_str(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+    ];
+
+    // --- Windows that were turned on before these steps existed do not cover them: the
+    // owner allowed a list of three, and inviting was not on it.
+    alice.windows_on();
+    alice.windows_as_before_the_circle_steps();
+    alice.answers("proceed", 0);
+    let status = alice.run(&["watch", "claude", "--status"]);
+    assert_eq!(status["windows"], true);
+    assert_eq!(status["circle_windows"], false);
+    assert_eq!(status["agent_notes"], "installed (an older version)");
+    let msg = alice.refused(&invite_bob);
+    assert!(msg.contains("your own terminal"), "{msg}");
+    assert!(msg.contains("--windows"), "it says how to be asked: {msg}");
+    assert!(alice.shown().is_empty());
+    assert_eq!(alice.roll(), ["alice"]);
+    // The agent's session cannot add them either.
+    alice.refused(&["watch", "claude", "--install", "--windows", "--yes"]);
+    assert_eq!(
+        alice.run(&["watch", "claude", "--status"])["circle_windows"],
+        false
+    );
+    // The owner does, in their own terminal, and the skill then names the way into a team.
+    let on = alice.run(&["watch", "claude", "--install", "--windows", "--yes"]);
+    assert_eq!(on["changed"], true);
+    assert_eq!(on["circle_windows"], true);
+    let skill = std::fs::read_to_string(alice.skill_file("peerharness-notes")).unwrap();
+    assert!(skill.contains("circle invite <the invitee's device key>"));
+    assert!(skill.contains("circle join <a member's peer id> --internet"));
+
+    // --- Inviting. Nothing but the click admits anyone.
+    alice.answers("declined", 0);
+    assert!(alice
+        .refused(&invite_bob)
+        .contains("declined in the window"));
+    alice.answers("gave-up", 0);
+    assert!(alice.refused(&invite_bob).contains("without an answer"));
+    assert_eq!(alice.roll(), ["alice"]);
+    assert!(alice.proposals().is_empty());
+    let window = alice.shown().pop().unwrap();
+    assert!(window.starts_with("Your coding agent started this step."));
+    assert!(window.contains("This puts an amendment of team to the vote and casts your approval:"));
+    assert!(window.contains(&format!(
+        "admit bob (device {}) to the roll of charter 1",
+        bob.fingerprint()
+    )));
+    assert!(window.contains("Check the device with bob first"));
+    assert!(window.contains("If you did not just ask your agent for this, choose Cancel."));
+
+    // A file with the circle's records is not something a session writes, with or
+    // without a window.
+    let before = alice.shown().len();
+    alice.answers("proceed", 0);
+    let stray = tmp.path().join("stray.jsonl");
+    let mut with_file = invite_bob.to_vec();
+    with_file.extend(["--out", stray.to_str().unwrap()]);
+    assert!(alice.refused(&with_file).contains("your own terminal"));
+    assert_eq!(alice.shown().len(), before);
+    assert!(!stray.exists());
+
+    // The person clicks Proceed: Bob is on the roll. What the agent reads says what to
+    // pass on to Bob, and no file was left in the project the agent works in.
+    let peer = alice.run(&["status"])["peer_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (code, read) = alice.agent_reads(&invite_bob);
+    assert_eq!(code, 0, "{read}");
+    assert!(read.contains("The admission passed. Charter 2 is now in force."));
+    assert!(read.contains(&format!(
+        "bob needs two things from you: this node's peer id, {peer}, by any channel, and \
+         the root fingerprint {root}, by phone or in person."
+    )));
+    // The line to join with leaves the fingerprint out: it travels apart.
+    assert!(read.contains(&format!(
+        "`peerharness circle join {peer} --internet --expect-fingerprint <the fingerprint \
+         you told them>`"
+    )));
+    assert!(read.contains("`peerharness daemon --internet` has to run here"));
+    assert!(read.contains("No file with the circle's records was written"));
+    // The preview went to the window, not into the session.
+    assert!(!read.contains("casts your approval"), "{read}");
+    assert_eq!(alice.roll(), ["alice", "bob"]);
+    assert_eq!(std::fs::read_dir(&alice.cwd).unwrap().count(), 0);
+
+    // --- Joining. Bob gets the records from Alice, who wrote them out herself.
+    let records = alice.export(&tmp.path().join("for-bob.jsonl"));
+    let join = [
+        "circle",
+        "join",
+        records.as_str(),
+        "--expect-fingerprint",
+        root.as_str(),
+        "--name",
+        "team",
+        "--yes",
+    ];
+    // Without windows the step is refused as it always was.
+    bob.answers("proceed", 0);
+    assert!(bob.refused(&join).contains("your own terminal"));
+    assert!(bob.shown().is_empty());
+    bob.windows_on();
+    // A circle with another fingerprint is turned away before anything is asked.
+    let wrong = [
+        "circle",
+        "join",
+        records.as_str(),
+        "--expect-fingerprint",
+        "0000-0000-0000-0000-0000",
+        "--yes",
+    ];
+    assert!(bob.refused(&wrong).contains("Do not join."));
+    assert!(bob.shown().is_empty());
+
+    bob.answers("declined", 0);
+    assert!(bob.refused(&join).contains("declined in the window"));
+    assert_eq!(bob.run(&["status"])["circles"], serde_json::json!([]));
+    let window = bob.shown().pop().unwrap();
+    assert!(window.contains("You are about to join a circle as bob."));
+    assert!(window.contains(&format!("root fingerprint {root}")));
+    assert!(window.contains("Check that fingerprint with the founder through another channel"));
+    assert!(window.contains("charter 2 (2 members)"));
+    assert!(window.contains("If you did not just ask your agent to join a circle, choose Cancel."));
+
+    bob.answers("proceed", 0);
+    let (code, joined, printed) = bob.agent(&join);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(joined["member"], "bob");
+    assert_eq!(bob.roll(), ["alice", "bob"]);
+
+    // --- A third member needs both of them. Alice proposes Carol from her session.
+    let carol_key = carol.device_key();
+    let (code, invited, printed) = alice.agent(&[
+        "circle",
+        "invite",
+        carol_key.as_str(),
+        "--circle",
+        "team",
+        "--member",
+        "carol",
+    ]);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(invited["passed"], false);
+    assert_eq!(invited["need"], 2);
+    assert_eq!(invited["events_file"], Value::Null);
+    assert_eq!(invited["root_fingerprint"], root.as_str());
+    assert_eq!(invited["peer_id"], peer.as_str());
+    let admission = invited["proposal_id"].as_str().unwrap().to_owned();
+    let records = alice.export(&tmp.path().join("carol-proposed.jsonl"));
+    bob.run(&["events", "import", &records]);
+
+    // Bob's ballot on it is asked in a window that says who is admitted, read from the
+    // amendment itself.
+    let vote = ["proposal", "vote", admission.as_str(), "approve", "--yes"];
+    bob.answers("declined", 0);
+    assert!(bob.refused(&vote).contains("declined in the window"));
+    assert_eq!(
+        bob.run(&["proposal", "show", &admission])["approvals"],
+        serde_json::json!(["alice"])
+    );
+    let window = bob.shown().pop().unwrap();
+    assert!(window.contains("You are about to sign a ballot in team:"));
+    assert!(window.contains("approve on \"Admit carol\""));
+    assert!(window.contains("What this amendment changes, and nothing else:"));
+    assert!(window.contains(&format!(
+        "admit carol (device {}, scopes *) to the roll of charter 2",
+        carol.fingerprint()
+    )));
+    assert!(window.contains("An approval cannot be withdrawn."));
+    assert!(window.contains("Check the device with carol first"));
+
+    // With windows for rules only, that ballot goes back to the terminal.
+    bob.windows_as_before_the_circle_steps();
+    bob.answers("proceed", 0);
+    let before = bob.shown().len();
+    assert!(bob.refused(&vote).contains("your own terminal"));
+    assert_eq!(bob.shown().len(), before);
+    bob.windows_on();
+
+    let (code, voted, printed) = bob.agent(&vote);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(voted["passed"], true);
+    let approvals = bob.run(&["proposal", "show", &admission])["approvals"].clone();
+    assert_eq!(approvals, serde_json::json!(["alice", "bob"]));
+
+    // --- Every other change to a circle still needs the terminal. A window that would
+    // say yes to anything is never opened for them.
+    alice.answers("proceed", 0);
+    let before = alice.shown().len();
+    let terminal_only: &[&[&str]] = &[
+        &["circle", "remove", "bob", "--circle", "team", "--yes"],
+        &[
+            "circle", "amend", "--circle", "team", "--pass", "2/3", "--yes",
+        ],
+        &["circle", "leave", "--circle", "team", "--yes"],
+    ];
+    for args in terminal_only {
+        let msg = alice.refused(args);
+        assert!(msg.contains("your own terminal"), "{args:?}: {msg}");
+    }
+    assert_eq!(alice.shown().len(), before);
+
+    // Nor is a ballot on an amendment that does anything but admit one member: here,
+    // one that changes the rules of the vote.
+    let amend = alice.run(&[
+        "circle", "amend", "--circle", "team", "--pass", "2/3", "--yes",
+    ])["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let records = alice.export(&tmp.path().join("rules-proposed.jsonl"));
+    bob.run(&["events", "import", &records]);
+    let before = bob.shown().len();
+    let msg = bob.refused(&["proposal", "vote", &amend, "approve", "--yes"]);
+    assert!(msg.contains("your own terminal"), "{msg}");
+    assert_eq!(bob.shown().len(), before);
 }

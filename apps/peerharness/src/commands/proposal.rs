@@ -3,15 +3,17 @@
 
 use anyhow::{anyhow, Result};
 use ph_core::{Actor, CandidateStatus, EventId, Scope};
-use ph_governance::{carried_diff, ProposalView, Tally};
-use ph_protocol::{AdoptAction, ProposalAction, ProposalKind, VoteDecision};
+use ph_governance::{carried_diff, ProposalView, RuleSet, Tally};
+use ph_protocol::{AdoptAction, Charter, ProposalAction, ProposalKind, RollEntry, VoteDecision};
 use ph_store::CircleRow;
 use serde_json::{json, Value};
 
 use crate::cli::{DecisionArg, ProposalCommand};
-use crate::commands::circle::find_circle;
+use crate::commands::circle::{admission_check, find_circle};
 use crate::commands::Ctx;
-use crate::consent::{asks_in_window, confirm, confirm_or_window};
+use crate::consent::{
+    asks_circle_in_window, asks_in_window, confirm, confirm_circle_or_window, confirm_or_window,
+};
 use crate::error::{refused, usage};
 use crate::governance::{self, NewProposal, Settled};
 use crate::node::Node;
@@ -134,9 +136,10 @@ fn settled_lines(t: &mut Text, s: &Settled) {
 }
 
 /// Inside a coding agent's session nobody can type a passphrase. Before the owner is
-/// asked anything in a window, make sure the step could be carried out afterwards.
-fn key_before_window(node: &Node, what: &str) -> Result<()> {
-    if !asks_in_window(&node.config) {
+/// asked anything in a window (`in_window`), make sure the step could be carried out
+/// afterwards.
+pub(crate) fn key_before_window(node: &Node, what: &str, in_window: bool) -> Result<()> {
+    if !in_window {
         return Ok(());
     }
     if node.unlocks_without_terminal()? && node.device().is_ok() {
@@ -163,6 +166,43 @@ fn findings_preview(preview: &mut String, bundle: &ph_skills::Bundle) -> bool {
         preview.push_str("\n  HIGH RISK findings above. Scanning never proves a text is safe.");
     }
     high
+}
+
+/// The member an amendment admits, when admitting them is all it does: it is voted
+/// under the charter in force, keeps the rules of the vote and every entry of the roll
+/// as they are, carries exactly the rules in force on this node, and adds one member.
+/// Any other amendment is `None`: a window could not say in a few lines what it changes.
+fn sole_admission<'a>(
+    p: &'a ProposalView,
+    current: &Charter,
+    in_force: &RuleSet,
+) -> Result<Option<&'a RollEntry>> {
+    let Some(next) = p.amend_next() else {
+        return Ok(None);
+    };
+    let roll = &current.content.roll;
+    if p.charter() != current.digest()?
+        || next.rules != current.content.rules
+        || !carried_diff(&next.carried, in_force).is_exact()
+        || next.roll.len() != roll.len() + 1
+        || !roll.iter().all(|e| next.roll.contains(e))
+    {
+        return Ok(None);
+    }
+    Ok(next.roll.iter().find(|e| !roll.contains(e)))
+}
+
+/// The lines of a ballot's preview that say who an admission admits.
+fn admission_lines(entry: &RollEntry, seq: u64) -> String {
+    let devices: Vec<String> = entry.devices.iter().map(|d| d.fingerprint()).collect();
+    let scopes: Vec<String> = entry.scopes.iter().map(ToString::to_string).collect();
+    format!(
+        "\nWhat this amendment changes, and nothing else:\n  \
+         admit {} (device {}, scopes {}) to the roll of charter {seq}",
+        entry.member,
+        devices.join(", "),
+        scopes.join(", "),
+    )
 }
 
 fn create(
@@ -214,7 +254,7 @@ fn create(
         skill = safe(draft.skill_md()),
         need = charter.content.rules.pass.need(electorate),
     );
-    key_before_window(&node, "sharing the proposal")?;
+    key_before_window(&node, "sharing the proposal", asks_in_window(&node.config))?;
     confirm_or_window(
         &ctx.out,
         &preview,
@@ -500,32 +540,50 @@ fn vote(
         ));
     }
     // In a window the owner cannot run `proposal show` first, and what their agent
-    // tells them about a rule is not the rule: the window carries the text itself. Only
-    // a ballot on a rule whose text is here, with no high-risk finding, is asked there.
-    // Every other ballot (a repeal, a change to the charter) stays in the terminal.
-    let in_window = asks_in_window(&node.config);
-    let mut windowable = false;
-    if let (true, Some(bundle)) = (in_window, &rule_text) {
-        preview.push_str(match decision {
-            VoteDecision::Approve => "\nAn approval cannot be withdrawn.",
-            _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
-        });
+    // tells them about a proposal is not the proposal: the window carries what is being
+    // decided itself. Two kinds of ballot are asked there. One is on a rule whose text
+    // is here, with no high-risk finding (ADR-033). The other is on an amendment that
+    // admits one member and changes nothing else (ADR-037): the window names the member
+    // and the device from the amendment, whatever its title says. Every other ballot (a
+    // repeal, any other change to the charter) stays in the terminal.
+    let approval = match decision {
+        VoteDecision::Approve => "\nAn approval cannot be withdrawn.",
+        _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
+    };
+    let mut rule_window = false;
+    let mut circle_window = false;
+    let mut described = false;
+    if let (true, Some(bundle)) = (asks_in_window(&node.config), &rule_text) {
+        described = true;
+        preview.push_str(approval);
         preview.push_str(&format!(
             " The rule, exactly as proposed:\n\n{}\n",
             safe(bundle.skill_md()).trim_end()
         ));
-        windowable = !findings_preview(&mut preview, bundle);
-    } else {
-        preview.push_str(match decision {
-            VoteDecision::Approve => {
-                "\nAn approval cannot be withdrawn. See the text with `peerharness proposal show`."
-            }
-            _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
-        });
+        rule_window = !findings_preview(&mut preview, bundle);
+    } else if asks_circle_in_window(&node.config) && p.amend_next().is_some() {
+        let current = governance::current_charter(&node.store, &circle.circle_id)?;
+        let (_, in_force, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+        if let Some(entry) = sole_admission(&p, &current, &in_force)? {
+            preview.push_str(&admission_lines(entry, current.seq));
+            preview.push_str(approval);
+            preview.push_str(&admission_check(&entry.member, &circle.name));
+            circle_window = true;
+            described = true;
+        }
     }
-    if windowable {
-        key_before_window(&node, "the ballot")?;
+    if !described {
+        preview.push_str(approval);
+        if decision == VoteDecision::Approve {
+            preview.push_str(" See the text with `peerharness proposal show`.");
+        }
+    }
+    if rule_window {
+        key_before_window(&node, "the ballot", true)?;
         confirm_or_window(&ctx.out, &preview, yes, "the ballot", &node.config)?;
+    } else if circle_window {
+        key_before_window(&node, "the ballot", true)?;
+        confirm_circle_or_window(&ctx.out, &preview, yes, "the ballot", &node.config)?;
     } else {
         confirm(&ctx.out, &preview, yes, "the ballot")?;
     }
@@ -597,7 +655,7 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
     if findings_preview(&mut preview, &bundle) {
         confirm(&ctx.out, &preview, yes, "installing the rule")?;
     } else {
-        key_before_window(&node, "installing the rule")?;
+        key_before_window(&node, "installing the rule", asks_in_window(&node.config))?;
         confirm_or_window(&ctx.out, &preview, yes, "installing the rule", &node.config)?;
     }
     let settled = governance::settle(
