@@ -7,7 +7,9 @@
 //! * exit at once when the home is not initialized or `PEERHARNESS_ADVISORY_CHILD` is set;
 //! * store a bounded, redacted observation with a short busy timeout, falling back to the
 //!   spool file;
-//! * for Stop, print a throttled `systemMessage` when new candidates wait for review.
+//! * for Stop, print a throttled `systemMessage` when proposals wait for the owner's
+//!   vote or new candidates wait for review. It carries a count and nothing else, and
+//!   Claude Code shows it to the person, not to the model.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -25,6 +27,9 @@ pub const HOOK_BUSY_TIMEOUT_MS: u64 = 250;
 
 /// Notification topic for "candidates to review".
 pub const CANDIDATE_TOPIC: &str = "candidates";
+
+/// Notification topic for "proposals that wait for your vote".
+pub const VOTE_TOPIC: &str = "votes";
 
 /// Notification history kept for throttling.
 const NOTIFICATION_HISTORY_SECS: i64 = 30 * 86_400;
@@ -101,10 +106,17 @@ fn run(home_arg: Option<PathBuf>, event_arg: Option<&str>) -> HookOutput {
 }
 
 fn stop_notice(store: &Store, config: &Config, now: Timestamp) -> HookOutput {
-    let Ok(new) = store.candidates(&[CandidateStatus::Detected]) else {
-        return HookOutput::silent();
-    };
-    if new.is_empty() {
+    // Other members wait for a ballot; a note waits for nobody. Votes come first.
+    let votes = store
+        .identity()
+        .ok()
+        .flatten()
+        .and_then(|id| crate::governance::awaiting_vote(store, &id.device_key).ok())
+        .map_or(0, |waiting| waiting.len());
+    let notes = store
+        .candidates(&[CandidateStatus::Detected])
+        .map_or(0, |new| new.len());
+    if votes == 0 && notes == 0 {
         return HookOutput::silent();
     }
     let Ok(policy) = config.notifications.policy() else {
@@ -117,13 +129,26 @@ fn stop_notice(store: &Store, config: &Config, now: Timestamp) -> HookOutput {
         .into_iter()
         .map(|n| (n.topic, n.shown_at))
         .collect();
-    let message = notice_text(new.len());
-    let out = HookOutput::stop_notice_if_allowed(&message, &policy, &history, CANDIDATE_TOPIC, now);
-    if !out.is_silent() && store.record_notification(CANDIDATE_TOPIC, now).is_err() {
-        // Without a record the throttle cannot hold: stay silent.
-        return HookOutput::silent();
+    // One message per turn. Each topic has its own cooldown, so a note that was
+    // announced today does not keep a vote from being announced.
+    for (topic, count, text) in [
+        (VOTE_TOPIC, votes, vote_notice_text as fn(usize) -> String),
+        (CANDIDATE_TOPIC, notes, notice_text),
+    ] {
+        if count == 0 {
+            continue;
+        }
+        let out = HookOutput::stop_notice_if_allowed(&text(count), &policy, &history, topic, now);
+        if out.is_silent() {
+            continue;
+        }
+        if store.record_notification(topic, now).is_err() {
+            // Without a record the throttle cannot hold: stay silent.
+            return HookOutput::silent();
+        }
+        return out;
     }
-    out
+    HookOutput::silent()
 }
 
 /// The Stop notice text.
@@ -132,6 +157,15 @@ pub fn notice_text(n: usize) -> String {
         "PeerHarness: 1 possible convention to review — run `peerharness inbox`".to_owned()
     } else {
         format!("PeerHarness: {n} possible conventions to review — run `peerharness inbox`")
+    }
+}
+
+/// The Stop notice text for proposals that wait for the owner's vote.
+pub fn vote_notice_text(n: usize) -> String {
+    if n == 1 {
+        "PeerHarness: 1 proposal waits for your vote — run `peerharness inbox`".to_owned()
+    } else {
+        format!("PeerHarness: {n} proposals wait for your vote — run `peerharness inbox`")
     }
 }
 
@@ -181,6 +215,20 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<OsString> {
         v.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn the_notices_carry_a_count_and_nothing_else() {
+        assert_eq!(
+            vote_notice_text(1),
+            "PeerHarness: 1 proposal waits for your vote — run `peerharness inbox`"
+        );
+        assert_eq!(
+            vote_notice_text(3),
+            "PeerHarness: 3 proposals wait for your vote — run `peerharness inbox`"
+        );
+        assert!(notice_text(2).contains("2 possible conventions to review"));
+        assert_ne!(VOTE_TOPIC, CANDIDATE_TOPIC);
     }
 
     #[test]

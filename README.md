@@ -173,7 +173,9 @@ peerharness sync --internet     # Alice's node learns of it and installs the rul
 
 With three or more members a rule passes on a majority, and admitting or removing
 someone takes a vote of the current members. A daemon started with `--sync-every 300`
-also fetches from the other members by itself every five minutes.
+also fetches from the other members by itself every five minutes. When a proposal that
+needs your vote has reached your node, the end of your next turn in Claude Code says
+so (with `watch claude --install`): a count and `peerharness inbox`, once a day at most.
 
 ### What `--internet` exposes
 

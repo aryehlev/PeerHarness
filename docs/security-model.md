@@ -225,7 +225,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   not shown; the same text asked again gets no second entry; a blocked author's question
   is not stored. A sync is paged by a cursor and keeps at most 8192 events aside in
   memory while it waits for records they depend on. Unsolicited notifications are
-  limited to 2 per day with a per-topic cooldown.
+  limited to 2 per day with a per-topic cooldown, and hold a count only: a member who
+  floods the circle with proposals changes a number in one daily notice (ADR-035).
 * **Residual risk.** Device keys cost nothing to create, so per-peer limits do not stop an
   attacker who uses many keys; the global caps then protect the node's memory but can
   starve legitimate peers of connection slots. There is no IP-level limiting. A member

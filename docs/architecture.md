@@ -56,7 +56,11 @@ governance (section 10, ADR-012 onwards).
 * Hooks (`peerharness hook <event>`) never need the private key. They write a bounded,
   redacted observation straight into SQLite with a short busy timeout, fall back to the
   spool file, always exit 0, and print nothing to stdout for `UserPromptSubmit` (stdout
-  there becomes model context).
+  there becomes model context). For `Stop` they may print one throttled
+  `systemMessage`, which Claude Code shows to the person and not to the model: a count
+  of the proposals that wait for the owner's vote (`governance::awaiting_vote`,
+  ADR-035), or else of the new candidates to review. Each has its own notification
+  topic, and the message holds no text written by anyone else.
 
 ## 2. Crates and dependency direction
 

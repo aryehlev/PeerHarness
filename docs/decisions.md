@@ -588,9 +588,9 @@ that ADR-022's "no override an agent can set" still holds for what is installed.
 
 **Consequences.** The reporting skill has two texts, and `watch claude` reinstalls it
 when the setting changes. `AGENTS.md` now says that an agent may write a note and may
-start these three steps, and that it never answers one. Not done: a window on Linux,
-the Stop hook telling the owner that proposals wait for their vote, and asking in a
-window for a personal install.
+start these three steps, and that it never answers one. Not done: a window on Linux
+and asking in a window for a personal install. (Telling the owner that proposals wait
+for their vote followed in ADR-035.)
 
 ## ADR-034: An install script that checks the release's checksum
 Installing meant a Rust toolchain and several minutes of compiling, or a manual
@@ -618,3 +618,32 @@ repository; when this was written there was neither, and it was tested against a
 release in a temporary folder (`apps/peerharness/tests/install_script.rs`), which the
 `PEERHARNESS_RELEASE_URL` setting exists for. Not done: Homebrew, a signed checksum
 file, Windows.
+
+## ADR-035: The owner is told when proposals wait for their vote
+A proposal that needed a member's vote was visible only to a member who went and
+looked (`peerharness inbox`). The Stop hook told them about their own notes and not
+about the thing other people were waiting for.
+
+**Decision.** At the end of a turn the Stop hook also prints, when it applies,
+"PeerHarness: N proposal(s) wait for your vote — run `peerharness inbox`". It is a
+`systemMessage`: Claude Code shows it to the person and does not give it to the model.
+It carries a count and nothing else, so no title or other text written by another
+member is involved. It has its own notification topic (`votes`), checked before the
+one for notes, so with the default settings a member is told at most once a day, and
+never more than two notices a day in total (spec 7.2). The hook rules are unchanged:
+it reads the store, never unlocks a key, never blocks and always exits 0.
+
+**What "waits for your vote" means** is now one function, `governance::awaiting_vote`,
+used by the notice and by `inbox`: the proposal is open under the current charter of a
+circle this node has not left, the member this device signs for is in its electorate,
+and none of their devices has cast a ballot. A proposal that passed, one that names an
+earlier charter, and one the member may not vote on wait for nobody. The member's own
+proposal waits for them too, because creating it is not a vote. `inbox` used a looser
+test before (any proposal by someone else without a ballot from this device), which
+kept listing proposals that had already passed or that the member could not vote on.
+
+**Limits.** The node has to hold the proposal: nothing arrives without a sync (a
+daemon with `--sync-every`, or `sync`). The notice appears only at the end of a turn
+in Claude Code with the hooks installed; there is no operating-system notification
+and no window opens by itself (a window opens when the owner asks for a step, ADR-033).
+A member who is not using their agent is told nothing.

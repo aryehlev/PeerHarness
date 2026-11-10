@@ -1,10 +1,9 @@
 //! `peerharness inbox`: a bounded summary of candidates to review, received questions
-//! and proposals waiting for a vote. Showing a Detected candidate moves it to
+//! and proposals waiting for the owner's vote (`governance::awaiting_vote`). Showing a Detected candidate moves it to
 //! LocalReview (System).
 
 use anyhow::Result;
 use ph_core::{Actor, CandidateStatus};
-use ph_protocol::{EventBody, EventType};
 use ph_store::{CandidateRow, QuestionStatus};
 use serde_json::{json, Value};
 
@@ -52,47 +51,27 @@ pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
     let questions = node.store.inbox(&[QuestionStatus::New])?;
     let total_questions = questions.len();
 
-    // Proposals by others without a vote from us.
-    let me = node.device_key();
+    // Proposals that wait for the owner's ballot (the same count the Stop notice uses).
     let mut awaiting: Vec<Value> = Vec::new();
     let mut awaiting_text: Vec<String> = Vec::new();
-    for circle in node.store.circles()? {
-        for p in node.store.proposals(&circle.circle_id)? {
-            // Decision events never expire. A proposal stays open until it passes or
-            // the charter it names is replaced.
-            if p.author == me {
-                continue;
-            }
-            let voted = node
-                .store
-                .votes_for_proposal(&p.event_id)?
-                .iter()
-                .any(|v| v.author == me && v.event_type == EventType::Vote);
-            if voted {
-                continue;
-            }
-            let Ok(env) = p.envelope() else { continue };
-            let EventBody::Proposal(body) = &env.body else {
-                continue;
-            };
-            awaiting.push(json!({
-                "proposal_id": p.event_id,
-                "circle": circle.name,
-                "scope": p.scope,
-                "kind": body.kind().as_str(),
-                "skill_name": body.as_adopt().map(|a| a.skill_name.as_str()),
-                "title": body.title,
-                "author_fingerprint": p.author.fingerprint(),
-            }));
-            awaiting_text.push(format!(
-                "  {}  {} [{} / {}] by {}",
-                short_id(&p.event_id),
-                safe(&body.title),
-                safe(&circle.name),
-                p.scope,
-                p.author.fingerprint()
-            ));
-        }
+    for (circle, p) in crate::governance::awaiting_vote(&node.store, &node.device_key())? {
+        awaiting.push(json!({
+            "proposal_id": p.event_id(),
+            "circle": circle.name,
+            "scope": p.scope(),
+            "kind": p.kind().as_str(),
+            "skill_name": p.skill_name(),
+            "title": p.body().title,
+            "author_fingerprint": p.author().fingerprint(),
+        }));
+        awaiting_text.push(format!(
+            "  {}  {} [{} / {}] by {}",
+            short_id(&p.event_id()),
+            safe(&p.body().title),
+            safe(&circle.name),
+            p.scope(),
+            p.author().fingerprint()
+        ));
     }
     let total_awaiting = awaiting.len();
     awaiting.truncate(limit);
