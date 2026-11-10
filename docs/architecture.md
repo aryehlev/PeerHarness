@@ -7,13 +7,14 @@ something here, update the code that depends on it and record the change in
 
 Implementation status at this revision: the nine library crates implement and test this
 contract. `apps/peerharness` wires the local commands (`init`, `status`, `doctor`,
-`observe`, `inbox`, `watch`, `hook`, `export`) and governance (`circle create`,
-`circle invite`, `circle join`, `circle members`, `proposal`, `rule`, `events`, `demo`).
-Nodes exchange signed events as files (`events export` / `events import`, ADR-019).
-The network daemon, including the request handler that applies the authorization rules
-of section 7, is **not** wired yet, and neither are `review`, `skills`, `question`,
-`circle revoke` and `reset`; statements about the daemon describe what it must
-implement. Where this
+`observe`, `note`, `inbox`, `review`, `skills`, `watch`, `hook`, `export`) and
+governance (`circle create`, `circle invite`, `circle remove`, `circle join`,
+`circle members`, `proposal`, `rule`, `events`, `demo`). Nodes exchange signed events
+as a file or as a directory of small files (`events export`, `events import`,
+`events sync`; ADR-019, ADR-025). The network daemon, including the request handler
+that applies the authorization rules of section 7, is **not** wired yet, and neither
+are `question`, `circle revoke` and `reset`; statements about the daemon describe what
+it must implement. Where this
 file departs from `docs/spec.md`, the ADRs in `docs/decisions.md` say why; the largest
 departure is governance (section 10, ADR-012 onwards).
 
@@ -254,8 +255,11 @@ Invite {
   a file. `circle join <file>` picks the newest CHARTER event in it whose roll lists
   this device, shows that charter and the root fingerprint, and on confirmation (or
   `--yes` with `--expect-fingerprint`) takes it as the node's trust anchor. The
-  credential-based `Invite` object above is for the network transport and is not used
-  by the CLI yet.
+  earlier charters in the file are then stored as history when the anchor's chain names
+  them by hash (section 8, ADR-024), so the proposals and ballots from before the node
+  joined verify and the rules the anchor carries arrive. The file may also be a
+  directory of record files (ADR-025). The credential-based `Invite` object above is
+  for the network transport and is not used by the CLI yet.
 
 ## 7. Wire protocol (ph-protocol `wire`, transported by ph-network)
 
@@ -322,6 +326,11 @@ columns listed are the minimum):
   charter's and `previous` equal to its digest. The store verifies structure, root
   signature and the chain link on insert and the signature again on load. It does not
   check that a vote justifies a successor: the caller runs `check_successor` first.
+  A charter **older** than every stored one is accepted only as history
+  (`insert_charter_history`): the oldest stored charter must name it in `previous` and
+  have the next `seq`. History is authenticated by that hash link alone, never becomes
+  the current charter and gives nobody a vote; it exists so that the decision events
+  naming it can be verified and kept.
 * `rule_optouts(circle_id, skill_name, opted_out_at, PRIMARY KEY(circle_id, skill_name))`:
   rules the owner opted out of on this machine.
 * `rule_installs(circle_id, skill_name, bundle_digest, installed_at, PRIMARY KEY(circle_id, skill_name))`:
@@ -719,10 +728,12 @@ Outcomes depend on signatures and on the charter, never on a clock.
 * Authorization of decision events is by the roll of the charter they name, not by the
   author's credential at the time of receipt, so history can be replayed by a node that
   joins later.
-* A node's first stored charter is its trust anchor and may have any `seq`; it needs no
-  earlier history. That charter plus the `PROPOSAL` events named in `carried` and their
-  bundles give it every rule in force. Ballots from before the current charter are for
-  audit only. (Nothing prunes them in v0.)
+* A node's first stored charter is its trust anchor and may have any `seq`. The rules
+  in force are that charter's `carried` list plus what passed since. To hold the
+  `PROPOSAL` events `carried` names (they name earlier charters), the node stores those
+  earlier charters as history through the hash link (section 8). The founding charter
+  is published as a `CHARTER` event for that purpose. Ballots from before the current
+  charter are for audit only. (Nothing prunes them in v0.)
 * `created_at` is used for exactly one thing, the tie-break in 10.7, where it is part
   of the signed proposal and so identical on every node.
 * Replay is harmless: events are idempotent by `event_id`, and a replayed approval is

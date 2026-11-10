@@ -223,3 +223,32 @@ are removed when the rule leaves force. Without the record a repeal would have d
 a skill the owner had installed for themselves under the same name and digest.
 Consequence: on the machine of a proposer who installed their own rule personally
 before proposing it, a later repeal leaves that personal copy in place.
+
+## ADR-024: Earlier charters are held as history through the hash link
+ADR-020 left a node that joined late unable to store any decision event from before its
+anchor, because those events name charters it did not hold. The consequence was worse
+than a gap in the audit trail: the adopt proposals listed in the anchor's `carried` are
+such events, so rules passed before a member joined never reached that member's
+machine. Every charter names its predecessor by hash, so the fix needs no new trust: a
+charter older than every stored one is accepted as history exactly when the oldest
+stored charter names it in `previous` (`Store::insert_charter_history`). The founding
+charter, which was only stored locally, is now also published as a CHARTER event so it
+can travel. History never becomes current and gives nobody a vote. The late joiner
+still takes its anchor on the root's signature and does not re-count the votes behind
+earlier steps; that limit is unchanged. This replaces the last sentence but one of
+ADR-020.
+
+## ADR-025: A circle's records can live in a shared directory
+Sending a JSON lines file back and forth works and is tedious. Teams already share a
+git repository, so `events sync <dir>` imports what a directory holds and writes what it
+lacks, one file per record named by the record's own hash (`event-<hex>.json`,
+`bundle-<hex>.json`). Two members adding records at the same time add different files,
+so the directory merges by union and never conflicts. The directory is not trusted:
+names are a convenience, every line is verified by `ingest`, links and other files are
+never read, and a record file whose content was changed is refused and rewritten from
+the verified copy. Costs, stated in the README and in the command's output: everyone
+who can read the directory can read the roll, the proposals and the ballots, and
+someone with write access can delete record files (which withholds them from whoever
+has not synced yet, but cannot forge or alter a vote). Writing records out is a human
+step and refuses inside an agent session; importing is open. The spec's request for a
+libp2p transport stands; this does not replace it.

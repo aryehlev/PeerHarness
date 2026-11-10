@@ -1,32 +1,68 @@
-//! `peerharness events`: exchanging a circle's signed events as a file.
+//! `peerharness events`: exchanging a circle's signed records as a file or a directory.
 //!
 //! Every event is signed and names the charter it belongs to, so the carrier does not
 //! need to be trusted: email, a shared folder, a git repository or a USB stick all work.
 //! The importing node verifies every line through the same path a network peer's events
 //! will take (`governance::ingest`).
+//!
+//! `events sync <dir>` is the form for a place a team already shares (see
+//! `crate::carrier`): it imports what the directory holds and writes what it lacks.
+//! Writing records out is the person's step (it decides who can read the circle's roll
+//! and ballots), so `export` and `sync` refuse inside an agent session. Importing is
+//! open to anyone: nothing is taken on trust.
+
+use std::path::Path;
 
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 
+use crate::carrier;
 use crate::cli::EventsCommand;
 use crate::commands::circle::find_circle;
 use crate::commands::Ctx;
-use crate::error::usage;
+use crate::consent::human_only;
 use crate::governance;
+use crate::node::Node;
 use crate::output::{safe, Report, Text};
 
 pub fn run(ctx: &Ctx, command: EventsCommand) -> Result<Report> {
     match command {
-        EventsCommand::Export { circle, out } => export(ctx, &circle, out.as_deref()),
-        EventsCommand::Import { file } => import(ctx, &file),
+        EventsCommand::Export { circle, out, dir } => {
+            export(ctx, &circle, out.as_deref(), dir.as_deref())
+        }
+        EventsCommand::Import { file } => {
+            let node = ctx.open_node()?;
+            let (json, t) = import(&node, &file)?;
+            Ok(Report::new(json, t.finish()))
+        }
+        EventsCommand::Sync { dir, circle } => sync(ctx, &dir, circle.as_deref()),
     }
 }
 
-fn export(ctx: &Ctx, circle: &str, out: Option<&std::path::Path>) -> Result<Report> {
+fn export(ctx: &Ctx, circle: &str, out: Option<&Path>, dir: Option<&Path>) -> Result<Report> {
+    human_only("writing a circle's records out")?;
     let node = ctx.open_node()?;
     let circle = find_circle(&node, Some(circle))?;
     let bundles = crate::library::bundle_store(&node.home);
     let lines = governance::export_circle(&node.store, &bundles, &circle.circle_id)?;
+    if let Some(dir) = dir {
+        let dir = crate::home::absolute(dir)?;
+        let written = carrier::write_dir(&dir, &lines)?;
+        return Ok(Report::new(
+            json!({
+                "dir": dir.display().to_string(),
+                "records": lines.len(),
+                "written": written,
+            }),
+            format!(
+                "Wrote {written} new file(s) for {} to {} ({} record(s) in all).\n\
+                 Anyone who can read that directory can read the circle's roll and proposals.",
+                safe(&circle.name),
+                dir.display(),
+                lines.len()
+            ),
+        ));
+    }
     let text = lines.join("\n") + "\n";
     match out {
         Some(path) => {
@@ -48,12 +84,18 @@ fn export(ctx: &Ctx, circle: &str, out: Option<&std::path::Path>) -> Result<Repo
     }
 }
 
-fn import(ctx: &Ctx, file: &std::path::Path) -> Result<Report> {
-    let node = ctx.open_node()?;
-    let bytes = crate::home::read_bounded_file(file, 64 * 1024 * 1024)?;
-    let text = String::from_utf8(bytes).map_err(|_| usage("that file is not UTF-8 text"))?;
+/// Verifies and stores what `path` offers, then lets every circle settle: results are
+/// published, passed amendments notarized (on the founder's node) and the rules in
+/// force applied to the agent's skills directory.
+fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
+    let source = carrier::read_source(path)?;
     let bundles = crate::library::bundle_store(&node.home);
-    let summary = governance::import_lines(&node.store, &bundles, text.lines(), node.now())?;
+    let summary = governance::import_lines(
+        &node.store,
+        &bundles,
+        source.lines.iter().map(String::as_str),
+        node.now(),
+    )?;
 
     let mut t = Text::new();
     t.line(format!(
@@ -68,7 +110,7 @@ fn import(ctx: &Ctx, file: &std::path::Path) -> Result<Report> {
     let mut removed = Vec::new();
     let mut charters = Vec::new();
     for circle in node.store.circles()? {
-        let settled = governance::settle(&node, &circle, &installer, &[])?;
+        let settled = governance::settle(node, &circle, &installer, &[])?;
         if let Some(seq) = settled.charter_notarized {
             t.line(format!(
                 "  {}: an amendment passed; issued charter {seq}. Export again so the others receive it.",
@@ -107,20 +149,62 @@ fn import(ctx: &Ctx, file: &std::path::Path) -> Result<Report> {
         installed.extend(settled.applied.installed);
         removed.extend(settled.applied.removed);
     }
+    if source.ignored > 0 {
+        t.line(format!(
+            "  {} entr{} in the directory {} not record files and {} left alone.",
+            source.ignored,
+            if source.ignored == 1 { "y" } else { "ies" },
+            if source.ignored == 1 { "is" } else { "are" },
+            if source.ignored == 1 { "was" } else { "were" },
+        ));
+    }
     if summary.stored > 0 {
         t.line("See what needs your vote: `peerharness proposal list`.");
     }
-    Ok(Report::new(
+    Ok((
         json!({
             "stored": summary.stored,
             "duplicate": summary.duplicate,
             "deferred": summary.deferred,
             "rejected": summary.rejected,
             "bundles": summary.bundles,
+            "ignored": source.ignored,
             "installed": installed,
             "removed": removed,
             "charters_issued": charters,
         }),
-        t.finish(),
+        t,
     ))
+}
+
+/// `events sync <dir>`: import the directory, then write what it lacks.
+fn sync(ctx: &Ctx, dir: &Path, circle: Option<&str>) -> Result<Report> {
+    human_only("writing a circle's records out")?;
+    let node = ctx.open_node()?;
+    let circle = find_circle(&node, circle)?;
+    let dir = crate::home::absolute(dir)?;
+    let (mut json, mut t) = if dir.is_dir() {
+        import(&node, &dir)?
+    } else {
+        (json!({}), Text::new())
+    };
+    // After the import: a charter this node just issued, or a result it just published,
+    // goes out in the same run.
+    let bundles = crate::library::bundle_store(&node.home);
+    let lines = governance::export_circle(&node.store, &bundles, &circle.circle_id)?;
+    let written = carrier::write_dir(&dir, &lines)?;
+    t.line(format!(
+        "Wrote {written} new file(s) for {} to {} ({} record(s) in all).",
+        safe(&circle.name),
+        dir.display(),
+        lines.len()
+    ));
+    if written > 0 {
+        t.line("Share them: commit and push that directory (or copy it to the others).");
+        t.line("Anyone who can read it can read the circle's roll, proposals and ballots.");
+    }
+    json["dir"] = Value::String(dir.display().to_string());
+    json["records"] = json!(lines.len());
+    json["written"] = json!(written);
+    Ok(Report::new(json, t.finish()))
 }

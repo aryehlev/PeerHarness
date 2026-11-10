@@ -15,8 +15,9 @@ inside an agent's session.
 > **Status: pre-release, not audited.** Writing rules down, reviewing and installing
 > them, founding a circle, admitting and removing members by vote, proposing, voting,
 > repealing and installing passed rules all work today from the command line.
-> Nodes exchange their signed events as a file you send however you like. The live
-> peer-to-peer transport exists as a library but is not wired into the CLI yet. See
+> Nodes exchange their signed events as a file you send however you like, or through
+> a directory in a git repository you already share. The live peer-to-peer transport
+> exists as a library but is not wired into the CLI yet. See
 > [What works today](#what-works-today) before relying on anything.
 
 ## See it run
@@ -113,6 +114,7 @@ The precise rules are in [docs/architecture.md](docs/architecture.md), section 1
 | `proposal create`, `list`, `show`, `vote`, `adopt`, `refuse` | work, tested end to end |
 | `rule list`, `rule opt-out`, `rule opt-in`, `rule repeal` | work, tested end to end |
 | `events export`, `events import` (signed events as a file) | work, tested end to end |
+| `events sync <dir>` (the circle as a directory in a repository you already share) | works, tested end to end |
 | `init`, `status`, `doctor`, `observe demo`, `inbox`, `export --local` | work |
 | `watch claude --install` / `--remove`: the hooks, and the skill that asks your agent to report corrections | work, tested; other hooks and settings in the file are kept, with a backup |
 | `question`, `circle revoke`, `reset` | not implemented yet (they say so) |
@@ -212,6 +214,26 @@ from every member's machine, and never a skill someone installed for themselves.
 An exported file contains the circle's roll and proposals in clear text. Send it only
 to members. Every node verifies each line itself, so the channel you send it over does
 not need to be trusted for integrity.
+
+### Through a repository you already share
+
+Instead of sending files around, keep the circle in a directory of your team's
+repository. Every signed record is its own small file named by its hash, so two people
+adding records at the same time never conflict.
+
+```sh
+peerharness events sync .peerharness/team --circle team   # import what is there, write what is missing
+git add .peerharness && git commit -m "votes" && git push
+# the others: git pull, then the same sync command
+```
+
+A new member joins from the same directory: `peerharness circle join .peerharness/team
+--expect-fingerprint <fingerprint>`. The directory is not trusted: a record that was
+edited is refused and put back, and files that are not records are never read. Two
+things to know before you use it. Everyone who can read the repository can read the
+roll, the proposals and the ballots. And someone who can write to it can delete
+records, which delays them for whoever has not synced yet, but cannot forge or change a
+vote.
 
 ## Known limits
 

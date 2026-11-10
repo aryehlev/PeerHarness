@@ -484,9 +484,8 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
     let node = ctx.open_node()?;
     let now = node.now();
     let me = node.device_key();
-    let bytes = crate::home::read_bounded_file(&args.invite_file, 64 * 1024 * 1024)?;
-    let text = String::from_utf8(bytes).map_err(|_| usage("that file is not UTF-8 text"))?;
-    let lines: Vec<&str> = text.lines().collect();
+    let source = crate::carrier::read_source(&args.invite_file)?;
+    let lines: Vec<&str> = source.lines.iter().map(String::as_str).collect();
     let charter = charter_for(&lines, &me, now).ok_or_else(|| {
         refused(
             "that file holds no charter with this device on its roll. Ask a member to run \

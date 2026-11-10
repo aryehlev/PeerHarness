@@ -1516,6 +1516,16 @@ steps 1 to 7. The founding charter of a circle has `seq` 1 and the founder as it
 member, so the founder's single approval admits the second member, and the first two
 members together admit the third.
 
+A node may also hold charters **older** than its anchor, as history. It accepts one only
+if the oldest charter it already holds names it in `previous` and has the next `seq`
+(and the charter verifies under the circle root key like any other). The hash link is
+the whole justification: the node does not re-count the votes behind the steps before
+its anchor. History never becomes the current charter and gives no one a vote. Its use
+is that PROPOSAL, VOTE and RESULT events naming an earlier charter can then be checked
+against that charter's roll and kept, which is how the proposals listed in `carried`
+reach a node that joined later. The founder publishes charter 1 as a CHARTER event for
+this.
+
 ### 14.6 Adoption is local
 
 Sections 14.2 to 14.5 establish facts about the circle. What a node does with a rule in

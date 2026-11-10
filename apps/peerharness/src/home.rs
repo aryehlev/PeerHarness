@@ -166,9 +166,9 @@ pub fn mode_of(path: &Path) -> Option<u32> {
     }
 }
 
-/// Atomically writes `contents` to `path` with mode 0600: a temp file in the same
-/// directory, fsync, then rename. An existing file is replaced.
-pub fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
+/// Writes `contents` to `path` atomically (temp file in the same directory, fsync,
+/// rename) with permissions `mode` on Unix.
+fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
     let dir = path
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
@@ -185,7 +185,7 @@ pub fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+        opts.mode(mode);
     }
     let result = (|| -> Result<()> {
         let mut f = opts
@@ -195,7 +195,7 @@ pub fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
             .with_context(|| format!("cannot write {}", tmp.display()))?;
         f.sync_all().context("cannot flush file")?;
         drop(f);
-        set_mode(&tmp, 0o600)?;
+        set_mode(&tmp, mode)?;
         fs::rename(&tmp, path).with_context(|| format!("cannot write {}", path.display()))?;
         Ok(())
     })();
@@ -203,6 +203,17 @@ pub fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// Writes a file only its owner can read (0600), atomically.
+pub fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
+    write_atomic(path, contents, 0o600)
+}
+
+/// Writes a file meant to be shared, for example committed to a repository (0644),
+/// atomically.
+pub fn write_shared_file(path: &Path, contents: &[u8]) -> Result<()> {
+    write_atomic(path, contents, 0o644)
 }
 
 /// Reads a regular file of at most `max` bytes (symlinks are followed only if the target

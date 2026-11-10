@@ -393,7 +393,7 @@ pub enum RoleArg {
 
 #[derive(Debug, Args)]
 pub struct CircleJoinArgs {
-    /// Events file exported by a member after your admission passed.
+    /// Events file or shared directory a member wrote after your admission passed.
     pub invite_file: PathBuf,
     /// Skip the prompt; requires --expect-fingerprint.
     #[arg(long)]
@@ -508,19 +508,39 @@ pub enum ProposalCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum EventsCommand {
-    /// Write everything this node holds for a circle to a file (or stdout).
+    /// Write everything this node holds for a circle to a file, a directory or stdout.
     ///
-    /// The file contains the circle's roll and proposals. Give it only to members.
+    /// The output contains the circle's roll and proposals. Give it only to members.
     /// The recipient verifies every signature; the carrier does not need to be trusted.
     Export {
         #[arg(long, value_name = "NAME")]
         circle: String,
         /// Output file (0600; default stdout).
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", conflicts_with = "dir")]
         out: Option<PathBuf>,
+        /// Output directory: one small file per record, named by its hash.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
     },
-    /// Verify and import events from a file another member exported.
-    Import { file: PathBuf },
+    /// Verify and import events from a file or directory another member wrote.
+    Import {
+        /// A JSON lines file, or a directory written by `events export --dir` or `events sync`.
+        file: PathBuf,
+    },
+    /// Bring this node and a shared directory in line: import what the directory has,
+    /// then write what it lacks.
+    ///
+    /// Meant for a directory your team already shares, such as one in a git repository:
+    /// sync, commit, push; the others pull and sync. Every record is its own file, so
+    /// nothing needs merging. Anyone who can read the directory can read the circle's
+    /// roll, proposals and ballots.
+    Sync {
+        /// The shared directory (created if missing).
+        dir: PathBuf,
+        /// The circle to write (default: the only circle on this node).
+        #[arg(long, value_name = "NAME")]
+        circle: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -654,6 +674,24 @@ mod tests {
             ],
             vec!["peerharness", "events", "export", "--circle", "team"],
             vec!["peerharness", "events", "import", "team.jsonl"],
+            vec![
+                "peerharness",
+                "events",
+                "export",
+                "--circle",
+                "team",
+                "--dir",
+                ".peerharness/team",
+            ],
+            vec!["peerharness", "events", "sync", ".peerharness/team"],
+            vec![
+                "peerharness",
+                "events",
+                "sync",
+                ".peerharness/team",
+                "--circle",
+                "team",
+            ],
             vec!["peerharness", "rule", "opt-out", "pnpm", "--circle", "team"],
             vec![
                 "peerharness",
@@ -685,5 +723,17 @@ mod tests {
         assert!(
             Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
+        assert!(Cli::try_parse_from([
+            "peerharness",
+            "events",
+            "export",
+            "--circle",
+            "team",
+            "--out",
+            "a",
+            "--dir",
+            "b"
+        ])
+        .is_err());
     }
 }
