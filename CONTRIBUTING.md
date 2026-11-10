@@ -73,6 +73,14 @@ cargo run -p peerharness -- init --keystore file
 `init --kdf-profile fast-insecure-test` makes key derivation fast for tests and demos. It
 is test-only, prints a warning, and must never be used for real keys.
 
+`cargo run` and `cargo build` make a debug build. A debug build obeys the
+`PEERHARNESS_TEST_*` stand-ins that the tests use in place of a confirmation window, a
+notification and Claude Code's `claude` command, so it is for development and tests and
+not for daily use. `peerharness doctor` says so in a `build` line and `peerharness
+status` in a shorter one. A release build does not read those variables. No command
+may refuse because the build is a debug build: the test suite and `demo/two-peers.sh`
+run debug builds.
+
 ## Checks every change must pass
 
 These are exactly what CI runs (`.github/workflows/ci.yml`):

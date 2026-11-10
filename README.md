@@ -130,9 +130,11 @@ That is why its wording and its name differ from the rule in the rest of this pa
 which a person or their agent wrote down as one sentence.
 
 `demo/two-peers.sh`, in a clone of this repository, shows the same with two separate
-processes talking over the network. It needs a Rust toolchain, and the first build
-takes a few minutes. Run it from your own terminal: inside a coding agent's session
-the steps that vote are refused, by design.
+processes talking over the network. By default it builds the checkout first, which
+needs a Rust toolchain and takes a few minutes. To run it with a binary you already
+have: `PEERHARNESS_BIN="$(command -v peerharness)" demo/two-peers.sh`. Run it from
+your own terminal: inside a coding agent's session the steps that vote are refused,
+by design.
 
 ## Set it up
 
@@ -259,7 +261,7 @@ says what this stops and what it does not.
 | "No, use pnpm here, not npm." | Your agent does that, notes the rule ("Use pnpm, not npm, in this repository.") and tells you it did |
 | "Keep it." | A window shows the exact rule. Proceed installs it for your own agent. Nothing is shared |
 | "What is in my PeerHarness inbox?" | It lists the rules it noted and the proposals that wait for your vote |
-| "Propose the pnpm rule to acme." | A window shows the exact text that would leave your machine. Proceed puts it to your team's vote |
+| "Propose the pnpm rule to acme." | A window shows the exact text that would leave your machine, and what the scanner found in it. Proceed puts it to your team's vote |
 | "Vote approve on it." | The window above. Proceed signs your ballot |
 | "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
 
@@ -267,6 +269,13 @@ A rule is never installed by itself: you keep it, or your team votes it in. Once
 majority has approved, it is installed for every member's agent as an
 [Agent Skill](https://agentskills.io/specification). At the end of a turn, at most
 once a day, Claude Code tells you how many proposals wait for your vote.
+
+A vote never replaces a skill it did not install. If you kept a rule of your own under
+the same name with another text, the team's rule is held on your machine and nothing
+is written: `peerharness rule list` says so and names the two ways out. A repeal
+removes only what a vote installed, so your own rule is still there afterwards.
+`peerharness-notes` is the name of PeerHarness's own skill: no rule can be noted, kept
+or proposed under it, and a rule of that name is never installed.
 
 ### Words
 
@@ -304,10 +313,19 @@ same kind of window.
 * **A node that stays reachable.** Your agent keeps it reachable only while its
   session is open. For one that stays up:
   `peerharness daemon --internet --sync-every 60`, and on macOS add `--notify`.
-* **Removing a member, leaving, changing the rules of the vote and repealing a rule.**
-* **Editing or rejecting a noted rule**, and keeping one that the scanner calls
-  high-risk.
+* **Removing a member, leaving, changing the rules of the vote and repealing a rule**,
+  and your ballot on any of them. For a change to the charter the terminal says what
+  it does before you sign, read from the signed proposal and not from its title.
+* **Editing or rejecting a noted rule**, and keeping or proposing one that the scanner
+  calls high-risk.
+* **Following a rule again after you opted out** (`peerharness rule opt-in`). It shows
+  the rule's exact text and where it goes, and asks. It has no window and no tool.
+  Opting out needs nobody and works anywhere.
+* **Writing your data or a team's records to a file** (`peerharness export --local`,
+  `peerharness events export`), and creating a node with a plaintext key.
 * **Joining a circle of more than about five members:** its roll does not fit a window.
+* **Everything but noting a rule, without windows:** on Linux, where none can be
+  shown, or after `peerharness setup --no-dialogs`. Setup says so when it ends.
 
 All of it is in [PeerHarness from a terminal](docs/terminal.md).
 
@@ -326,9 +344,15 @@ All of it is in [PeerHarness from a terminal](docs/terminal.md).
 * **Membership is voted too.** Admitting or removing a member and changing the
   thresholds are amendments that need a vote. The founder's key signs the resulting
   charter, and nodes reject any charter that a passed vote does not justify.
+* **You are shown what you sign.** An approval of a rule is refused until the rule's
+  exact text is on your node. The window shows that text, and in a terminal
+  `peerharness proposal show` does. A ballot on an amendment in a terminal says what
+  the amendment changes, read from its signed content: who is admitted or removed and
+  with which device, the thresholds old and new, and by name the rules it would drop
+  or bring back. The title its proposer wrote comes after that, marked as their words.
 * **A passed rule takes effect.** It is installed for every member as an
-  [Agent Skill](https://agentskills.io/specification). Any member can opt out of a
-  single rule on their own machine.
+  [Agent Skill](https://agentskills.io/specification), unless a skill of your own has
+  its name. Any member can opt out of a single rule on their own machine.
 
 No vote and no charter can switch these off:
 
@@ -351,20 +375,29 @@ The whole suite was last run for this page on 2026-11-10, on Linux, at commit
 none failed, and 10 were skipped because they need multicast, the public network or
 the real OS keychain. CI runs the same suite on Linux and macOS.
 
+Findings of that check were then fixed, and tests were added with the fixes
+([ADR-041 to ADR-045](docs/decisions.md)). The coding agents that made the fixes ran
+the suite again on Linux. The message of the last of those commits, `ea2e942`, records
+912 passed, none failed and 10 skipped. No run on macOS is recorded for them.
+
 | Part | How it was checked |
 |---|---|
 | Voting: charter, roll, proposals, ballots, results, amendments, repeal | tested |
 | One person's loop: `note`, `keep`, `review`, `skills install` and `uninstall` | tested |
 | Circle life: create, invite, join, remove, leave, amend, devices, revoke, questions, opt-outs | tested, with separate nodes |
-| Exchange by address over QUIC, by shared directory, by file | tested, with separate processes. After a revocation an import can go wrong: see [Known limits](#known-limits) |
+| What you are shown before a ballot on an amendment, in a terminal | tested, with separate nodes and stock commands: a device proposed for another member, new thresholds, an admission that would drop or bring back a rule, and an approval refused until the text of a carried rule is on the node. The two amendments the pre-launch check crafted by hand are unit tests with hand-signed events |
+| A vote and the skills you already have | tested, with three separate nodes: a rule named like PeerHarness's own skill, signed the way a modified client can, is never installed, and a rule kept with `keep` is neither replaced nor removed by a vote on its name |
+| What a session is refused beyond the windows: `rule opt-in`, `export --local`, a plaintext `init`, a file path given to the join tool | tested, the first three with each of the two session variables. Not tried: the prompt of `rule opt-in` on a real terminal, which the tests answer with `--yes` |
+| Exchange by address over QUIC, by shared directory, by file | tested, with separate processes. A line or record file that is not strict JSON is refused, and a join from a file that holds several circles takes the one whose fingerprint you gave: both tested. After a revocation an import can go wrong: see [Known limits](#known-limits) |
 | Exchange across the internet (`--internet`) | tested against a private stand-in network. By hand on the real network on 2026-11-10, before v0.1.0, from one machine with both ends behind the same router. Not tried: two different routers, IPv6, Linux |
 | Finding members on a local network (`--lan`) | its tests need real multicast, so they do not run in CI and are run by hand, on macOS so far. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
 | Deciding in a window from inside Claude Code | macOS only. Tested with a stand-in window: keeping a rule, proposing, voting, inviting and joining. By hand on macOS 14.2, before v0.1.0: the real window opened, closed unanswered and refused a text that does not fit. Not tried: clicking its buttons. Joining in a window fits a circle of up to about five members on a laptop screen |
 | The same steps as tools (`peerharness mcp`) | tested with a scripted client, a stand-in window and a stand-in network. By hand before v0.2.0, with Claude Code 2.1.322 on macOS, a stand-in window and a private network in place of the public one ([ADR-038](docs/decisions.md)): asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable. Three runs, not a measure of how often an agent gets it right. No run with a real agent of noting, keeping, proposing, voting or joining is recorded. Other MCP clients: not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | `--notify` is macOS only. Tested with separate processes and a stand-in notification. By hand, once: macOS accepted the real notification, and whether the banner shows depends on your notification settings for Script Editor. The timer of `--sync-every` has no test beyond its argument |
-| Setting up (`peerharness setup`, and the prompt in [Set it up](#set-it-up)) | tested with a stand-in for Claude Code's `claude` command: it creates the node, connects the agent, registers the tools, changes nothing on a second run and is refused inside an agent's session. By hand: the three `claude mcp` commands it relies on, against Claude Code 2.1.322 with a throwaway configuration. Not tried: the prompt through an agent |
+| Setting up (`peerharness setup`, and the prompt in [Set it up](#set-it-up)) | tested with a stand-in for Claude Code's `claude` command: it creates the node, connects the agent, registers the tools, changes nothing on a second run and is refused inside an agent's session. Without windows it ends with what works from the terminal, tested on Linux. By hand: the three `claude mcp` commands it relies on, against Claude Code 2.1.322 with a throwaway configuration. Not tried: the prompt through an agent |
 | The install script and the release binaries | the script is tested against a stand-in release: a matching checksum installs, a changed archive does not. In the pre-launch check, on 2026-11-10, the script installed the v0.3.0 x86_64 Linux binary in a container: the checksum matched, and the binary ran `demo` and two processes voting over QUIC on loopback. The aarch64 Linux binary has not been run. For the macOS binaries the last run on record is of v0.2.0 |
+| The two-process demo script (`demo/two-peers.sh`) | tested on Linux with the binary of this tree named by `PEERHARNESS_BIN` and a `cargo` that fails if it is called. Not tried with a release binary |
 | Windows | not supported |
 
 ## Known limits
@@ -380,7 +413,8 @@ the real OS keychain. CI runs the same suite on Linux and macOS.
   and the repealed rule is in force and installed again. Rules that a later charter
   carried over are not counted again. The other members have no such power. A
   compromised device counts until its revocation reaches each node. Whether a
-  revocation should reach back like this is under review.
+  revocation should reach back like this is an open decision
+  ([ADR-044](docs/decisions.md)).
 * **After a revocation, an import can leave a member on the old charter.** A node that
   learns of a revocation before it has accepted a charter change the revoked device
   took part in can refuse the records that justify that charter. This was seen with a
@@ -392,6 +426,21 @@ the real OS keychain. CI runs the same suite on Linux and macOS.
   half. A majority can therefore shrink the roll and then reach two thirds alone: of
   five members, three can remove the other two and then change the rules by
   themselves.
+* **An amendment carries the rule set of the moment it was proposed.** If a rule
+  passes or is repealed while an amendment is still open, approving the amendment
+  undoes that: once it passes, the rules in force are exactly the ones it carries.
+  The ballot preview and `peerharness proposal show` name each such rule, and an
+  approval is refused while your node cannot show the text of a rule the amendment
+  would bring in. Nothing stops the vote otherwise, and a member who approved before
+  the rule set changed is not told. All of this is what this program shows its own
+  user: every node still accepts what a passed amendment carries.
+* **A rule can be in force and not on your machine.** A team rule whose name a skill
+  of your own already has, with another text, is held on your machine. It stays in
+  force for the team, and nobody else is told. `peerharness rule list` shows it. If
+  two teams pass rules of one name with different texts, the first one installed
+  stays and the other is held. One case is not covered: a rule you keep after a vote
+  already installed the identical text still counts as the vote's, so a repeal
+  removes it.
 * **One rule per name, across scopes.** Members can be given scopes (`circle invite
   --scope`), and a rule can be voted on by the members of one scope. A rule adopted in
   a narrower scope under the same name replaces a team-wide rule of that name, for
@@ -406,7 +455,10 @@ the real OS keychain. CI runs the same suite on Linux and macOS.
   A longer one has to be shortened before it can be proposed (`peerharness review
   <candidate-id> --edit "…"`).
 * **Safety checks are heuristics.** Redaction and the risk scanner catch common cases
-  and miss others. They never prove that a text is safe.
+  and miss others. They never prove that a text is safe. The scanner rates as
+  high-risk a text that tells the agent to fetch a URL and follow what it finds, and
+  one that gives instructions about PeerHarness's own guard. Both go by wording: the
+  same thing in other words is not found, and a harmless rule can be.
 * **A rule is text that your agent acts on.** "PeerHarness never executes a rule"
   means exactly that: PeerHarness runs nothing from it, and a rule cannot pre-approve
   a tool. Your agent follows the rule, and your agent can run commands. Read a rule as
@@ -414,9 +466,11 @@ the real OS keychain. CI runs the same suite on Linux and macOS.
 * **The agent guard is not a wall.** Consent steps recognize an agent's session by an
   environment variable: the one Claude Code sets, or `PEERHARNESS_AGENT_SESSION` for
   another agent's wrapper. That stops an agent that is trying to help, not a process
-  that hides the variable on purpose, and not an agent whose shell sets neither. With
-  the windows on, your agent chooses when one appears; reading what it shows before
-  you click is your part.
+  that hides the variable on purpose, and not an agent whose shell sets neither. Such
+  an agent is refused only where a step finds no terminal, with a message that tells
+  it to stop and ask you, and nothing keeps it from passing `--yes`. With the windows
+  on, your agent chooses when one appears; reading what it shows before you click is
+  your part.
 * **Joining installs rules you have not read.** The join window, like the terminal's
   preview, shows the root fingerprint, the charter and how many rules the charter
   carries. It does not show their names or their text. In a team whose charter makes
@@ -429,7 +483,9 @@ the real OS keychain. CI runs the same suite on Linux and macOS.
   the one your agent runs while its session is open. There is no background service
   yet: a sync reaches only the members whose daemon is running at that moment.
 * **Confirmation windows are macOS only**, and need a key in the OS keychain (the
-  default there). On Linux every decision still needs your own terminal.
+  default there). On Linux every decision still needs your own terminal. Of the tools
+  your agent is given, only the one that notes a rule runs there, and every other one
+  answers that the step is yours.
 * **Internet mode identifies your device to strangers.** Servers run by volunteers see
   the same public key with your IP address wherever you connect. Whether two nodes
   get a direct connection depends on their routers.

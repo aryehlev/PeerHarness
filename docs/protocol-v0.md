@@ -547,7 +547,11 @@ error.
   proposal. A ballot is therefore bound to every byte of what was proposed, including
   the bundle digest of an `adopt` proposal; a ballot for proposal A never counts for a
   proposal B that differs in anything. There is no separate `bundle_digest` member.
-* `rationale`: 0 to 2000 code points, multi-line.
+* `rationale`: 0 to 2000 code points, multi-line. The reference client is stricter
+  about what it signs (non-normative): one line of at most 200 code points, without
+  control or invisible characters, because the rationale is shown inside the preview
+  its user decides on. It accepts the longer form from others and prints it line by
+  line behind a mark.
 * Only `approve` affects the count. `reject` and `revise` are the signed record of
   dissent and of requested changes (section 14.2).
 * Reference rule: `proposal_id` names a stored PROPOSAL in the same circle with the same
@@ -2029,6 +2033,19 @@ force when it is proposed; a voter's client SHOULD show which rules a proposed l
 drops and which it adds before the human votes (`carried_diff`), because approving an
 amendment also approves the rule set it carries forward.
 
+The title of an `amend` proposal is text its proposer wrote and binds nothing: what is
+voted on is `next`. The reference client therefore describes an amendment from `next`
+and the charter the proposal names, and shows the title afterwards as the proposer's
+words (non-normative; a ballot in its terminal, and `proposal show`). It lists the
+members admitted and removed with their device fingerprints and scopes, every device
+added to or taken from a member who stays, the thresholds old and new, and by skill
+name the rules the `carried` list drops and adds, an added rule with its exact text.
+It refuses to sign an approval of an amendment that would bring into force a rule
+whose text the node does not hold, or that lists an id the node does not hold as an
+`adopt` proposal. None of this changes what a node accepts: the steps below are the
+whole rule, and a `carried` list that is not exact still becomes the rule set when
+the amendment passes.
+
 Once the amendment has reached its threshold, the holder of the circle root key signs
 the next charter and publishes it in a CHARTER event (section 8.6).
 
@@ -2068,11 +2085,12 @@ A node's **first** charter for a circle is its trust anchor and is not subject t
 steps: the founder creates charter 1, and a node that joins later starts from whatever
 charter it is given (in the reference implementation: the newest CHARTER event whose
 roll lists the joining device, in a file or directory of exported events or among the
-events fetched from a member's node, section 13.6) and takes that charter's `carried`
-list on the root's signature. From then on every charter it accepts must pass steps 1
-to 7. The founding charter of a circle has `seq` 1 and the founder as its only
-member, so the founder's single approval admits the second member, and the first two
-members together admit the third.
+events fetched from a member's node, section 13.6; among the charters of one circle,
+which is the one with the root fingerprint the owner expected when the source holds
+several) and takes that charter's `carried` list on the root's signature. From then
+on every charter it accepts must pass steps 1 to 7. The founding charter of a circle
+has `seq` 1 and the founder as its only member, so the founder's single approval
+admits the second member, and the first two members together admit the third.
 
 A node may also hold charters **older** than its anchor, as history. It accepts one only
 if the oldest charter it already holds names it in `previous` and has the next `seq`
@@ -2105,6 +2123,14 @@ order:
 A node starts in *follow* after its owner accepts a charter with `rules.binding = true`
 and in *ask* otherwise; the owner may choose *ask* at any time, and *follow* again with
 a confirmation. `rules.binding` has no other effect, and none on counting.
+
+Before these steps the reference implementation holds a rule back when installing it
+would replace something the vote did not put there: a skill of the same name with
+another text that the owner installed for themselves, or the client's own skill,
+whose name (`peerharness-notes`) no rule is installed under. A held rule is in force
+like any other; only this machine does not have it, and nothing is sent because of
+it. A proposal is not refused at intake for its `skill_name`, so that every node
+stores and counts the same.
 
 Opting out is local, takes effect at once and needs nobody's permission. Nothing is sent
 because of it. The owner may separately choose to put it on the circle's record with a
@@ -2183,8 +2209,9 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   revocation: an adopted rule leaves the rule set, and a repeal lapses, which puts its
   target back in force. Proposals a charter lists in `carried` are not counted again
   (section 14.4). The root key holder can therefore undo, alone, a result that passed
-  by a margin of one. Whether a revocation should reach back is under review; a second
-  implementation should not rely on either answer yet.
+  by a margin of one. Whether a revocation should reach back is an open decision
+  (`docs/decisions.md`, ADR-044); a second implementation should not rely on either
+  answer yet.
 * **A revocation can keep a node from following the charter chain.** A decision event
   whose author is revoked locally is rejected, not deferred (section 12.4), and a
   RESULT that lists a revoked device's ballot does not verify (section 14.3). A node
@@ -2192,6 +2219,11 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   RESULT cannot accept that charter or any later one. In the reference implementation
   this was reproduced when importing a file or a shared directory, whose records are
   not in the order they were made. It is a defect, to be fixed.
+* **An amendment replaces the rule set.** Nothing in section 14.5 requires `carried`
+  to equal the rules in force. An amendment proposed before a rule passed, or before
+  a repeal passed, undoes that vote when it passes, and a `carried` entry needs no
+  RESULT of its own. Showing the difference to the voter is left to clients (the
+  SHOULD in section 14.5).
 * **Questions follow the current roll at arrival.** A QUESTION or ANSWER is judged
   against the charter the receiving node holds when it arrives (section 12.4), so nodes
   that hold different charters at that moment can differ on whether they keep it.
@@ -2472,7 +2504,16 @@ or different:
   `{"bundle": {"digest": "sha256:…", "skill_md": "…"}}`. The same objects can be kept
   one per file in a directory, named `event-<64 hex of the event id>.json` and
   `bundle-<64 hex of the bundle digest>.json`; a name is a convenience and is not
-  trusted. The receiver applies sections 7, 12.4 and 14 to every record as it does to a
+  trusted. A record is parsed as strictly as a frame (section 3.1): at most 1,048,576
+  bytes for the line or file, checked first; nesting at most 9; integers only; no
+  member twice at any level. It has exactly one member: `event`, an object, or
+  `bundle`, an object with exactly the strings `digest` and `skill_md`. A `null` or
+  any other member beside them makes it no record. A line that is not a record is
+  skipped and counted, and the other lines are still read. The receiver applies
+  sections 7, 12.4 and 14 to every record as it does to a
   pushed event (there is no pusher to check), and accepts a bundle only if a stored
   `adopt` proposal names its digest. A new member can join from such a file or
-  directory, as well as from a member's node (section 13.6).
+  directory, as well as from a member's node (section 13.6). When the source holds
+  charters of more than one circle that list the joining device, the reference client
+  looks only at the circle with the root fingerprint its owner expected, and stops
+  when the owner gave none: a charter's `seq` never chooses between circles.

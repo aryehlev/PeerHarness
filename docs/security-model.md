@@ -33,7 +33,7 @@ it must be given only to members.
 | received and shared content | event log, bundle store | questions, answers, proposals, votes, skills |
 | installed skills and agent settings | `~/.claude/skills/`, `./.claude/skills/`, `~/.claude/settings.json` | they change what the coding agent does |
 | known peers and sync cursors | `peerharness.db` | which devices this node exchanges with, at which addresses, and how far each exchange got. A daemon with a sync interval dials these addresses unattended (4.26) |
-| export file | wherever `peerharness export --local --out` writes it | contains observation text and drafts |
+| export file | wherever `peerharness export --local --out` writes it | contains observation text and drafts, and the circles' signed records. The command is refused inside an agent's session (4.17) |
 
 PeerHarness never stores private key bytes in SQLite. The SQLite database itself is
 **not encrypted**: it relies on file permissions (home 0700, files 0600) and on the
@@ -124,13 +124,21 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   of the charter, which changes only by a passed amendment. A credential, even a genuine
   one signed by the root key, gives none of these (ADR-026, ADR-027). Joining, from a
   file or from a member's node, shows the root fingerprint and requires confirmation;
-  scripted joins need `--expect-fingerprint`.
+  scripted joins need `--expect-fingerprint`. A file or a shared directory can hold
+  charters of more than one circle that list the joining device, because anyone who
+  can write there can sign a charter of a circle of their own, with any number. The
+  join then looks only at the circle with the expected root fingerprint, refuses when
+  none has it, and without a fingerprint stops and asks for one: a charter's number
+  never chooses between circles (ADR-043).
 * **Residual risk.** The human fingerprint check is the only link between a root key and
   the real organization. A user who joins a circle from a forged file, or from a hostile
   node (4.21), without checking the fingerprint out of band joins the attacker's circle
   (this does not compromise the real circle, but the user may then share content with
-  the attacker). Fingerprints are 80 bits, enough for human comparison but not a
-  cryptographic commitment.
+  the attacker). A planted circle that is the only one in a file is shown like any
+  other, with its fingerprint to check. Someone who can write to a shared directory
+  can make a join without a fingerprint stop, by adding a second circle. Fingerprints
+  are 80 bits, enough for human comparison but not a cryptographic commitment, and two
+  root keys with the same fingerprint in one source are not told apart.
 
 ### 4.3 Stolen or duplicated votes, invented voters
 
@@ -248,7 +256,15 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   evaluated on every request, never cached. Decision events (PROPOSAL, VOTE, RESULT),
   CHARTER and REVOCATION are permanent on purpose: replaying one changes nothing,
   because an approval cannot be counted twice or withdrawn, a proposal counts only under
-  the charter it names, and an old charter can never follow the current one.
+  the charter it names, and an old charter can never follow the current one. Records
+  that arrive as a file or as a directory are parsed like a frame from the wire
+  (`carrier::parse_record`, ADR-043): each line or record file goes through the strict
+  parser under a limit of 1 MiB that is applied first, and must be an object with the
+  one member a record has. A member stated twice at any level, a second member beside
+  `event` or `bundle`, or a number that is not an integer makes it no record; it is
+  counted as refused and the rest of the file is imported. The event inside is then
+  held to the limits and checks of an event from a peer, which refuse an unknown
+  member and an explicit `null` at every level.
 * **Residual risk.** Time checks use the local clock. A node with a badly wrong clock may
   accept expired credentials, questions and answers or reject valid ones; the outcome of
   a vote does not depend on any clock. A valid event relayed by another member is
@@ -292,8 +308,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   frontmatter parser rejects every key outside a short allowlist. Beyond that, skills
   are strictly validated and scanned by an advisory risk scanner (credential requests,
   `curl | sh`, reverse shells, exfiltration endpoints, "ignore previous instructions",
-  hidden Unicode, long encoded blobs, destructive commands and more). What then happens
-  to a rule that passed a vote is the owner's standing choice
+  hidden Unicode, long encoded blobs, destructive commands and more). Two of its
+  high-risk rules are about what a rule can do to the vote itself (ADR-043): a text
+  that tells the agent to fetch a URL and follow what it finds there, which could
+  change after the text was voted on, and a text that gives an instruction about
+  PeerHarness's own guard (the variables that mark an agent's session, `--yes`, its
+  configuration). The findings are shown when a rule is proposed, on a ballot and
+  before an install. What then happens to a rule that passed a vote is the owner's
+  standing choice
   (`ph-governance::adoption_step`): in `ask` mode nothing is installed without an
   explicit confirmation; in `follow` mode a passed rule is installed without asking,
   **except** that a high-risk scanner finding always requires the owner's confirmation,
@@ -308,7 +330,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   majority approving a rule says nothing about whether it is safe. The owner's controls
   are choosing `ask` mode, opting out of a rule, a local policy, and leaving the circle.
   The instruction-only rule covers the two Claude Code mechanisms we know of; other
-  agents, or future versions, may treat other syntax as executable.
+  agents, or future versions, may treat other syntax as executable. The two scanner
+  rules above go by wording: the same instruction in other words, or with a URL that
+  has no scheme, has no finding, and a harmless rule can have one (the scanner does
+  not read negation, so "never pass --yes to peerharness" is found too). A rule that
+  is already installed stays installed when a newer scanner finds something in it.
 
 ### 4.11 Archive and path traversal
 
@@ -425,7 +451,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     `crates/ph-governance/tests/adversarial.rs`
     (`founder_device_can_be_revoked_and_its_ballots_stop_counting`) shows the count
     changing, and the preview of `circle revoke` says "including ballots it already
-    cast". Whether a revocation should reach back like this is under review.
+    cast". Whether a revocation should reach back like this is an open decision,
+    with its options in ADR-044.
   * **After a revocation, an import can leave a member on the old charter.** A
     decision event signed by a revoked device is refused for good by a node that
     already knows the revocation, old ballots and results included. If such a result
@@ -434,7 +461,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     file and with a shared directory, where the order of the records is not the order
     in which they were made; importing again does not help, and the way out today is
     `peerharness reset` and joining again. It contradicts "does not depend on arrival
-    order" below and is to be fixed.
+    order" below and is to be fixed; how depends on the decision in ADR-044.
   * **It can block.** It can refuse to notarize a passed amendment, which freezes the
     roll and the voting rules. Rules can still be proposed, passed and repealed.
   * **It can split.** If two conflicting amendments both pass, it chooses one; if it
@@ -459,12 +486,19 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   counts as a human action; human-only lifecycle transitions are enforced in
   `ph-core::transition`. An agent may write a note (`peerharness note --from-agent`),
   which is a candidate in the inbox and nothing more, and at most 20 unreviewed agent
-  notes are kept. Every consent step refuses inside an agent session, with or without
+  notes are kept. A note written inside a session is an agent's note whatever flags
+  were passed, so an agent cannot label its text as the owner's or go round that cap
+  (ADR-042). Every consent step refuses inside an agent session, with or without
   `--yes` (architecture 12.1): among them asking and answering a question, announcing a
   stance, leaving a circle, proposing an amendment, revoking a device, placing a scope's
   rules in a project and switching to `follow`. A cancelled or refused command saves
   nothing. Two things are deliberately not consent steps: switching to `ask`, and opting
-  out of a rule on one's own machine, which is never refused.
+  out of a rule on one's own machine, which is never refused. Opting back in is one
+  (ADR-042): `rule opt-in` puts a rule's text back into the owner's agent, so it shows
+  that text and the directory it goes to and asks in the terminal, with no window and
+  no tool. Two more commands refuse inside a session: `export --local`, on standard
+  output as well as to a file, like `events export`; and `init` with the plaintext
+  keystore, whose warning has to reach a person.
 * **Confirmation windows (ADR-033).** If the owner turned them on in their own terminal,
   three steps started inside a session are put to the person in a window of the
   operating system instead of being refused: proposing a rule, a ballot on a proposed
@@ -472,8 +506,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   make the window appear. It cannot answer it: only a click on "Proceed" counts,
   "Cancel" is the default, `--yes` is ignored, and the exact preview is shown in full
   or the step is refused. A rule with a high-risk finding is never decided in a window.
-  Every other consent step refuses inside a session as before, including the one that
-  turns windows on.
+  That holds for proposing one as well: `proposal create` shows the scanner's findings
+  and asks about a high-risk rule in the terminal only (ADR-041). The session also
+  chooses a ballot's rationale, which is shown in the window. It is held to one line
+  of at most 200 characters without control or invisible characters, so it cannot lay
+  out a second "rule, exactly as proposed" above the real one. Every other consent
+  step refuses inside a session as before, including the one that turns windows on.
 * **Windows for inviting and joining (ADR-037).** Three steps about who is in a circle
   can be asked the same way, under a setting of their own that the same command turns
   on after previewing every step it allows: proposing to admit a member, a ballot on an
@@ -493,7 +531,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   (`status`, `inbox`, founding a circle, the exchange, the daemon). What it does add:
   an agent that was given the tools can start the exchange and the daemon on the
   public network without a window, once the owner allowed the circle steps and read,
-  in that preview, what the network's servers see.
+  in that preview, what the network's servers see. The tool that joins a circle takes
+  what parses as a peer id or an address and names nothing on disk, so it cannot make
+  `circle join` read a file the agent wrote (ADR-042). On a machine that cannot show a
+  window, setup leaves the windows off, so every tool but `note` is refused; the
+  refusal there names the terminal guide and no setting (ADR-045).
 * **Keeping a rule for oneself (ADR-040).** A noted rule is installed only on its
   owner's yes, which can now be one click in a window that shows the exact text. An
   agent can note a rule and open that window, and cannot install anything. A rule with
@@ -505,13 +547,21 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   may start and registers the tools with Claude Code by running `claude mcp add` after
   showing that line. An agent's session is refused the whole command, so an agent that
   was asked to "set PeerHarness up" can install the binary and must then ask its user
-  to run setup themselves.
+  to run setup themselves. For a node that is already there, setup names the keystore
+  that holds its key and warns about a plaintext one (ADR-045).
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,
   is not stopped by it, and what remains is that consent needs a terminal or an explicit
-  `--yes`. An agent running as the owner can also edit the skills directory and the
-  database directly, and can use a device key whose keystore unlocks without the owner
+  `--yes`. The refusal for a missing terminal names `--yes` as something a person
+  passes in a script they wrote, and tells a coding agent to stop and ask; that is
+  wording, and nothing keeps such an agent from passing the flag. Only `CLAUDECODE`
+  and `PEERHARNESS_AGENT_SESSION` are read. A debug build also obeys the stand-ins the
+  tests use in place of the window, the notification and the `claude` command, so
+  whoever sets its environment can name the program that answers a window; `doctor`
+  and `status` say when a binary is one, and release builds do not read them. An agent
+  running as the owner can also edit the skills directory and the database directly,
+  and can use a device key whose keystore unlocks without the owner
   (section 4.6). These rules protect against accidents and against other people. They
   do not protect an owner from their own compromised session. With confirmation windows
   on, three more things hold. The agent decides when a window appears and what it asks,
@@ -575,10 +625,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   after a change is exactly that list, so nodes converge. A proposal counts only under
   the **current** charter: members who have left cannot pass anything by signing under
   an old one, even if together they were a majority of it (the "long-range" case), and
-  an amendment cannot be replayed onto a later charter.
+  an amendment cannot be replayed onto a later charter. What a member is shown before
+  they sign a ballot on an amendment is in 4.29.
 * **Residual risk.**
   * **Founder liveness and equivocation** (4.16): no charter change without the root
     holder; a root that signs two successors can split a circle.
+  * **An amendment carries a rule set** (4.29). When it passes, the rules in force are
+    exactly its `carried` list. One that was proposed before a rule passed, or before
+    a repeal passed, undoes that vote. The voter is told and nothing stops it.
   * **Turnout.** Not voting counts as not approving. An absent member makes every
     threshold harder to reach, and removing them is itself a vote. In a circle of two,
     both must approve everything.
@@ -586,7 +640,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     learns of the revocation.
   * **"Passed" can turn back after a revocation** (4.16): a result that needed the
     revoked device's ballot is open again, and a repeal that needed it lapses. After
-    a revocation an import can also leave a node on the old charter (4.16).
+    a revocation an import can also leave a node on the old charter (4.16). What a
+    revocation should do to ballots already counted is an open decision (ADR-044).
   * **A majority decides.** Members outvoted on a rule still get it in a binding circle
     unless they opt out (4.10). A majority can also remove a member.
   * **Votes are public to the circle.** Ballots are signed and attributable, like a
@@ -800,6 +855,78 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   are untested; the dependency surface grew by the DHT, identify, AutoNAT, relay and
   DCUtR implementations of libp2p and a DNS resolver (4.19).
 
+### 4.29 What a voter is shown before a ballot
+
+* **Threat.** A member approves something other than what they think. An amendment's
+  title says one thing and its content does another: "Admit dave" over a roll that
+  also replaces another member's device key, a changed threshold, or a `carried` list
+  that names a rule nobody voted on. An amendment that was honest when it was proposed
+  would now drop a rule passed since, or bring back one repealed since. Text another
+  member wrote, or a rationale the agent chose, imitates PeerHarness's own lines in a
+  preview.
+* **Mitigation.** In the terminal, `proposal vote` and `proposal show` describe an
+  amendment from signed content only (ADR-041, `apps/peerharness/src/amendment.rs`):
+  the proposal's `next` against the charter the proposal names. Members admitted and
+  removed are shown with device fingerprints and scopes; for a member who stays, every
+  device added and taken; the thresholds and binding or advisory, old and new; and by
+  name each rule in force the amendment would drop and each it would bring into force,
+  the latter with its exact text. The description always has the same three parts,
+  each saying what changes or that nothing does. The title comes after it, quoted and
+  labelled as the proposer's words. An approval is refused, with `--yes` too, while
+  the node cannot show what the amendment would put in force: a carried rule's text
+  is missing, a carried id is not a rule proposal the node holds, or the charter the
+  proposal names is not held. A window decides only a ballot on a rule without a
+  high-risk finding or on a sole admission, and takes the member and the device from
+  the amendment (4.17). A rationale typed for `proposal vote` is one line of at most
+  200 characters without control or invisible characters. Text other members wrote (a
+  rationale, a summary, an opt-out's reason, the text of a carried rule) is printed
+  line by line behind a mark, so no line of it passes for one of PeerHarness's own.
+* **Residual risk.** This protects a voter who uses this client and reads what it
+  shows. The outcome is unchanged: an amendment that reaches its threshold still
+  replaces the rule set with its `carried` list on every node, and the founder's node
+  notarizes it with nobody present (4.26). A member with a modified client can still
+  sign such an amendment, and `check_successor` and `Passed::carried` accept what they
+  accepted before. A member who approved before the rule set changed is told nothing.
+  The rules are compared with this node's own view of what is in force, and are not
+  compared for a proposal that names an earlier charter. In the window for a sole
+  admission the proposer's title still stands in the second line, above the lines read
+  from the amendment. Rule text is printed without a mark in the previews of `proposal
+  create`, a ballot on a rule, `proposal adopt` and `keep`, and whether a rule's body
+  can imitate the scanner's lines there is not addressed. `proposal list` and `inbox`
+  list an amendment by its title, and a repeal ballot names its target by the
+  proposer's title and a short id. The mark is per line of text, not per row of a
+  terminal: a very long line wraps without it.
+
+### 4.30 A passed rule and the skills already on a machine
+
+* **Threat.** A rule passes under the name of a skill the owner already has, with
+  another text: PeerHarness's own skill (`peerharness-notes`), which tells the agent
+  where its part ends, or a rule the owner kept for themselves. The vote's text
+  replaces it on the machine of every member who follows the circle, including one who
+  never voted and saw no window, and a repeal later deletes it. Or an agent gives its
+  own note the name of PeerHarness's skill.
+* **Mitigation.** A vote installs over a managed skill only when `rule_installs`
+  records that a vote of the same circle put exactly that text at that place
+  (ADR-042). Otherwise the rule is held: nothing is written, in any mode and whatever
+  the owner confirms, and `rule list` and every command that settles say so, with the
+  two ways out (remove one's own skill and adopt the rule, or opt out). A rule named
+  `peerharness-notes` is never installed, and `note`, `review`, `keep` and `proposal
+  create` refuse the name. A repeal, a lapsed rule and an opt-out remove only a file
+  that a vote of that circle installed and that still has exactly the recorded text. A
+  hold is local, like an opt-out: it never changes the tally or the rule set, and
+  nothing is sent because of it.
+* **Residual risk.** A held rule is in force for the circle and not on that member's
+  machine, and the others cannot see that. The first installer of a name on a machine
+  keeps it: of two circles' rules with one name and different texts, the second is
+  held. A copy the owner keeps after a vote installed the identical text still counts
+  as the vote's, so a repeal or an opt-out removes it. A library skill named
+  `peerharness-notes` that an earlier version saved can still be installed by its
+  owner with `skills install`, which asks them. On a node where an earlier version let
+  a vote overwrite PeerHarness's own skill, the vote's text is removed and the skill
+  comes back only when the owner runs `peerharness setup` or `watch claude --install`
+  again. None of this stops a process running as the owner from writing to the skills
+  directory itself (4.17).
+
 ## 5. Privacy limitations
 
 These are limits of the design, not bugs, and they apply even when everything works as
@@ -853,10 +980,9 @@ intended.
   is encrypted; a daemon that syncs on a timer shows a regular pattern (4.26), one
   started with `--lan` announces its device key and port to the local network (4.27),
   and one started with `--internet` shows its device key and IP address to servers of
-  the public libp2p network, along with the device keys it looks up (4.28).
-  Invite
-  files contain the circle name, root key, addresses and the invitee's credential; treat
-  them as sensitive.
+  the public libp2p network, along with the device keys it looks up (4.28). The
+  events file that `circle invite` writes for the invitee, outside a session, holds
+  the roll and the proposals in clear: give it only to the invitee.
 * **Local data is stored in plaintext SQLite.** Observations (redacted prompt text) are
   kept for 14 days by default in a database protected only by file permissions and disk
   encryption.
@@ -885,15 +1011,15 @@ directory and QUIC on loopback.
 | threats | tests |
 |---|---|
 | 4.1, 4.5, 4.7 (peers without membership, impersonation, limits) | `crates/ph-network/tests/network.rs`, `adversarial.rs`, `codec.rs`; `crates/ph-governance/tests/authz.rs`, `roll_oracle.rs`; `apps/peerharness/src/peer.rs` (unit tests of the request handler; `a_cursor_pages_through_a_log_larger_than_the_known_list`: a log larger than the `known` list, and a cursor that does not widen what is read); `apps/peerharness/tests/network.rs` (separate processes over QUIC: a stranger, a node that claims a shared circle, a device on no roll that asks to join); `apps/peerharness/tests/circle_vote.rs` (an outsider's node stores nothing) |
-| 4.2, 4.9 (forged, expired or revoked membership) | `crates/ph-identity/tests/attacks.rs`, `membership.rs`; `apps/peerharness/tests/circle_life.rs` (`the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted`: only the founder's node and only a person can revoke, not its own device; the roll and the electorate are unchanged; the device's ballots stop counting, new ones are refused by every node that knows, and its own node stops signing once it knows) |
+| 4.2, 4.9 (forged, expired or revoked membership) | `crates/ph-identity/tests/attacks.rs`, `membership.rs`; `apps/peerharness/tests/circle_life.rs` (`the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted`: only the founder's node and only a person can revoke, not its own device; the roll and the electorate are unchanged; the device's ballots stop counting, new ones are refused by every node that knows, and its own node stops signing once it knows); `apps/peerharness/tests/strict_import.rs` (`the_expected_fingerprint_says_which_circle_is_joined_not_the_highest_charter`: a file and a directory that hold a second circle with a higher charter number, a wrong fingerprint refused and the right one joined; `without_a_fingerprint_a_file_with_several_circles_is_not_joined_from`) |
 | 4.3, 4.20 (stolen, duplicated or invented votes; counting; results; succession) | `crates/ph-governance/tests/tally.rs`, `result.rs`, `ruleset.rs`, `succession.rs`, `adversarial.rs`; `apps/peerharness/tests/circle_vote.rs`, `demo.rs` |
 | 4.4, 4.16 (scope access, the root-key holder) | `crates/ph-governance/tests/authz.rs`, `succession.rs`; `apps/peerharness/tests/circle_life.rs` (the revocation test above) |
 | 4.6 (keys at rest) | `crates/ph-identity/tests/keystore.rs` |
-| 4.8 (replay, malformed and oversized input) | `crates/ph-protocol/tests/adversarial.rs`, `proptests.rs`, `vectors.rs`; `crates/ph-store/tests/events.rs` |
-| 4.10 to 4.12 (hostile skills, paths, script execution) | `crates/ph-skills/tests/malicious.rs`, `bundles.rs`, `install.rs`, `frontmatter_props.rs` |
+| 4.8 (replay, malformed and oversized input) | `crates/ph-protocol/tests/adversarial.rs`, `proptests.rs`, `vectors.rs`; `crates/ph-store/tests/events.rs`; `apps/peerharness/tests/strict_import.rs` (`a_line_of_a_file_is_parsed_as_strictly_as_a_frame_from_the_wire`: a member twice in the event and in the line, an unknown member, an explicit null, a line of 1 MiB and one byte refused, a line of exactly 1 MiB imported; `a_record_file_of_a_directory_is_parsed_as_strictly`; `a_charter_in_a_line_that_is_not_strict_json_is_not_joined_from`); `apps/peerharness/src/carrier.rs` (`a_record_is_one_member_in_strict_json`, `a_record_is_held_to_a_size_and_a_depth_before_it_is_read`) |
+| 4.10 to 4.12 (hostile skills, paths, script execution) | `crates/ph-skills/tests/malicious.rs`, `bundles.rs`, `install.rs`, `frontmatter_props.rs`; `crates/ph-skills/src/scanner.rs` (the two rules of ADR-043, each in both directions: `fetching_a_url_and_following_it_is_high`, `a_reference_to_read_is_not_an_instruction_to_obey`, `an_instruction_about_peerharness_own_guard_is_high`, `mentioning_a_session_or_a_flag_is_not_tampering`) |
 | 4.13 (secrets and transcripts) | `crates/ph-core/src/redact.rs` (unit tests), `crates/ph-store/tests/privacy.rs`, `apps/peerharness/tests/local_loop.rs` |
 | 4.14 (hook payloads, settings) | `crates/ph-observer/tests/hooks.rs`, `settings.rs`, `spool.rs` |
-| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope); `apps/peerharness/tests/agent_windows.rs` (confirmation windows, with a stand-in window program: off until the owner turns them on, which a session cannot do; only "Proceed" decides, and a decline, no answer, an unknown answer, a failing or missing window program and a text too long to show all leave nothing behind; every other consent step is still refused with windows on; inviting, a ballot on a plain admission and joining are asked in a window only under their own setting, show the fingerprints from the signed content, leave nothing behind when declined, and write no events file from a session; removing, leaving, changing the rules of the vote and a ballot on any other amendment are still refused); `apps/peerharness/tests/mcp_server.rs` and the unit tests of `apps/peerharness/src/mcp.rs` (the MCP server, started without the session variables: a tool above what the owner allowed runs nothing, a consent step is declined or confirmed only by the stand-in window, an argument that begins with `-` and an unknown tool are errors, and the daemon a tool started stops when the client leaves); `apps/peerharness/tests/agent_windows.rs` also covers keeping a rule for oneself (refused without windows and with windows allowed before that step existed, installed only by the click, what was shown is what is installed, a high-risk rule refused in a session and in a terminal); `apps/peerharness/tests/setup.rs` (setup, with a stand-in for Claude Code's `claude` command: refused inside a session with nothing created, nothing connected or registered without the person's yes, and no second registration); `apps/peerharness/src/window.rs` (unit tests: the height estimate against measured dialogs, the text read back exactly by the real `osascript` on macOS) |
+| 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope); `apps/peerharness/tests/agent_windows.rs` (confirmation windows, with a stand-in window program: off until the owner turns them on, which a session cannot do; only "Proceed" decides, and a decline, no answer, an unknown answer, a failing or missing window program and a text too long to show all leave nothing behind; every other consent step is still refused with windows on; inviting, a ballot on a plain admission and joining are asked in a window only under their own setting, show the fingerprints from the signed content, leave nothing behind when declined, and write no events file from a session; removing, leaving, changing the rules of the vote and a ballot on any other amendment are still refused); `apps/peerharness/tests/mcp_server.rs` and the unit tests of `apps/peerharness/src/mcp.rs` (the MCP server, started without the session variables: a tool above what the owner allowed runs nothing, a consent step is declined or confirmed only by the stand-in window, an argument that begins with `-` and an unknown tool are errors, and the daemon a tool started stops when the client leaves); `apps/peerharness/tests/agent_windows.rs` also covers keeping a rule for oneself (refused without windows and with windows allowed before that step existed, installed only by the click, what was shown is what is installed, a high-risk rule refused in a session and in a terminal); `apps/peerharness/tests/setup.rs` (setup, with a stand-in for Claude Code's `claude` command: refused inside a session with nothing created, nothing connected or registered without the person's yes, and no second registration; without windows it suggests nothing to ask the agent; it names the keystore of a node that is already there and warns about a plaintext one); `apps/peerharness/tests/session_gates.rs` (`opting_back_into_a_rule_is_the_owners_step_and_shows_the_rule`: refused with either session variable, with `--yes` and with windows on, while opting out stays immediate; `the_local_export_is_refused_inside_a_session`, to a file and to standard output; `the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not`; `a_note_written_inside_a_session_is_an_agents_note`, with the cap of 20; `the_join_tool_takes_a_peer_id_or_an_address_and_never_a_path`; `without_a_terminal_nobody_is_told_to_pass_yes`); `apps/peerharness/tests/ballot_previews.rs` (`a_high_risk_rule_is_never_proposed_from_a_window`: refused with a stand-in window that would say proceed, nothing saved or signed; `a_rationale_is_one_line_and_cannot_lay_out_the_preview`: a line break, a control or hidden character and 201 characters are refused in a session and out of one, and no ballot exists afterwards); `apps/peerharness/tests/mcp_server.rs` (`where_no_window_can_be_shown_a_refused_tool_does_not_point_back_to_setup`, not on macOS); `apps/peerharness/tests/first_run.rs` (`a_debug_build_says_that_it_is_one_and_refuses_nothing`); `apps/peerharness/src/window.rs` (unit tests: the height estimate against measured dialogs, the text read back exactly by the real `osascript` on macOS) |
 | 4.19 (the install script) | `apps/peerharness/tests/install_script.rs` (against a release in a temporary folder: a matching checksum installs one file that runs; a changed archive, a missing checksum and a version that is not a tag install nothing) |
 | 4.21, 4.22 (joining from a node, the removal notice) | `apps/peerharness/tests/network.rs` (separate processes over QUIC: a new member joins from a member's node, the wrong root fingerprint is refused and stores nothing, a device on no roll is offered nothing; a removed member's node is shown the vote, verifies it, drops the circle's rule, and can neither sync nor rejoin afterwards); `apps/peerharness/src/peer.rs` (`a_member_voted_off_is_told_of_the_vote_and_nothing_else`: the exact set of records, no later charter, every other request refused, a never-member and a revoked device refused) |
 | 4.23 (questions and answers) | `apps/peerharness/src/governance.rs` (`questions_and_answers_are_authorized_by_the_roll`: a device on no roll, a member outside its scopes, a revoked device, an answer without its question or in another scope; `the_local_guard_keeps_noise_out_of_the_inbox`: duplicate, muted, blocked, over quota); `apps/peerharness/tests/circle_life.rs` (`a_question_is_asked_and_answered_by_members_of_the_roll`) |
@@ -902,6 +1028,8 @@ directory and QUIC on loopback.
 | 4.27 (discovery on the local network) | `crates/ph-network/tests/discovery.rs` (`discovery_is_off_by_default_and_then_nothing_is_reported` always runs; five tests that need multicast are `#[ignore]`d); `apps/peerharness/tests/network.rs` (`members_find_each_other_on_the_local_network`, `#[ignore]`d for the same reason) |
 | 4.28 (internet mode) | `crates/ph-network/tests/internet.rs` (a private hub on loopback that answers like the public servers: off by default and then no further protocol is spoken; with the mode on the node serves nobody; a peer is found by its id, through a relay and at its own address; addresses from a lying server are filtered, bounded and never dialed; rate and connection limits hold for relayed peers; an exchange larger than a relay carries fails and says so; shutdown ends reservations and lookups; three tests against the public network are `#[ignore]`d), `internet_logs.rs` (no address in the log); `crates/ph-network/src/internet.rs` and `config.rs` (unit tests: which addresses count as public, the gate that keeps the node from dialing a peer the application named, the bounds, a loopback listener refused); `apps/peerharness/tests/network.rs` (`members_find_each_other_by_device_key_over_a_dht`, separate processes against that hub: a join by peer id, a sync that looks up the roll, a device on no roll is not looked up for a sync and is told nothing when it finds the node itself; `internet_mode_refuses_a_loopback_listener`) |
 | 4.25 (recorded opt-outs) | `apps/peerharness/src/governance.rs` (`a_stance_is_a_record_by_a_member_of_the_roll_and_counts_for_nothing`); `apps/peerharness/tests/circle_life.rs` (`an_opt_out_can_be_put_on_the_circles_record`: voluntary, refused for an agent while the opt-out itself stands, open to a member admitted after the rule passed); `crates/ph-protocol/tests/vectors.rs` (the STANCE vector) |
+| 4.29 (what a voter is shown) | `apps/peerharness/tests/amendment_ballots.rs` (separate nodes, stock commands, in a terminal: `a_ballot_on_a_device_names_the_device_and_whose_it_becomes`, `a_ballot_on_the_rules_of_the_vote_names_the_old_and_the_new`, `the_last_voter_is_told_which_rule_a_pending_admission_would_drop`, `the_last_voter_is_told_which_rule_a_pending_admission_would_bring_back`, `an_amendment_is_not_a_way_to_approve_a_rule_nobody_here_could_read`: the approval refused and nothing signed); `apps/peerharness/src/amendment.rs` (unit tests of the description, among them `an_admission_that_also_replaces_another_members_device_says_so` and `a_rules_text_cannot_pass_for_a_line_of_the_description`); `apps/peerharness/src/governance.rs` (`a_mislabelled_amendment_is_described_by_what_it_signs`, `a_carried_rule_nobody_voted_on_is_named_and_must_be_readable`: hand-signed events through `ingest`); `apps/peerharness/tests/ballot_previews.rs` (the rationale test above); `apps/peerharness/src/output.rs` (`every_line_of_a_members_text_carries_the_mark`) |
+| 4.30 (a passed rule and the owner's own skills) | `apps/peerharness/tests/vote_and_own_skills.rs` (three separate nodes: `a_voted_rule_named_like_peerharness_own_skill_is_never_installed`, with a proposal signed the way a modified client can; `a_vote_neither_replaces_nor_removes_a_rule_the_owner_kept_for_themselves`; `no_rule_can_take_the_name_of_peerharness_own_skill`); `apps/peerharness/src/governance.rs` (`a_vote_never_replaces_or_removes_a_skill_it_did_not_install`, `a_record_of_an_install_covers_only_the_text_it_names`, `a_copy_the_owner_installed_stays_hers_when_the_scope_moves_to_it`, `nothing_a_vote_passed_is_installed_under_the_name_of_peerharness_own_skill`); `apps/peerharness/src/agent_notes.rs` (`the_name_of_the_skill_is_reserved`) |
 
 Not covered by an automated test: 4.15 (untrusted repository content) beyond the
 project-scope symlink checks in `crates/ph-skills/tests/install.rs`, 4.18 (other local
@@ -913,3 +1041,9 @@ exercise real announcements need multicast on the local network and do not run i
 they are run by hand with `-- --ignored`. Of 4.28, nothing automated runs against the
 public network in CI, and a hole punch between two different routers has not been
 tried at all: the runs against the public network (ADR-032) were made from one machine.
+Of 4.17 and 4.29, no test types at a real terminal prompt or clicks a real window: the
+tests answer with `--yes` or with the stand-in window, and `session_gates.rs`,
+`ballot_previews.rs`, `setup.rs` and `mcp_server.rs` are compiled for debug builds on
+unix only, because the stand-ins exist only there. Of 4.30, the way back for a node
+that an earlier version let a vote overwrite (running `setup` again) has no test of
+its own.

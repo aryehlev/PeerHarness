@@ -239,6 +239,18 @@ Validation (stateless part in ph-protocol, stateful part in ph-governance):
 
 Remote timestamps are informational and are never the source of authorization truth.
 
+**Records as files.** A file of JSON lines and a directory of record files (ADR-019,
+ADR-025) carry one record per line or file: `{"event": <envelope>}` or `{"bundle":
+{"digest": "sha256:…", "skill_md": "…"}}`. `carrier::parse_record` is the one place
+where the application parses a record, and it parses it like a frame from the wire
+(ADR-043): `ph_protocol::jcs::parse_strict` under `carrier::RECORD_LIMITS`, which is
+1 MiB, checked before anything is parsed, and depth 9, one level more than a signed
+object may have. A record has exactly one member, and a `bundle` exactly `digest` and
+`skill_md`. A line that is not a record is counted as refused, and the rest of the
+file is imported. The event inside then goes through the six steps above in `ingest`.
+No record is read with plain `serde_json`, which keeps the last of two members with
+the same name.
+
 ## 6. Membership objects (ph-protocol types; issuance in ph-identity)
 
 ```json
@@ -292,7 +304,11 @@ Invite {
 * **Joining today (ADR-020).** `circle invite` puts the admission to the vote. Once it
   has passed and the next charter is issued, the inviter exports the circle's events to
   a file. `circle join <file>` picks the newest CHARTER event in it whose roll lists
-  this device, shows that charter and the root fingerprint, and on confirmation (or
+  this device, among the charters of one circle: when the file or directory holds
+  charters of several circles that list the device, only the circle with the expected
+  root fingerprint is looked at, a fingerprint that matches none refuses, and without
+  one the command stops and asks for it (`circle::charter_from_source`, ADR-043). It
+  shows that charter and the root fingerprint, and on confirmation (or
   `--yes` with `--expect-fingerprint`) takes it as the node's trust anchor. The
   earlier charters in the file are then stored as history when the anchor's chain names
   them by hash (section 8, ADR-024), so the proposals and ballots from before the node
@@ -736,6 +752,24 @@ amendment also approves the rule set it carries forward. Helpers build the commo
 amendments with `carried` filled in: `admit_member`, `remove_member`, `add_device`,
 `remove_device`, `change_rules`.
 
+**What the voter is shown** (ADR-041). `proposal vote` in a terminal and `proposal
+show` describe an amendment from signed content, never from its title
+(`apps/peerharness/src/amendment.rs`, fed by `governance::amendment_changes`): `next`
+against the charter the proposal names. The description has three parts, always in
+this order and always present. The roll: members admitted and removed with device
+fingerprints and scopes, and for a member who stays every device added and taken and
+any change of scopes. The rules of the vote, old and new. The rules in force: by skill
+name and proposal id, each rule that `next.carried` leaves out and each proposal it
+lists that is not in force on this node, the latter with the rule's exact text, every
+line behind a mark. The title follows, quoted, as the proposer's own words. `approve`
+is refused while the node cannot show what the amendment would put in force
+(`amendment::Changes::unread`): a carried rule's text is not in the bundle store, a
+carried id is not an `adopt` proposal of this circle on this node, or the named
+charter is not held. `reject` and `revise` are not refused. For a proposal that names
+a charter other than the current one the rules are not compared. This is display and
+one refusal in the application. `check_successor` and `Passed::carried` are unchanged:
+an amendment that passes still makes the rule set exactly its `carried` list.
+
 When the amendment has passed, the holder of the circle root key issues the next
 charter (`CircleAuthority::issue_next_charter`) and publishes it in a `CHARTER` event.
 
@@ -825,6 +859,21 @@ what one rule in force means on this machine, in this order:
   the recorded skill is removed, and only while the installed text still has the digest
   that was voted on. A skill the owner installed personally with `skills install` has
   no such record and is never removed by a vote (ADR-023).
+* **A vote installs over nothing it did not install** (ADR-042). Before `adoption_step`
+  is asked, and before the bundle is fetched, `apply_rules` checks each rule that binds
+  the node and is not opted out with `governance::held`. A rule is held when a skill
+  PeerHarness manages is at its place under its name with another text, or the same
+  text edited by hand, and `rule_installs` has no row of this circle with exactly that
+  digest at that place (`Held::OwnSkill`), or when its name is that of PeerHarness's
+  own skill, `peerharness-notes` (`Held::ReservedName`). A held rule is reported in
+  `Applied.held` and nothing is written, in either mode and when the owner confirmed.
+  The same unmodified text is no conflict: the rule counts as in place, and the copy
+  stays the owner's. A hold is local, like `LocalPolicy` and an opt-out. It never
+  changes whether the rule passed, and a proposal is never refused at `ingest` for its
+  name, so every node stores and counts the same.
+* **What waits.** `Applied.asking` lists a rule in force only when it is not installed
+  with the voted text and `adoption_step` says to ask. Each entry has the proposal id
+  and the reason, so every command prints the line that confirms it (`Waiting::line`).
 * **Leaving.** `circle leave` takes effect on the owner's machine at once
   (`circles.left_at`: nothing of that circle stays installed or is installed again) and
   puts the owner's removal from the roll to the vote. The roll changes only by that
@@ -832,8 +881,12 @@ what one rule in force means on this machine, in this order:
   notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step).
-  `rule list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force;
-  `proposal adopt` confirms a rule that is waiting for the owner. `circle invite`,
+  `rule list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force.
+  `rule opt-out` is immediate and unasked. `rule opt-in` is a confirmation step in the
+  terminal (ADR-042): its preview has the rule's exact text, the scanner's findings and
+  the install directory, and its confirmation counts as the one an install needs, so
+  the rule is installed in mode `ask` too. `proposal adopt` confirms a rule that is
+  waiting for the owner. Both refuse a held rule before they ask. `circle invite`,
   `remove`, `leave`, `amend` (the thresholds, binding or advisory) and `device add` /
   `remove` propose amendments. `circle revoke` is the emergency of 10.8. Not written
   yet: asking once before switching to `follow` when an amendment turns `binding` from
@@ -913,7 +966,8 @@ Outcomes depend on signatures and on the charter, never on a clock.
   charter that passed by a margin of one, alone, and the honest revocation of a lost
   device does the same. `crates/ph-governance/tests/adversarial.rs`
   (`founder_device_can_be_revoked_and_its_ballots_stop_counting`) shows the count
-  changing. Whether a revocation should reach back is under review.
+  changing. Whether a revocation should reach back is an open decision: ADR-044 has
+  the facts and the options.
 * **A revocation can strand a node on an old charter.** `authorize_by_roll` refuses a
   decision event from a locally revoked author, and that refusal is not retryable.
   `verify_result` and `check_successor` are given the same revocations. A node that
@@ -922,7 +976,13 @@ Outcomes depend on signatures and on the charter, never on a clock.
   charter, and refuses every later one as not following its own. This was reproduced
   with `events import` and with a shared directory, where records are not read in the
   order they were made. The node's owner has to `reset` and join again. It is a
-  defect: the outcome depends on the order of arrival, against 10.7 and 10.11.
+  defect: the outcome depends on the order of arrival, against 10.7 and 10.11. Its fix
+  depends on the decision in ADR-044.
+* **An amendment replaces the rule set with what it carries.** An amendment proposed
+  before a rule passed, or before a repeal passed, undoes that vote when it passes
+  (10.8). The reference client names each such rule to the voter and stops nothing:
+  no node refuses an amendment whose `carried` list is not exact, and the founder's
+  node notarizes it like any other (ADR-041).
 * **Founder equivocation.** If two different amendments both pass under one charter,
   which needs some member to approve both, the root chooses which to notarize. A root
   that signs two successors can split the circle: a node keeps the first valid one it
@@ -978,7 +1038,15 @@ The golden vectors tell a similar story end to end, including a charter change:
 * The risk scanner gives advisory warnings (credential requests, `curl | sh`, remote
   shells, exfiltration URLs, "ignore previous instructions", long base64 blobs,
   destructive commands). High-risk findings require an extra explicit confirmation flag.
-  Scanning never proves safety.
+  Scanning never proves safety. Two high-risk rules are about the vote itself
+  (ADR-043): `remote-instructions`, a text that tells the agent to fetch a URL and
+  follow, apply or execute what it finds there, and `peerharness-guard`, a text that
+  gives an instruction about PeerHarness's own guard (setting or clearing `CLAUDECODE`
+  or `PEERHARNESS_AGENT_SESSION`, `--yes` in a line that names peerharness, its
+  configuration). Both match wording, miss a rephrasing and can find a harmless rule.
+* The skill name `peerharness-notes` is reserved for PeerHarness's own skill (section
+  12.1): the application refuses it for a note, a kept rule and a proposal, and never
+  installs a voted rule under it (section 10.9).
 * Install target: `--agent claude --scope user` installs to `~/.claude/skills/<name>/SKILL.md`
   and `--scope project` installs to `./.claude/skills/<name>/`. The target can be overridden
   by `PEERHARNESS_CLAUDE_SKILLS_DIR` (used by tests and CI). The install is atomic: write to a
@@ -1027,16 +1095,25 @@ written down directly.
   the agent to run `note --from-agent` when the user corrects it
   (`apps/peerharness/src/agent_notes.rs`). `--no-agent-notes` skips it and `--remove`
   removes it. It is installed and marked like any managed skill, never replaces a skill
-  the owner wrote or edited, and never leaves the machine.
+  the owner wrote or edited, and never leaves the machine. Its name is reserved
+  (`agent_notes::refuse_reserved_name`, ADR-042): `note`, `review`, `keep` and
+  `proposal create` refuse a rule of that name, and no vote installs one (10.9).
 * An agent's note is advisory text from `Actor::System`. At most 20 unreviewed
   agent-reported notes are kept; further ones are refused until the owner reviews some.
+  Whether a note is an agent's is decided by where the command runs: inside a session
+  (`consent::in_agent_session`) it is one with or without `--from-agent`.
 * **Consent is human-only.** Every step that goes through `consent::confirm` or
   `consent::human_only` (reviewing, sharing, proposing, voting, installing, changing
   hooks) refuses with exit code 3 when the process runs inside a coding agent's session,
   with or without `--yes`. A session is recognized by `CLAUDECODE` (which Claude Code
   sets in every command it runs) or `PEERHARNESS_AGENT_SESSION` being set to anything
   but empty or `0`. This stops an agent that is trying to help. It is not a security
-  boundary: a process that clears the variable is not stopped by it (ADR-022).
+  boundary: a process that clears the variable is not stopped by it (ADR-022). Since
+  ADR-042 the same refusal covers `rule opt-in`, `export --local` (on standard output
+  too) and `init` with the plaintext keystore; a plain `init` and `rule opt-out` are
+  not consent steps. Without a terminal and without `--yes` a step refuses with a
+  message that names `--yes` as the person's own, for a script they wrote, and tells a
+  coding agent to stop and ask (`consent::no_terminal`).
 * **Three steps can be asked in a window** (ADR-033). When the owner has turned it on
   (`peerharness setup`, or `watch claude --install --dialogs`; stored as `[agent] windows` in `config.toml`,
   off by default, never settable from a session), `proposal create`, `proposal vote` on
@@ -1048,7 +1125,11 @@ written down directly.
   preview is not printed into the session. A text that would not fit on the screen is
   not shown in part: the step is refused. A rule with a high-risk scanner finding, a
   ballot on anything but a rule, and every other consent step refuse inside a session
-  as before. The reporting skill then also names these three commands and `inbox`, and
+  as before. That includes `proposal create`: it shows the scanner's findings and goes
+  through `consent::confirm` alone when one is high-risk (ADR-041). A rationale given
+  to `proposal vote` is one line of at most 200 characters without control or
+  invisible characters (`proposal::one_line_rationale`), checked before any preview or
+  window. The reporting skill then also names these three commands and `inbox`, and
   says that only the user's click decides.
 * **So can three steps about who is in a circle** (ADR-037), under a setting of their
   own (`[agent] circle_windows`, turned on by the same command, which then previews
@@ -1069,7 +1150,12 @@ written down directly.
   is asked or refused by the code above and by nothing in the server. Arguments are
   checked values, never flags. A tool runs only at the level the owner allowed
   (`config::Asked`, read at every call). `stay_reachable` runs the daemon as a child
-  for as long as the client keeps the server's input open.
+  for as long as the client keeps the server's input open. `join_circle` takes a value
+  that parses as a peer id or a multiaddr and names nothing on disk (`mcp::member_of`,
+  ADR-042). A refused tool says what the owner can do: set PeerHarness up when there
+  is no node, run `peerharness setup` when a window can be shown and was not allowed,
+  and, on a machine that cannot show a window, type the step in a terminal, with the
+  address of the terminal guide and no mention of `setup` (ADR-045).
 * **Keeping a rule for oneself** (ADR-040). `keep <candidate>` is `review --approve`
   and `skills install` in one consent step, through `consent::confirm_own_or_window`
   and its own setting (`[agent] own_windows`). It refuses a rule with a high-risk
@@ -1081,7 +1167,9 @@ written down directly.
   claude --install` with the windows where one can be shown, and Claude Code's `claude
   mcp add` for this binary, each with its preview and confirmation. It is refused
   inside a session before it does anything. The flag of `watch claude` is `--dialogs`
-  (`--windows` still works).
+  (`--windows` still works). It ends with two prompts to try only when the agent can
+  open a window; otherwise with what works from the terminal. For a node that is
+  already there it names the keystore, and warns about a plaintext one (ADR-045).
 
 ## 13. Privacy invariants (all crates)
 
