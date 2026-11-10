@@ -1,0 +1,8 @@
+{"kind":"user_prompt","repo":"demo-repo","session":"demo-session-1","text":"Please add a unit test for the date parser."}
+{"kind":"user_prompt","repo":"demo-repo","session":"demo-session-1","text":"No, use pnpm, not npm, for this repo."}
+{"kind":"agent_stop","repo":"demo-repo","session":"demo-session-1"}
+{"kind":"user_prompt","repo":"demo-repo","session":"demo-session-2","text":"Can you explain what the build script does?"}
+{"kind":"tool_failure","repo":"demo-repo","session":"demo-session-2","text":"Bash"}
+{"kind":"user_prompt","repo":"demo-repo","session":"demo-session-2","text":"No, use pnpm, not npm. We switched last month."}
+{"kind":"agent_stop","repo":"demo-repo","session":"demo-session-2"}
+{"kind":"user_prompt","repo":"demo-repo","session":"demo-session-3","text":"Rename the helper to formatDate and update the callers."}

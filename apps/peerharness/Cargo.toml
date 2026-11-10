@@ -16,6 +16,15 @@ name = "peerharness"
 path = "src/main.rs"
 
 [dependencies]
+ph-core.workspace = true
+ph-protocol.workspace = true
+ph-identity.workspace = true
+ph-store.workspace = true
+ph-network.workspace = true
+ph-observer.workspace = true
+ph-learning.workspace = true
+ph-governance.workspace = true
+ph-skills.workspace = true
 libp2p.workspace = true
 tokio.workspace = true
 futures.workspace = true
@@ -40,6 +49,8 @@ keyring.workspace = true
 rpassword.workspace = true
 similar.workspace = true
 ureq.workspace = true
+toml.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
