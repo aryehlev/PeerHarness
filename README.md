@@ -8,10 +8,9 @@ every member's agent follows it. There is no server: each person runs their own 
 with their own keys, and every node checks every signature and counts every vote for
 itself.
 
-Agents can suggest rules. Only people decide: no step that approves, shares, votes or
-installs can be answered from inside an agent's session. If you allow it, your agent
-can put a proposal, a ballot or an invitation in front of you in a window, and your
-click decides.
+Agents can suggest rules. Only people decide. Sharing a rule, voting, installing,
+inviting and joining each open a window on your screen with the exact text, and only
+your click counts. Your agent can open that window. It cannot answer it.
 
 > **Status: v0.2.0, early and not audited.** What this page describes works.
 > [What works today](#what-works-today) says how each part was tested and
@@ -19,42 +18,122 @@ click decides.
 
 ## Set it up
 
-On macOS with Claude Code, run these four lines once, in your own terminal:
+This is for Claude Code on macOS. On Linux, with another agent or with none, see
+[PeerHarness from a terminal](docs/terminal.md).
+
+### Ask your agent to do it
+
+Paste this into Claude Code:
+
+```text
+Set up PeerHarness for me: https://github.com/aryehlev/peerharness
+
+1. Install it:
+   curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
+2. Create my node:
+   ~/.local/bin/peerharness init
+3. Give yourself its tools:
+   claude mcp add --scope user peerharness -- ~/.local/bin/peerharness mcp
+4. The last step is mine. It is where I allow what you may start for me, so do not
+   run it yourself: it would be refused. Ask me to run this in my own terminal:
+   ~/.local/bin/peerharness watch claude --install --windows
+
+Then tell me to start a new Claude Code session, and what I can ask you there.
+```
+
+Step 4 shows you what your agent may start and what it never decides, and asks you to
+confirm. `--windows` means the confirmation windows on your screen, not the operating
+system.
+
+### Or do it yourself
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
-peerharness init
-peerharness watch claude --install --windows
-claude mcp add --scope user peerharness -- peerharness mcp
+~/.local/bin/peerharness init
+~/.local/bin/peerharness watch claude --install --windows
+claude mcp add --scope user peerharness -- ~/.local/bin/peerharness mcp
 ```
 
 | Line | What it does |
 |---|---|
 | 1 | Downloads the release binary for your machine, checks it against the release's `SHA256SUMS` and puts it in `~/.local/bin`. No `sudo`, and nothing else is changed |
 | 2 | Creates your key and your database |
-| 3 | Connects PeerHarness to Claude Code. It shows you what your agent may start and what it never decides, and asks you to confirm. `--windows` means the confirmation windows on your screen, not the operating system |
+| 3 | Connects PeerHarness to Claude Code. It shows you what your agent may start and what it never decides, and asks you to confirm |
 | 4 | Gives Claude Code those steps as tools |
 
-Then open Claude Code and ask. Each decision opens a window on your screen with the
-exact text, and only your click on Proceed counts:
+Then start a new Claude Code session.
+
+## Use it with Claude Code
+
+You work with your agent as you always do. When something is yours to decide, a window
+opens on your screen with the buttons Cancel and Proceed. This is the one for a vote:
+
+```text
+Your coding agent started this step. Nothing happens unless you choose Proceed.
+
+You are about to sign a ballot in acme:
+  approve on "Use pnpm, not npm, in this repository." (adopt rule use-pnpm-not-npm-repository)
+An approval cannot be withdrawn. The rule, exactly as proposed:
+
+---
+name: use-pnpm-not-npm-repository
+description: Use pnpm, not npm, in this repository.
+---
+
+# Rule
+
+Use pnpm, not npm, in this repository.
+
+If this conflicts with what the user asks for in the current session, follow the user and say that it conflicts with this rule.
+```
+
+Cancel is the default button. Nothing is shared, signed, installed or joined unless
+you click Proceed, and your agent cannot click it.
+
+### Rules
 
 | You say | What happens |
 |---|---|
-| "No, use pnpm here, not npm" | It does that, and notes the rule for you to review |
-| "What is my PeerHarness device key?" | It reads the key out. Whoever wants to join a team sends theirs to a member |
-| "Create a PeerHarness team called team" | It founds the circle and shows its root fingerprint |
-| "Invite Bob to team, his device key is ed25519:…" | A window names Bob's device. Proceed admits him, and the agent tells you what to send him: a peer id and the fingerprint |
-| "Join that team: peer id 12D3…, fingerprint dd63-…" | A window shows the fingerprint and who is in the circle. Proceed joins |
-| "Propose that rule to the team", "vote approve on it" | A window shows the exact rule. Proceed shares it, or signs your ballot |
+| "No, use pnpm here, not npm." | Your agent does that, and notes the rule for you: "Use pnpm, not npm, in this repository." |
+| "What is in my PeerHarness inbox?" | It lists the rules it noted and the proposals that wait for your vote |
+| "Propose the pnpm rule to acme." | A window shows the exact text that would leave your machine. Proceed puts it to your team's vote |
+| "Vote approve on it." | The window above. Proceed signs your ballot |
 | "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
 
-Tell the fingerprint by phone or in person: it is how the one who joins knows the
-circle is yours.
+Once a majority has approved, the rule is installed for every member's agent as an
+[Agent Skill](https://agentskills.io/specification). At the end of a turn, at most
+once a day, Claude Code tells you how many proposals wait for your vote.
 
-On Linux, with another agent or with none, everything works from a terminal: see
-[Start alone](#start-alone) and [Use it with your team](#use-it-with-your-team). To
-build from source instead of line 1, with Rust 1.89 or newer:
-`cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
+### A team
+
+One of you founds the team and invites. The others join.
+
+1. **The founder:** "Create a PeerHarness team called acme." The agent shows the team's
+   root fingerprint.
+2. **Whoever wants to join:** "What is my PeerHarness device key?" They send the key
+   to the founder.
+3. **The founder:** "Invite Dana to acme. Her device key is ed25519:…" A window names
+   Dana's device. After Proceed the agent keeps your node reachable and tells you what
+   Dana needs: your node's peer id, by any channel, and the root fingerprint, by phone
+   or in person.
+4. **Dana:** "Join the team. The peer id is 12D3…, the fingerprint is 8e8d-…" A window
+   shows the fingerprint and who is in the circle. Proceed joins.
+
+The fingerprint is how Dana knows the circle is yours, so it travels apart from the
+rest. With three or more members, admitting someone takes the others' votes too,
+asked in the same kind of window.
+
+### What still needs your terminal
+
+* **A rule for yourself alone**, without a team: `peerharness review <id> --approve`,
+  then `peerharness skills install <name>`.
+* **A node that stays reachable.** Your agent keeps it reachable only while its
+  session is open. For one that stays up:
+  `peerharness daemon --internet --sync-every 60 --notify`.
+* **Removing a member, leaving, changing the rules of the vote and repealing a rule.**
+* **Joining a circle of more than about five members:** its roll does not fit a window.
+
+All of it is in [PeerHarness from a terminal](docs/terminal.md).
 
 ## See it run
 
@@ -131,171 +210,6 @@ No vote and no charter can switch these off:
 4. A rule with high-risk content is never installed without asking you.
 5. You can refuse a rule and you can leave.
 
-## Start alone
-
-A rule of your own needs no circle and no network.
-
-```sh
-peerharness init
-
-# Write a rule down in one sentence. It becomes a candidate in your inbox.
-peerharness note "Run the tests before you say a task is done."
-
-# Read the exact skill text it would become, then save it to your library.
-peerharness review <candidate-id>
-peerharness review <candidate-id> --approve
-
-# Install it for Claude Code (~/.claude/skills/<name>/SKILL.md). Reversible.
-peerharness skills install <name>
-```
-
-`peerharness watch claude --install` is what lets your agent report corrections by
-itself. It shows what it adds before it adds anything: two hooks that store redacted
-observations locally, and a small skill that asks the agent to note a rule when you
-correct it. The note waits in `peerharness inbox`; approving it stays yours.
-`peerharness watch claude --remove` takes it out again.
-
-With `--windows` (macOS) you also decide without leaving the agent. A window opens
-with the exact text and the buttons Cancel and Proceed. Only your click on Proceed
-counts: the agent cannot answer the window and `--yes` does not skip it. It covers
-proposing a rule, your ballot on one, installing one that passed, inviting someone,
-your ballot on admitting someone and joining a circle. Everything else, and any text
-too long to show in full, still needs your own terminal.
-
-To experiment without touching your real setup:
-
-```sh
-export PEERHARNESS_HOME=$(mktemp -d) PEERHARNESS_CLAUDE_SKILLS_DIR=$(mktemp -d)
-export PEERHARNESS_CLAUDE_SETTINGS=$(mktemp -d)/settings.json
-peerharness init --keystore insecure-dev --insecure-dev-keystore   # plaintext key: experiments only
-```
-
-## Use it with your team
-
-Each member runs their own node. With `--internet`, nodes find each other from
-anywhere by peer id: no address, no port forwarding, no server of ours.
-
-From inside Claude Code you ask your agent, as in [Set it up](#set-it-up): one of you
-creates the team and invites, the other joins. With three or more members, admitting
-someone takes the others' votes too, asked in the same kind of window. The agent keeps
-your node reachable only while its session is open; for a node that stays up, run the
-daemon yourself (below). Without the `claude mcp add` line the agent runs the same
-commands from a skill, and you start the daemon. Other agents that speak MCP can use
-`peerharness mcp` too; only Claude Code was tried.
-
-### In a terminal, on any platform
-
-```sh
-# Both: create a node. `peerharness status` prints its device key and peer id.
-peerharness init
-
-# Alice founds the circle and tells Bob the root fingerprint, in person or by phone.
-peerharness circle create team
-
-# Alice proposes admitting Bob's device. She is the only member, so her approval passes it.
-# (It also writes an events file, for joining without a network. Not needed here.)
-peerharness circle invite <bob's device key> --circle team --member bob
-
-# Alice leaves her node running.
-peerharness daemon --internet
-
-# Bob finds her node by its peer id, checks the fingerprint, reads the charter and joins.
-peerharness circle join <alice's peer id> --internet --expect-fingerprint <fingerprint>
-
-# Alice puts a rule to the vote, and votes. Creating a proposal is not a vote.
-peerharness note "Use pnpm, not npm, in this repository."
-peerharness proposal create <candidate-id> --circle team
-peerharness proposal vote <proposal-id> approve
-
-# Bob fetches it, reads the exact text, and votes. Two of two: it passes.
-peerharness sync --internet
-peerharness proposal show <proposal-id>
-peerharness proposal vote <proposal-id> approve
-peerharness sync --internet     # Alice's node learns of it and installs the rule too
-```
-
-With three or more members a rule passes on a majority, and admitting or removing
-someone takes a vote of the current members.
-
-To hear about a vote when it happens, leave your node running like this:
-
-```sh
-peerharness daemon --internet --sync-every 60 --notify
-```
-
-It fetches from the other members every minute and, on macOS, shows a desktop
-notification within seconds of a proposal that needs your vote arriving. The
-notification says how many wait, never what they say. Without `--notify`, the end of
-your next turn in Claude Code tells you instead (with `watch claude --install`), once
-a day at most.
-
-### What `--internet` exposes
-
-It uses the public libp2p network (the one IPFS uses) to look a node up by its key,
-reach it through a relay, and connect directly where both routers allow it. It is off
-unless you pass the flag.
-
-* **A peer id is an address, not a key.** Whoever has it can find your node, and gets a
-  version greeting and nothing else: not even whether a circle exists there. Joining
-  takes the members' vote on that device's key, and the device must then prove it
-  holds that key.
-* **Strangers' servers see** your device's public key, your IP address, and which
-  device keys your node looks up. They are never told a circle, a roll or a vote.
-* **A relay sees** which two devices talk, when and how much. It cannot read or change
-  what they say: the connection is encrypted between the two devices.
-* **Your node looks up only** devices on a roll it holds, and the peer id you type for
-  `circle join`.
-
-What to expect: about ten seconds to join the network and a few more to find a member.
-Two nodes behind routers connect directly where both routers allow it. Where they do
-not, the public relays carry about 128 KiB per connection: enough for votes and short
-rules, and a larger sync continues where it stopped the next time. For a link that
-always works, give one member's node an address the others can reach (a small server
-as that member's second device will do). Every node carries the whole circle, so the
-others sync through it.
-
-### Other ways to exchange
-
-Every node verifies each record itself, so none of these channels has to be trusted to
-keep a vote intact.
-
-| | Commands | Good to know |
-|---|---|---|
-| A repository you already share | `peerharness events sync .peerharness/team --circle team`, then commit and push | Each record is its own file, so there are no merge conflicts. Everyone who can read the repository can read the roll and the ballots |
-| A member's address | `peerharness daemon --listen /ip4/0.0.0.0/udp/4001/quic-v1`, then `peerharness sync <the address it prints>` | Needs the same network, a VPN or a forwarded UDP port |
-| The local network | `peerharness daemon --listen … --lan`, then `peerharness sync --lan` | Announces the device's public key and port on that network |
-| A file | `peerharness events export --circle team --out f.jsonl`, then `peerharness events import f.jsonl` | Holds the roll and proposals in clear text: send it only to members |
-
-A new member can join from any of them: `peerharness circle join <address, directory or
-file> --expect-fingerprint <fingerprint>`.
-
-### More commands
-
-```sh
-# Ask before you propose. Answers are opinions on the record, not ballots.
-peerharness question send <candidate-id> --circle team
-peerharness question answer <question-id> --answer agree --rationale "we already do"
-
-# Rules, on your own machine.
-peerharness rule list                               # what is in force, and where it stands here
-peerharness rule opt-out <name> --circle team       # keep one rule off your machine; add --announce to put it on record
-peerharness circle mode ask --circle team           # be asked before any rule is installed
-peerharness circle place repo/web --circle team --project ~/code/web   # rules of that scope go in that repository only
-
-# The circle. Each of these is put to the vote.
-peerharness rule repeal <name> --circle team        # vote a rule out
-peerharness circle remove <member> --circle team    # vote someone off the roll
-peerharness circle device add <device key> --circle team   # a second device; still one vote
-peerharness circle amend --circle team --pass 2/3   # change the rules of the vote
-peerharness circle leave --circle team              # stop following now, and ask to be taken off the roll
-
-# Not voted on: the founder cuts off a lost or stolen device. It cannot pass anything.
-peerharness circle revoke <member or device key> --circle team
-```
-
-`peerharness status` and `peerharness doctor` show where your node stands. Every
-command has `--help`.
-
 ## What works today
 
 | | |
@@ -310,6 +224,7 @@ command has `--help`.
 | Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
 | The same steps as tools (`peerharness mcp`) | tested end to end with a scripted client, a stand-in window and a stand-in network. Run by hand with Claude Code 2.1.322 on macOS, before the release: asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable until the session ended. That is three runs, not a measure of how often an agent gets it right. The server in the released v0.2.0 binary was checked with a scripted client. Other MCP clients were not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
+| Setting up through your agent (the prompt in [Set it up](#set-it-up)) | each of its commands does what the prompt says, checked with the released v0.2.0 binary: an agent's session can install and create the node, and is refused the step that allows it anything. The prompt as a whole has not been run through an agent yet |
 | The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.2.0 on an Apple Silicon Mac: the checksum matched and the installed binary ran the demo. All four archives match `SHA256SUMS`. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet. The README packed inside the v0.2.0 archives still says v0.1.0 in its status line |
 | Windows | not supported yet |
 
@@ -347,6 +262,7 @@ The full list is in [docs/security-model.md](docs/security-model.md).
 
 ## Documentation
 
+* [docs/terminal.md](docs/terminal.md): every step as a command, the other ways to exchange, and what internet mode exposes
 * [docs/architecture.md](docs/architecture.md): the internal contract every crate follows
 * [docs/protocol-v0.md](docs/protocol-v0.md): the wire format, for a second implementation
 * [docs/security-model.md](docs/security-model.md): threats, guarantees and limits
