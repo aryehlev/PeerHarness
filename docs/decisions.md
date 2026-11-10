@@ -549,8 +549,8 @@ text that does not fit is refused with "run it in your own terminal". Measured o
 everything else; for four texts the estimate was between 0 and 6 rows above what the
 dialog needed (33 against 27 for the preview of a short rule) and never below. By that
 estimate a 1440x900 screen has room for a rule of about 175 characters when proposing
-it and about 250 on a ballot, and a 1280x800 screen for about 100 and 175. Longer ones
-go to the terminal. The widths in the estimate are approximations of the system font
+it and for any rule on a ballot (a proposed rule is at most 200 characters), and a
+1280x800 screen for about 100 and 175. Longer ones go to the terminal. The widths in the estimate are approximations of the system font
 checked against those four dialogs, not the font's own metrics.
 
 **What stays in the terminal**, also with windows on: reviewing a note, installing a
@@ -591,3 +591,30 @@ when the setting changes. `AGENTS.md` now says that an agent may write a note an
 start these three steps, and that it never answers one. Not done: a window on Linux,
 the Stop hook telling the owner that proposals wait for their vote, and asking in a
 window for a personal install.
+
+## ADR-034: An install script that checks the release's checksum
+Installing meant a Rust toolchain and several minutes of compiling, or a manual
+download, checksum and copy (`docs/release.md`). Both lose most people before they have
+seen anything. `install.sh` does the manual steps in one command:
+`curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh`.
+
+It finds the latest release through GitHub's redirect (no API, so no rate limit and no
+JSON to parse), downloads the archive for the machine and `SHA256SUMS` over HTTPS, and
+installs nothing unless the archive matches. It then checks that the binary runs and
+copies that one file to `~/.local/bin`. It uses no `sudo`, edits no shell profile and
+only says so when the directory is not on `PATH`. The body is one function called on
+the last line, so a download that was cut short runs nothing. A version given by hand
+must look like a tag before it goes into an address.
+
+It does not build from source by itself when there is no binary to download: a
+compile of several minutes is not what someone pasting one line expects. It prints
+the `cargo install --git` command instead.
+
+Limits, stated in `docs/release.md` and the security model: the checksum comes from
+the same pipeline as the binary, and the script itself is unsigned and served from the
+`main` branch, so this is as trustworthy as the repository and no more. Nothing is
+signed or notarized. The script works only for a published release of a public
+repository; when this was written there was neither, and it was tested against a
+release in a temporary folder (`apps/peerharness/tests/install_script.rs`), which the
+`PEERHARNESS_RELEASE_URL` setting exists for. Not done: Homebrew, a signed checksum
+file, Windows.

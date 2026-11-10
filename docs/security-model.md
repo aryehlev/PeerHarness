@@ -479,10 +479,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Threat.** A malicious or vulnerable dependency, or a tampered download.
 * **Mitigation.** `Cargo.lock` is committed and every build uses `--locked`; CI runs
   `cargo deny` (licenses, sources, advisories) and `cargo audit`. Releases publish
-  `SHA256SUMS` (`docs/release.md`).
+  `SHA256SUMS` (`docs/release.md`). The install script (`install.sh`, ADR-034)
+  downloads over HTTPS only, installs nothing unless the archive matches the release's
+  checksum, never runs as root and writes one file.
 * **Residual risk.** Checksums detect corruption and mirror tampering, not a compromised
   repository, CI pipeline or GitHub account: they are published by the same pipeline.
-  Binaries are not code-signed and macOS binaries are not notarized.
+  Binaries are not code-signed and macOS binaries are not notarized. Piping the install
+  script into a shell runs whatever the `main` branch holds at that moment: it is as
+  trustworthy as the repository and no more, and it can be downloaded and read first.
 
 ### 4.20 Governance by vote
 
@@ -816,6 +820,7 @@ directory and QUIC on loopback.
 | 4.13 (secrets and transcripts) | `crates/ph-core/src/redact.rs` (unit tests), `crates/ph-store/tests/privacy.rs`, `apps/peerharness/tests/local_loop.rs` |
 | 4.14 (hook payloads, settings) | `crates/ph-observer/tests/hooks.rs`, `settings.rs`, `spool.rs` |
 | 4.17 (model output, the agent acting for its user) | `crates/ph-learning/tests/providers.rs`, `drafts_and_assisted.rs`; `apps/peerharness/tests/local_loop.rs`; `apps/peerharness/tests/circle_life.rs` (refused inside an agent session: asking, answering and dismissing a question, switching to `follow`, leaving, revoking a device, announcing a stance, placing a scope); `apps/peerharness/tests/agent_windows.rs` (confirmation windows, with a stand-in window program: off until the owner turns them on, which a session cannot do; only "Proceed" decides, and a decline, no answer, an unknown answer, a failing or missing window program and a text too long to show all leave nothing behind; every other consent step is still refused with windows on); `apps/peerharness/src/window.rs` (unit tests: the height estimate against measured dialogs, the text read back exactly by the real `osascript` on macOS) |
+| 4.19 (the install script) | `apps/peerharness/tests/install_script.rs` (against a release in a temporary folder: a matching checksum installs one file that runs; a changed archive, a missing checksum and a version that is not a tag install nothing) |
 | 4.21, 4.22 (joining from a node, the removal notice) | `apps/peerharness/tests/network.rs` (separate processes over QUIC: a new member joins from a member's node, the wrong root fingerprint is refused and stores nothing, a device on no roll is offered nothing; a removed member's node is shown the vote, verifies it, drops the circle's rule, and can neither sync nor rejoin afterwards); `apps/peerharness/src/peer.rs` (`a_member_voted_off_is_told_of_the_vote_and_nothing_else`: the exact set of records, no later charter, every other request refused, a never-member and a revoked device refused) |
 | 4.23 (questions and answers) | `apps/peerharness/src/governance.rs` (`questions_and_answers_are_authorized_by_the_roll`: a device on no roll, a member outside its scopes, a revoked device, an answer without its question or in another scope; `the_local_guard_keeps_noise_out_of_the_inbox`: duplicate, muted, blocked, over quota); `apps/peerharness/tests/circle_life.rs` (`a_question_is_asked_and_answered_by_members_of_the_roll`) |
 | 4.24 (leaving, amendments, devices, the owner's mode) | `apps/peerharness/tests/circle_life.rs` (`a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`: two devices of one member are one approval, the amend threshold, leaving acts locally at once and changes the roll only by vote) |

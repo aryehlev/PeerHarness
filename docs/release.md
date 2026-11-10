@@ -135,10 +135,43 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    ```
 
 5. Watch the Release workflow. When it finishes, download one archive and verify it as
-   below before announcing the release.
+   below before announcing the release. Then run the install script once on a clean
+   machine or with `PEERHARNESS_INSTALL_DIR=$(mktemp -d)`: it only works for a
+   published release of a public repository.
 6. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
    and tag again. Never replace the assets of a published release; publish a new patch
    version instead.
+
+## The install script
+
+`install.sh` in the repository root does the download, the check and the copy below in
+one step:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
+```
+
+It finds the latest release (or takes `PEERHARNESS_VERSION=v0.1.0`), downloads the
+archive for the machine and `SHA256SUMS` over HTTPS, stops unless the archive matches
+its checksum, checks that the binary runs, and copies that one file to `~/.local/bin`
+(or `PEERHARNESS_INSTALL_DIR`). It uses no `sudo`, edits no shell profile and tells you
+if the directory is not on your `PATH`. Pre-releases are not "latest": name them with
+`PEERHARNESS_VERSION`.
+
+What it proves is what the manual check below proves, and no more: the file is the one
+the release workflow published. The script itself comes from the `main` branch over
+HTTPS and is not signed either, so running it trusts this repository the same way
+downloading its binary does. To read it first:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+
+`apps/peerharness/tests/install_script.rs` runs the script against a release in a
+temporary folder. Finding the latest release relies on GitHub's redirect and is not
+covered by that test.
 
 ## Verifying a download
 

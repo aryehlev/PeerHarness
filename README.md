@@ -12,17 +12,22 @@ Agents can suggest rules. Only people decide: no step that approves, shares, vot
 installs can be answered from inside an agent's session. If you allow it, your agent
 can put a proposal or a ballot in front of you in a window, and your click decides.
 
-> **Status: pre-release, not audited.** The commands on this page work and are tested
-> end to end. Read [What works today](#what-works-today) and
+> **Status: pre-release, not audited.** No release is published yet, so for now the
+> install line below tells you to build from source. Everything else on this page works
+> and is tested end to end. Read [What works today](#what-works-today) and
 > [Known limits](#known-limits) before relying on it.
 
-## See it run
+## Install and see it run
 
 ```sh
-git clone https://github.com/aryehlev/peerharness
-cd peerharness
-cargo run -p peerharness -- demo
+curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
+peerharness demo
 ```
+
+The script downloads the release binary for your machine (macOS and Linux, Intel and
+ARM), checks it against the release's `SHA256SUMS` and puts it in `~/.local/bin`. It
+uses no `sudo` and changes nothing else. To build from source instead, with Rust 1.89
+or newer: `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
 
 The demo creates three members and one outsider in a temporary folder, each with its
 own key and database. Nothing in your home or in `~/.claude` is read or changed. Its
@@ -64,9 +69,9 @@ output, slightly abridged:
     The signature is valid and every node still refuses it: the key is a notary, not a ruler.
 ```
 
-`demo/two-peers.sh` shows the same with two separate processes talking over the
-network. Run it from your own terminal: inside a coding agent's session the steps that
-vote are refused, by design.
+`demo/two-peers.sh`, in a clone of this repository, shows the same with two separate
+processes talking over the network. Run it from your own terminal: inside a coding
+agent's session the steps that vote are refused, by design.
 
 ## How a vote works
 
@@ -95,11 +100,9 @@ No vote and no charter can switch these off:
 
 ## Start alone
 
-A rule of your own needs no circle and no network. Install the binary from your clone
-(Rust 1.89 or newer; macOS and Linux):
+A rule of your own needs no circle and no network.
 
 ```sh
-cargo install --path apps/peerharness --locked
 peerharness init
 
 # Write a rule down in one sentence. It becomes a candidate in your inbox.
@@ -119,19 +122,12 @@ redacted observations locally, and a small skill that asks the agent to note a r
 when you correct it. The note waits in `peerharness inbox`; approving it stays yours.
 `peerharness watch claude --remove` takes it out again.
 
-On macOS you can also decide without leaving the agent. Add `--windows`:
-
-```sh
-peerharness watch claude --install --windows
-```
-
-When you then tell your agent "propose that to the team" or "vote approve on it", a
-window opens on your screen with the exact text that would be shared, signed or
-installed, and buttons Cancel and Proceed. Only your click on Proceed does anything;
-your agent cannot answer the window and `--yes` does not skip it. It covers three
-steps: proposing a rule, your ballot on a proposed rule, and installing a rule that
-passed. Everything else, and any text too long to show in full, still needs your own
-terminal. `--install --no-windows` turns it off.
+On macOS, add `--windows` to decide without leaving the agent. When you tell it
+"propose that to the team" or "vote approve on it", a window opens on your screen with
+the exact text and the buttons Cancel and Proceed. Only your click on Proceed counts:
+the agent cannot answer the window and `--yes` does not skip it. It covers proposing a
+rule, your ballot on a proposed rule and installing a rule that passed. Everything
+else, and any text too long to show in full, still needs your own terminal.
 
 To experiment without touching your real setup:
 
@@ -257,6 +253,8 @@ command has `--help`.
 | Exchange across the internet (`--internet`) | works. Tested with separate processes against a private stand-in network, and by hand on the real one from a single machine. Not yet tested between two different routers |
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
+| Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. The logic is tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not |
+| The install script | tested against a stand-in release (a matching checksum installs, a changed archive does not). No release has been published yet: until one is, the script says so and prints the build-from-source command |
 | Windows | not supported yet |
 
 ## Known limits
