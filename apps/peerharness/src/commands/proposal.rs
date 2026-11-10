@@ -603,10 +603,14 @@ fn vote(
     t.line(format!("Ballot recorded. {tally}"));
     settled_lines(&mut t, &settled);
     if !tally.passed() {
-        t.line(format!(
-            "Share it: `peerharness events export --circle {} --out <file>`.",
-            circle.name
-        ));
+        if crate::consent::in_agent_session() {
+            t.line("The other members get it with the next sync: `peerharness sync --internet`.");
+        } else {
+            t.line(format!(
+                "Share it: `peerharness events export --circle {} --out <file>`.",
+                circle.name
+            ));
+        }
     }
     let st = standing(&node, &p, &tally)?;
     Ok(Report::new(proposal_json(&p, &tally, st), t.finish()))

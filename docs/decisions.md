@@ -855,6 +855,52 @@ fingerprint are now named apart, and the line to join with leaves the fingerprin
 out. The skill of ADR-037 stays: it is the way for an agent without MCP.
 
 **Not done.** The revision 2026-07-28, which has no handshake. Clients other than
-Claude Code were not tried. Nothing registers the server with an agent for the owner.
+Claude Code were not tried. Nothing registers the server with an agent for the owner
+(`peerharness setup` does since ADR-039).
 A daemon that outlives the session does not exist. A tool's result is the command's
 text, not structured data.
+
+## ADR-039: One command sets PeerHarness up, and the windows flag is called `--dialogs`
+Setting PeerHarness up for an agent took three commands after the install, the middle
+one being `peerharness watch claude --install --windows`. The owner's verdict on the
+README that showed them: the way to set it up easily was not there, and `--windows` is
+confusing. It reads as the operating system, which PeerHarness does not support.
+
+**Decision.** `peerharness setup` runs the three in order, in the person's own
+terminal: `init` when the home has no node, `watch claude --install` with the
+confirmation windows where the machine can show one, and Claude Code's own `claude mcp
+add --scope user peerharness -- <this binary> mcp`. The previews and confirmations are
+the ones those steps always had. Registering the tools gets one of its own, which
+shows the exact command line. A second run changes nothing. `--no-dialogs` leaves the
+windows off, or turns them off.
+
+`watch claude --install --windows` is now `--dialogs`, and `--no-windows` is
+`--no-dialogs`. The old names still work. The messages that tell a person how to allow
+something name `peerharness setup`. The setting in `config.toml` and the documents
+keep the word "window" for the thing itself.
+
+**It is the owner's step, as a whole.** Inside a coding agent's session `setup` is
+refused before it does anything. The prompt in the README that has an agent set
+PeerHarness up therefore ends with the agent asking its user to run this one command:
+it is where they allow what the agent may start.
+
+**Registering with Claude Code** changes one sentence of ADR-038, which said that
+PeerHarness does not edit an agent's MCP configuration. It still does not write that
+file. It runs `claude mcp add`, the command the person would have typed, after showing
+it and asking, and only when `claude mcp get peerharness` says there is no such
+server. If Claude Code is not installed, or refuses, setup says so, prints the line and
+finishes the rest.
+
+**Tests never reach the developer's own Claude Code.** Debug builds do not look for
+`claude` on `PATH` at all: they run only the program named by
+`PEERHARNESS_TEST_CLAUDE_BIN`, a stand-in. Release builds search `PATH`, absolute
+entries only, and do not read the variable. The price is that the search and the real
+`claude mcp add` are not covered by the automated tests. The search has a unit test,
+and `claude mcp get`, `add` and `remove` were run by hand against Claude Code 2.1.322
+with a throwaway configuration directory, to see their exit codes.
+
+**Not undone on a "no".** Declining at the second or third step stops there. A node
+that the first step created stays: creating it decides nothing about the agent.
+
+**Also in this change.** A ballot signed from inside a session ended with "Share it:
+`peerharness events export`", a step the session cannot take. It now names the sync.

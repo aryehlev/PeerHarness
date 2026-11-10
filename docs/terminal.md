@@ -34,10 +34,17 @@ peerharness skills install <name>
 ## Connect your agent
 
 ```sh
-peerharness watch claude --install             # hooks and the skill that notes corrections
-peerharness watch claude --install --windows   # macOS: also decide in a window, from inside the agent
+peerharness setup                # everything below, each step shown first and confirmed
+peerharness setup --no-dialogs   # the same, with every decision in your terminal
+```
+
+`setup` runs three steps, which you can also run one at a time:
+
+```sh
+peerharness init                               # your key and your database
+peerharness watch claude --install --dialogs   # hooks, the skill, and deciding in a window (macOS)
 claude mcp add --scope user peerharness -- ~/.local/bin/peerharness mcp   # the steps as tools
-peerharness watch claude --remove              # take it all out again
+peerharness watch claude --remove              # take the hooks and the skill out again
 ```
 
 `watch claude --install` shows what it adds before it adds anything: two hooks that
@@ -45,13 +52,14 @@ store redacted observations locally, and a small skill that asks the agent to no
 rule when you correct it. The note waits in `peerharness inbox`; approving it stays
 yours.
 
-`--windows` means confirmation windows on your screen, not the operating system. A
-window shows the exact text and the buttons Cancel and Proceed. Only your click on
-Proceed counts: the agent cannot answer the window and `--yes` does not skip it. It
-covers proposing a rule, your ballot on one, installing one that passed, inviting
-someone, your ballot on admitting someone and joining a circle. Everything else, and
-any text too long to show in full, needs your own terminal. Inside an agent's session
-those steps are refused.
+With `--dialogs` your agent may ask you in a window on your screen. (The flag used to
+be `--windows`, which still works; it never meant the operating system.) A window
+shows the exact text and the buttons Cancel and Proceed. Only your click on Proceed
+counts: the agent cannot answer the window and `--yes` does not skip it. It covers
+proposing a rule, your ballot on one, installing one that passed, inviting someone,
+your ballot on admitting someone and joining a circle. Everything else, and any text
+too long to show in full, needs your own terminal. Inside an agent's session those
+steps are refused, and so is `setup` itself.
 
 `peerharness mcp` gives an agent the same steps as tools. Without it the agent runs
 the commands it read in the skill. Other agents that speak MCP can use it too; only

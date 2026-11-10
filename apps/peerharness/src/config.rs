@@ -39,7 +39,7 @@ pub struct Config {
 pub struct AgentConfig {
     /// Whether a few consent steps started inside an agent session may be put to the
     /// owner in a window of the operating system (ADR-033). Off unless the owner turned
-    /// it on with `watch claude --install --windows`, in their own terminal.
+    /// it on with `peerharness setup`, in their own terminal.
     #[serde(default)]
     pub windows: bool,
     /// Whether the steps about who is in a circle may be asked in a window as well

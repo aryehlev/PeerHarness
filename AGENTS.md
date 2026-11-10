@@ -57,32 +57,36 @@ stop, leave the feature disabled, and document the blocker.
 * A coding agent may write a note (`peerharness note --from-agent`), which creates a
   `Detected` candidate and nothing else, and it never answers a consent step. Every
   consent step goes through `consent::confirm`, `consent::human_only`,
-  `consent::confirm_or_window` or `consent::confirm_circle_or_window` and refuses inside
-  an agent session (architecture 12.1, ADR-022). Do not add a flag, a variable or a path that lets a session answer one, and
-  do not let `note` approve, install or share anything.
+  `consent::confirm_or_window` or `consent::confirm_circle_or_window` and refuses
+  inside an agent session (architecture 12.1, ADR-022). Do not add a flag, a variable
+  or a path that lets a session answer one, and do not let `note` approve, install or
+  share anything.
 * One exception, and do not widen it: confirmation windows (ADR-033, ADR-037). Only
-  when the owner turned them on in their own terminal (`watch claude --install
-  --windows`), a session may make a window of the operating system appear for six
-  steps: proposing a rule, a ballot on a proposed rule, installing a rule that passed,
-  proposing to admit a member (`circle invite`), a ballot on an amendment that admits
-  one member and changes nothing else, and joining a circle. Only a click on "Proceed"
-  in it counts; `--yes`, arguments, standard input and the environment never do. The
-  window shows the exact preview in full or the step is refused, the preview is not
-  printed into the session, and a rule with a high-risk finding is never decided
-  there. Turning windows on is never asked in a window. The stand-in window program
-  (`PEERHARNESS_TEST_WINDOW_BIN`) exists in debug builds only: do not make a release
-  build read it.
+  when the owner turned them on in their own terminal (`peerharness setup`, or `watch
+  claude --install --dialogs`), a session may make a window of the operating system
+  appear for six steps: proposing a rule, a ballot on a proposed rule, installing a
+  rule that passed, proposing to admit a member (`circle invite`), a ballot on an
+  amendment that admits one member and changes nothing else, and joining a circle.
+  Only a click on "Proceed" in it counts; `--yes`, arguments, standard input and the
+  environment never do. The window shows the exact preview in full or the step is
+  refused, the preview is not printed into the session, and a rule with a high-risk
+  finding is never decided there. Turning windows on is never asked in a window. The
+  stand-in window program (`PEERHARNESS_TEST_WINDOW_BIN`) exists in debug builds only:
+  do not make a release build read it.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
   windows turned on before ADR-037 were allowed for three steps. A step added to the
   list later needs a setting of its own in the same way, and a new preview in `watch
-  claude --install --windows`: never let an older "yes" cover it.
+  claude --install --dialogs`: never let an older "yes" cover it.
 * `peerharness mcp` (ADR-038) is not a way to consent and must not become one. Every
   tool runs this binary as a child process with `PEERHARNESS_AGENT_SESSION` set: never
   run a command in-process from a tool, never pass `--yes` or any flag taken from an
   argument, and never add a tool for a step that has no window (reviewing, installing
   for oneself, export, reset, hooks, any change to a charter but an admission). A tool
   runs only at the level the owner allowed (`config::Asked`), consent step or not.
+* `peerharness setup` (ADR-039) is where the owner allows what their agent may start.
+  It is refused inside a session as a whole, before it creates anything. Do not let a
+  session run part of it.
 * Inside a session no command writes a circle's records to a file: that is `events
   export`, in the person's terminal. A window that asks about a device or a circle
   takes what it shows from the signed content (the amendment, the charter), never from
@@ -256,6 +260,11 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
   only. Tests of the MCP server (`apps/peerharness/tests/mcp_server.rs`) set both, run
   the server without `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` (it has to set the
   mark itself), and point its daemon at the hub, never at the public network.
+* No test runs the developer's own `claude` command. `setup` registers an MCP server by
+  running it, so debug builds never look for it on `PATH`: they run only the stand-in
+  named by `PEERHARNESS_TEST_CLAUDE_BIN` (see `apps/peerharness/tests/setup.rs`). Do
+  not make a debug build search `PATH`, and do not make a release build read the
+  variable.
 * Security behaviour needs negative tests: show the forged, expired, revoked,
   out-of-scope, replayed or oversized input being rejected.
 * Use fake provider binaries via `PEERHARNESS_CLAUDE_BIN` / `PEERHARNESS_CODEX_BIN`; never

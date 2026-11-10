@@ -5,12 +5,12 @@
 //! with `peerharness note --from-agent` (see `crate::agent_notes`), unless
 //! `--no-agent-notes` is given. `--remove` removes both.
 //!
-//! `--install --windows` is where the owner allows confirmation windows (ADR-033 for the
+//! `--install --dialogs` is where the owner allows confirmation windows (ADR-033 for the
 //! steps about rules, ADR-037 for the steps about who is in a circle), and `--install
-//! --no-windows` or `--remove` is where they take that back. Like every change here it
+//! --no-dialogs` or `--remove` is where they take that back. Like every change here it
 //! is previewed and confirmed in the owner's own terminal: an agent's session cannot
 //! turn windows on, with or without a window. Windows that were turned on before
-//! ADR-037 cover the steps about rules only, until the owner runs `--install --windows`
+//! ADR-037 cover the steps about rules only, until the owner runs `--install --dialogs`
 //! again and confirms the longer list.
 
 use anyhow::Result;
@@ -145,7 +145,7 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                  too (`--internet`). That network's servers then see this device's public key \
                  and IP address, and never a circle, a roll or anything said in one.",
             );
-            preview.line("Turn it off with `peerharness watch claude --install --no-windows`.");
+            preview.line("Turn it off with `peerharness setup --no-dialogs`.");
             preview.line("");
         }
         if want_windows && asked_after == Asked::Nothing {
@@ -359,8 +359,7 @@ fn windows_label(asked: Asked) -> &'static str {
         (Asked::Nothing, _) => "off (every decision needs your own terminal)",
         (_, false) => "on, but this machine has no window PeerHarness can show",
         (Asked::Rules, true) => {
-            "on for rules only (run `watch claude --install --windows` again to add \
-             inviting and joining)"
+            "on for rules only (run `peerharness setup` again to add inviting and joining)"
         }
         (Asked::RulesAndCircle, true) => "on (your agent may put six decisions in front of you)",
     }
@@ -402,10 +401,7 @@ fn done(
         t.line("  You edited the reporting skill, so it was left as it is.");
     }
     if action == "install" && asked != Asked::Nothing {
-        t.line(
-            "To give your agent these steps as tools as well: `claude mcp add --scope user \
-             peerharness -- peerharness mcp`.",
-        );
+        t.line("`peerharness setup` also gives your agent these steps as tools.");
     }
     if let Some(b) = backup {
         t.kv("backup", b.display());

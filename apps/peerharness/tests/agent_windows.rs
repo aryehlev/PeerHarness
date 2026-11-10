@@ -241,7 +241,10 @@ fn windows_are_off_until_the_owner_turns_them_on_in_their_own_terminal() {
     assert_eq!(node.run(&["watch", "claude", "--status"])["windows"], false);
     let msg = node.refused(&["proposal", "create", &cand, "--circle", "team", "--yes"]);
     assert!(msg.contains("your own terminal"), "{msg}");
-    assert!(msg.contains("--windows"), "it says how to be asked: {msg}");
+    assert!(
+        msg.contains("peerharness setup"),
+        "it says how to be asked: {msg}"
+    );
     assert!(node.shown().is_empty());
     assert!(node.proposals().is_empty());
 
@@ -536,7 +539,10 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     assert_eq!(status["agent_notes"], "installed (an older version)");
     let msg = alice.refused(&invite_bob);
     assert!(msg.contains("your own terminal"), "{msg}");
-    assert!(msg.contains("--windows"), "it says how to be asked: {msg}");
+    assert!(
+        msg.contains("peerharness setup"),
+        "it says how to be asked: {msg}"
+    );
     assert!(alice.shown().is_empty());
     assert_eq!(alice.roll(), ["alice"]);
     // The agent's session cannot add them either.

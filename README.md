@@ -12,7 +12,7 @@ Agents can suggest rules. Only people decide. Sharing a rule, voting, installing
 inviting and joining each open a window on your screen with the exact text, and only
 your click counts. Your agent can open that window. It cannot answer it.
 
-> **Status: v0.2.0, early and not audited.** What this page describes works.
+> **Status: v0.3.0, early and not audited.** What this page describes works.
 > [What works today](#what-works-today) says how each part was tested and
 > [Known limits](#known-limits) says what is missing. Read both before relying on it.
 
@@ -30,37 +30,27 @@ Set up PeerHarness for me: https://github.com/aryehlev/peerharness
 
 1. Install it:
    curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
-2. Create my node:
-   ~/.local/bin/peerharness init
-3. Give yourself its tools:
-   claude mcp add --scope user peerharness -- ~/.local/bin/peerharness mcp
-4. The last step is mine. It is where I allow what you may start for me, so do not
+2. The next step is mine. It is where I allow what you may start for me, so do not
    run it yourself: it would be refused. Ask me to run this in my own terminal:
-   ~/.local/bin/peerharness watch claude --install --windows
+   ~/.local/bin/peerharness setup
 
 Then tell me to start a new Claude Code session, and what I can ask you there.
 ```
-
-Step 4 shows you what your agent may start and what it never decides, and asks you to
-confirm. `--windows` means the confirmation windows on your screen, not the operating
-system.
 
 ### Or do it yourself
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
-~/.local/bin/peerharness init
-~/.local/bin/peerharness watch claude --install --windows
-claude mcp add --scope user peerharness -- ~/.local/bin/peerharness mcp
+~/.local/bin/peerharness setup
 ```
 
-| Line | What it does |
-|---|---|
-| 1 | Downloads the release binary for your machine, checks it against the release's `SHA256SUMS` and puts it in `~/.local/bin`. No `sudo`, and nothing else is changed |
-| 2 | Creates your key and your database |
-| 3 | Connects PeerHarness to Claude Code. It shows you what your agent may start and what it never decides, and asks you to confirm |
-| 4 | Gives Claude Code those steps as tools |
+The first line downloads the release binary for your machine, checks it against the
+release's `SHA256SUMS` and puts it in `~/.local/bin`. No `sudo`, and nothing else is
+changed.
 
+`peerharness setup` creates your key and database, connects PeerHarness to Claude
+Code and gives it the steps as tools. Before each change it shows you exactly what it
+adds, what your agent may start and what it never decides, and asks you to confirm.
 Then start a new Claude Code session.
 
 ## Use it with Claude Code
@@ -221,10 +211,10 @@ No vote and no charter can switch these off:
 | Exchange across the internet (`--internet`) | works. Tested with separate processes against a private stand-in network, and by hand on the real one from a single machine. Not yet tested between two different routers |
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
-| Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
+| Deciding in a window from inside Claude Code | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
 | The same steps as tools (`peerharness mcp`) | tested end to end with a scripted client, a stand-in window and a stand-in network. Run by hand with Claude Code 2.1.322 on macOS, before the release: asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable until the session ended. That is three runs, not a measure of how often an agent gets it right. The server in the released v0.2.0 binary was checked with a scripted client. Other MCP clients were not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
-| Setting up through your agent (the prompt in [Set it up](#set-it-up)) | each of its commands does what the prompt says, checked with the released v0.2.0 binary: an agent's session can install and create the node, and is refused the step that allows it anything. The prompt as a whole has not been run through an agent yet |
+| Setting up (`peerharness setup`, and the prompt in [Set it up](#set-it-up)) | `setup` is tested end to end with a stand-in for Claude Code's `claude` command: it creates the node, connects the agent, registers the tools, changes nothing on a second run and is refused inside an agent's session. The three `claude mcp` commands it relies on were run by hand against Claude Code 2.1.322 with a throwaway configuration. The prompt as a whole has not been run through an agent yet |
 | The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.2.0 on an Apple Silicon Mac: the checksum matched and the installed binary ran the demo. All four archives match `SHA256SUMS`. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet. The README packed inside the v0.2.0 archives still says v0.1.0 in its status line |
 | Windows | not supported yet |
 
@@ -245,7 +235,7 @@ No vote and no charter can switch these off:
   and miss others. They never prove that a text is safe.
 * **The agent guard is not a wall.** Consent steps recognize an agent's session by an
   environment variable. That stops an agent that is trying to help, not a process that
-  hides the variable on purpose. With `--windows` your agent chooses when a window
+  hides the variable on purpose. With the windows on, your agent chooses when one
   appears; reading what it shows before you click is your part. The click that
   decides most is the one that joins a circle: its rules are then installed for your
   agent.
