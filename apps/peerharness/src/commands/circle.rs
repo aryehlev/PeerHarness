@@ -27,7 +27,8 @@ use serde_json::{json, Value};
 
 use crate::cli::{
     CircleAmendArgs, CircleCommand, CircleDeviceArgs, CircleInviteArgs, CircleJoinArgs,
-    CircleLeaveArgs, CircleModeArgs, CircleRemoveArgs, CircleRevokeArgs, DeviceCommand, ModeArg,
+    CircleLeaveArgs, CircleModeArgs, CirclePlaceArgs, CircleRemoveArgs, CircleRevokeArgs,
+    DeviceCommand, ModeArg,
 };
 use crate::commands::Ctx;
 use crate::consent::confirm;
@@ -50,6 +51,7 @@ pub fn run(ctx: &Ctx, command: CircleCommand) -> Result<Report> {
             DeviceCommand::Remove(args) => device(ctx, args, false),
         },
         CircleCommand::Mode(args) => mode(ctx, args),
+        CircleCommand::Place(args) => place(ctx, args),
         CircleCommand::Revoke(args) => revoke(ctx, args),
     }
 }
@@ -819,6 +821,84 @@ fn mode(ctx: &Ctx, args: CircleModeArgs) -> Result<Report> {
             "circle": circle.name,
             "adoption_mode": wanted,
             "installed": settled.applied.installed,
+        }),
+        t.finish(),
+    ))
+}
+
+/// `circle place`: where the rules of one scope go on this machine. Nothing is sent and
+/// nothing about the circle changes: every member chooses this for their own machine.
+fn place(ctx: &Ctx, args: CirclePlaceArgs) -> Result<Report> {
+    let node = ctx.open_node()?;
+    let circle = find_circle(&node, Some(&args.circle))?;
+    let scope =
+        Scope::new(&args.scope).map_err(|_| usage(format!("invalid scope {:?}", args.scope)))?;
+    let id = circle.circle_id;
+    let dir = match &args.project {
+        Some(p) => {
+            let dir = std::fs::canonicalize(p)
+                .map_err(|_| usage(format!("{} is not an existing directory", p.display())))?;
+            if !dir.is_dir() {
+                return Err(usage(format!("{} is not a directory", dir.display())));
+            }
+            Some(
+                dir.to_str()
+                    .ok_or_else(|| usage("that path is not valid UTF-8"))?
+                    .to_owned(),
+            )
+        }
+        None => None,
+    };
+    let preview = match &dir {
+        Some(d) => format!(
+            "From now on, rules of {circle} with scope {scope} (and the scopes below it) are \
+             installed for your agent in this project only:\n  {d}/.claude/skills\n\
+             Rules of that scope already installed for every project are moved there. Only \
+             this machine changes.",
+            circle = safe(&circle.name),
+        ),
+        None => format!(
+            "From now on, rules of {circle} with scope {scope} are installed for your agent \
+             in every project again (unless a wider scope is placed in a project). Only this \
+             machine changes.",
+            circle = safe(&circle.name),
+        ),
+    };
+    confirm(&ctx.out, &preview, args.yes, "placing the scope")?;
+    match &dir {
+        Some(d) => node.store.set_rule_place(&id, &scope, d)?,
+        None => {
+            node.store.clear_rule_place(&id, &scope)?;
+        }
+    }
+    let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
+    let mut t = Text::new();
+    t.line(match &dir {
+        Some(d) => format!(
+            "Rules of scope {scope} in {} now go to {d}.",
+            safe(&circle.name)
+        ),
+        None => format!(
+            "Rules of scope {scope} in {} now go to every project.",
+            safe(&circle.name)
+        ),
+    });
+    for skill in &settled.applied.installed {
+        t.line(format!("  moved rule {skill}"));
+    }
+    let places: Vec<Value> = node
+        .store
+        .rule_places(&id)?
+        .into_iter()
+        .map(|(s, d)| json!({ "scope": s, "project": d }))
+        .collect();
+    Ok(Report::new(
+        json!({
+            "circle": circle.name,
+            "scope": scope,
+            "project": dir,
+            "moved": settled.applied.installed,
+            "places": places,
         }),
         t.finish(),
     ))

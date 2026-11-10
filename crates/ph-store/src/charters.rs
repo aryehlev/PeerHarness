@@ -12,7 +12,7 @@
 //! legitimate: the caller must first run `ph_governance::check_successor`, which
 //! verifies that a passed amendment justifies it.
 
-use ph_core::{CircleId, Digest, Timestamp};
+use ph_core::{CircleId, Digest, Scope, Timestamp};
 use ph_protocol::{verify_charter_signature, Charter};
 use rusqlite::{params, OptionalExtension};
 
@@ -321,6 +321,91 @@ impl Store {
                     sql::parse::<Digest>(r, 1, "rule install digest")?,
                     sql::ts(r, 2)?,
                 ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Where the rule `skill_name` of `circle` was installed: `Some(Some(dir))` for a
+    /// project directory, `Some(None)` for the user's skills directory, `None` when no
+    /// vote installed it here.
+    pub fn rule_install_place(
+        &self,
+        circle: &CircleId,
+        skill_name: &str,
+    ) -> Result<Option<Option<String>>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT project_dir FROM rule_installs WHERE circle_id = ?1 AND skill_name = ?2",
+                params![circle.to_string(), skill_name],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?)
+    }
+
+    /// Records where the rule `skill_name` of `circle` was installed (see
+    /// [`Store::rule_install_place`]). The install itself must be recorded first.
+    pub fn set_rule_install_place(
+        &self,
+        circle: &CircleId,
+        skill_name: &str,
+        project_dir: Option<&str>,
+    ) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE rule_installs SET project_dir = ?3 WHERE circle_id = ?1 AND skill_name = ?2",
+            params![circle.to_string(), skill_name, project_dir],
+        )?;
+        if n == 0 {
+            return Err(StoreError::NotFound {
+                what: "rule install",
+            });
+        }
+        Ok(())
+    }
+
+    /// Places the rules of `scope` in `circle` in the project directory `project_dir`
+    /// on this machine, instead of the user's skills directory. Replaces an earlier
+    /// place for the same scope.
+    ///
+    /// Only call this on an explicit human action: it decides where files are written.
+    pub fn set_rule_place(
+        &self,
+        circle: &CircleId,
+        scope: &Scope,
+        project_dir: &str,
+    ) -> Result<()> {
+        if project_dir.is_empty() || project_dir.len() > 4096 {
+            return Err(StoreError::invalid(
+                "project directory",
+                "empty or too long",
+            ));
+        }
+        self.conn.execute(
+            "INSERT INTO rule_places (circle_id, scope, project_dir) VALUES (?1, ?2, ?3)
+             ON CONFLICT(circle_id, scope) DO UPDATE SET project_dir = excluded.project_dir",
+            params![circle.to_string(), scope.as_str(), project_dir],
+        )?;
+        Ok(())
+    }
+
+    /// Forgets the place of `scope` in `circle`. Returns whether there was one.
+    pub fn clear_rule_place(&self, circle: &CircleId, scope: &Scope) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM rule_places WHERE circle_id = ?1 AND scope = ?2",
+            params![circle.to_string(), scope.as_str()],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The places the owner chose for `circle`'s scopes, sorted by scope.
+    pub fn rule_places(&self, circle: &CircleId) -> Result<Vec<(Scope, String)>> {
+        let mut st = self.conn.prepare(
+            "SELECT scope, project_dir FROM rule_places WHERE circle_id = ?1 ORDER BY scope",
+        )?;
+        let rows = st
+            .query_map([circle.to_string()], |r| {
+                Ok((sql::parse::<Scope>(r, 0, "scope")?, r.get(1)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)

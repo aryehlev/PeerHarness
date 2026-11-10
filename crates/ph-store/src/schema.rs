@@ -279,11 +279,21 @@ CREATE TABLE rule_installs (
 // V4: a member can stop following a circle on this machine before the roll is amended
 // (`left_at`), and a sync remembers how far it got with a peer: `after_event_id` is the
 // last event that peer served from its log (meaningful only to that peer), and
-// `pushed_event_id` the last event of this node's own log the peer has taken.
+// `pushed_event_id` the last event of this node's own log the peer has taken. The owner
+// can place the rules of a scope in a project directory instead of the user's skills
+// (`rule_places`), and `rule_installs.project_dir` remembers where a rule was put.
 const V4: &str = r#"
 ALTER TABLE circles ADD COLUMN left_at INTEGER;
 ALTER TABLE sync_cursors ADD COLUMN after_event_id TEXT;
 ALTER TABLE sync_cursors ADD COLUMN pushed_event_id TEXT;
+
+CREATE TABLE rule_places (
+    circle_id   TEXT NOT NULL REFERENCES circles(circle_id),
+    scope       TEXT NOT NULL,
+    project_dir TEXT NOT NULL,
+    PRIMARY KEY (circle_id, scope)
+) STRICT;
+ALTER TABLE rule_installs ADD COLUMN project_dir TEXT;
 "#;
 
 const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];

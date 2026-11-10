@@ -158,13 +158,15 @@ fn show(node: &Node, cand: &CandidateRow, action: &str) -> Result<Report> {
 
 fn next_steps(node: &Node, cand: &CandidateRow, t: &mut Text) -> Result<()> {
     t.line(format!(
-        "Use it yourself: `peerharness skills install {}`.",
+        "Use it yourself: `peerharness skills install {}` (add `--scope project` to keep \
+         it to the repository you are in).",
         cand.skill_name
     ));
     match node.store.circles()?.first() {
         Some(c) => t.line(format!(
-            "Put it to the vote: `peerharness proposal create {} --circle {}`.",
-            cand.id, c.name
+            "Ask the circle first: `peerharness question send {} --circle {}`. Or put it \
+             to the vote: `peerharness proposal create {} --circle {}`.",
+            cand.id, c.name, cand.id, c.name
         )),
         None => t.line(
             "Put it to a vote: found a circle with `peerharness circle create <name>` first.",

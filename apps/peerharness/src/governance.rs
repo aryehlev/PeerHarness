@@ -965,7 +965,7 @@ pub fn apply_rules(
     use ph_governance::{
         adoption_step, local_policy_met, AdoptionMode, AdoptionStep, BundleChecks, OwnerChoice,
     };
-    use ph_skills::{InstallOptions, InstallState, SkillScope, UninstallOptions};
+    use ph_skills::{InstallOptions, InstallState, UninstallOptions};
 
     use crate::installs;
 
@@ -990,11 +990,42 @@ pub fn apply_rules(
         _ => AdoptionMode::Ask,
     };
     let mut applied = Applied::default();
-    let managed_with = |name: &str, digest: &Digest| -> bool {
+    let places = store.rule_places(id)?;
+    // Where a rule of this scope goes on this machine: the project directory the owner
+    // chose for the most specific scope that covers it, or the user's skills directory.
+    let target_for = |scope: &Scope| -> Target { Target::of(installer, place_for(&places, scope)) };
+    let managed_with = |target: &Target, name: &str, digest: &Digest| -> bool {
         matches!(
-            installer.status(name),
+            target.installer.status(name),
             Ok(InstallState::Managed { digest: d, modified: false }) if d == *digest
         )
+    };
+    // Removes what a vote installed for `name`, from wherever it was put.
+    let remove = |name: &str, digest: &Digest, applied: &mut Applied| -> Result<()> {
+        let Some(place) = store.rule_install_place(id, name)? else {
+            return Ok(());
+        };
+        let target = Target::of(installer, place);
+        if managed_with(&target, name, digest) {
+            if let Ok(gone) = target
+                .installer
+                .uninstall(name, UninstallOptions::default())
+            {
+                installs::record_uninstall(
+                    store,
+                    target.scope,
+                    name,
+                    &gone.removed_digest,
+                    &gone.path,
+                    now,
+                )?;
+                if !applied.removed.iter().any(|n| n == name) {
+                    applied.removed.push(name.to_owned());
+                }
+            }
+        }
+        store.clear_rule_install(id, name)?;
+        Ok(())
     };
 
     for rule in rules.rules() {
@@ -1018,17 +1049,32 @@ pub fn apply_rules(
             confirmed: confirmed.contains(&name),
         };
         let policy_ok = local_policy_met(policy, tallies.get(&rule.proposal_id()));
+        let target = target_for(rule.scope());
         match adoption_step(rule, mode, checks, choice, policy_ok) {
             AdoptionStep::Install => {
-                if managed_with(&name, &rule.bundle_digest()) {
+                // A copy this circle put somewhere else (the owner moved the scope) or
+                // of another version goes first.
+                let recorded = store.rule_install_place(id, &name)?;
+                let moved = recorded.as_ref().is_some_and(|p| *p != target.dir);
+                if moved {
+                    let old = store
+                        .rule_installs(id)?
+                        .into_iter()
+                        .find(|(n, _, _)| *n == name)
+                        .map(|(_, d, _)| d);
+                    if let Some(old) = old {
+                        remove(&name, &old, &mut applied)?;
+                    }
+                } else if managed_with(&target, &name, &rule.bundle_digest()) {
                     continue; // already in place
                 }
-                match installer.install(&bundle, InstallOptions::default()) {
+                match target.installer.install(&bundle, InstallOptions::default()) {
                     Ok(outcome) => {
                         // Remember that the vote put it here, so a repeal removes it.
                         store.record_rule_install(id, &name, &rule.bundle_digest(), now)?;
+                        store.set_rule_install_place(id, &name, target.dir.as_deref())?;
                         installs::ensure_circle_skill(store, &bundle, &rule.proposal_id(), now)?;
-                        installs::record_install(store, SkillScope::User, &bundle, &outcome, now)?;
+                        installs::record_install(store, target.scope, &bundle, &outcome, now)?;
                         applied.installed.push(name);
                     }
                     Err(_) => applied.conflicts.push(name),
@@ -1037,19 +1083,7 @@ pub fn apply_rules(
             step @ AdoptionStep::AskOwner(_) => applied.asking.push((name, step.code())),
             step @ AdoptionStep::Refuse(_) => applied.refused.push((name, step.code())),
             AdoptionStep::OptedOut => {
-                if managed_with(&name, &rule.bundle_digest()) {
-                    if let Ok(gone) = installer.uninstall(&name, UninstallOptions::default()) {
-                        installs::record_uninstall(
-                            store,
-                            SkillScope::User,
-                            &name,
-                            &gone.removed_digest,
-                            &gone.path,
-                            now,
-                        )?;
-                        applied.removed.push(name.clone());
-                    }
-                }
+                remove(&name, &rule.bundle_digest(), &mut applied)?;
                 store.clear_rule_install(id, &name)?;
                 applied.opted_out.push(name);
             }
@@ -1063,27 +1097,55 @@ pub fn apply_rules(
         let still_applies = rules
             .get(&name)
             .is_some_and(|r| r.bundle_digest() == digest && binds_me(r));
-        if still_applies {
-            continue;
+        if !still_applies {
+            remove(&name, &digest, &mut applied)?;
         }
-        if managed_with(&name, &digest) {
-            if let Ok(gone) = installer.uninstall(&name, UninstallOptions::default()) {
-                installs::record_uninstall(
-                    store,
-                    SkillScope::User,
-                    &name,
-                    &gone.removed_digest,
-                    &gone.path,
-                    now,
-                )?;
-                if !applied.removed.contains(&name) {
-                    applied.removed.push(name.clone());
-                }
-            }
-        }
-        store.clear_rule_install(id, &name)?;
     }
     Ok(applied)
+}
+
+/// Where one rule is installed on this machine.
+pub struct Target {
+    /// The installer for that place.
+    pub installer: ph_skills::Installer,
+    /// The agent's notion of the place.
+    pub scope: ph_skills::SkillScope,
+    /// The project directory, or `None` for the user's skills directory.
+    pub dir: Option<String>,
+}
+
+impl Target {
+    /// The target for `dir` (a project directory the owner chose), or the user's skills
+    /// directory behind `user` when there is none. A project installer never follows a
+    /// link out of the project (`Installer::confine_to`).
+    pub fn of(user: &ph_skills::Installer, dir: Option<String>) -> Self {
+        match dir {
+            Some(d) => {
+                let root = std::path::Path::new(&d);
+                Self {
+                    installer: ph_skills::Installer::new(root.join(".claude").join("skills"))
+                        .confine_to(root),
+                    scope: ph_skills::SkillScope::Project,
+                    dir: Some(d),
+                }
+            }
+            None => Self {
+                installer: user.clone(),
+                scope: ph_skills::SkillScope::User,
+                dir: None,
+            },
+        }
+    }
+}
+
+/// The project directory for rules of `scope`: the place of the most specific scope
+/// that covers it.
+pub fn place_for(places: &[(Scope, String)], scope: &Scope) -> Option<String> {
+    places
+        .iter()
+        .filter(|(s, _)| s.covers(scope))
+        .max_by_key(|(s, _)| (!s.is_wildcard(), s.as_str().len()))
+        .map(|(_, dir)| dir.clone())
 }
 
 /// What [`settle`] did.

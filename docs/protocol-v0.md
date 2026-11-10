@@ -57,19 +57,21 @@ answers on the wire and what it serves them (section 12.3).
 
 A **membership credential** (signed by the root) grants a device key roles and scopes in
 the circle until an expiry. It only becomes **active** once the subject signs an
-**acceptance** of it. A credential plus its acceptance is a **membership proof**. In v0
-a credential authorizes QUESTION and ANSWER events and nothing else. It gives no access
-on the wire (section 12.3).
+**acceptance** of it. A credential plus its acceptance is a **membership proof**. These
+objects are part of the protocol, but the reference implementation decides nothing from
+them: who may ask, answer, propose and vote, and who is answered on the wire, all follow
+the roll (section 12.3).
 
 Nodes exchange signed **events** (QUESTION, ANSWER, PROPOSAL, VOTE, RESULT, CHARTER,
-MEMBERSHIP, REVOCATION) over a request/response protocol. Every node validates every
+MEMBERSHIP, REVOCATION, STANCE) over a request/response protocol. Every node validates every
 event itself, stores it in its own append-only log, and computes every outcome (which
 proposals passed, which rules are in force, which charter is current) itself. Nothing is
 trusted because a peer says so.
 
-There is no server, no global ordering and no gossip in v0. A node connects only when
-its owner tells it to, to an explicit address (given by the owner, or remembered from an
-earlier exchange with that peer).
+There is no server, no global ordering and no gossip in v0. A node dials only explicit
+addresses: one its owner gave it, or one it remembered from an earlier exchange with
+that peer. It does so when its owner runs a sync, or on a timer its owner set (section
+13.2).
 
 ## 2. Primitive encodings
 
@@ -151,15 +153,14 @@ Role and capability strings are lowercase. An unknown role string makes the cont
 object invalid (it is rejected at parse time; it does not silently grant nothing). A set
 of roles grants a capability if any role in it does; an empty set grants nothing.
 
-In v0 only `read`, `ask` and `answer` have a protocol effect, and they come from two
-places. `ask` and `answer` come from a credential: they authorize QUESTION and ANSWER
-events (section 12.4). `read` is what a peer needs to be served an event or a bundle, and
-on the wire it comes from the roll, not from a credential: every device on the roll of
-the current charter has the capabilities of `member`, within the scopes of its roll
-entry (section 12.3). `invite` and `revoke` have no effect: only the circle root key
-issues credentials, invites and revocations (section 12.6). `propose`, `vote` and
-`publish` have none either: who may author PROPOSAL, VOTE and RESULT events is decided
-by the roll of the charter the proposal names (sections 9.6 and 12.4).
+In v0 only `read`, `ask` and `answer` have a protocol effect, and all three come from the
+roll, not from a credential: every device on the roll of the current charter has the
+capabilities of `member`, within the scopes of its roll entry (section 12.3). `ask` and
+`answer` authorize QUESTION and ANSWER events (section 12.4). `read` is what a peer
+needs to be served an event or a bundle. `invite` and `revoke` have no effect: only the
+circle root key issues credentials, invites and revocations (section 12.6). `propose`,
+`vote` and `publish` have none either: who may author PROPOSAL, VOTE, RESULT and STANCE
+events is decided by the roll of a charter the event names (sections 9.6 and 12.4).
 
 ### 2.7 Skill names
 
@@ -344,7 +345,7 @@ Reference: `crates/ph-protocol/src/envelope.rs`.
 | member | type | rule |
 |---|---|---|
 | `schema` | string | exactly `peerharness.event/0.1` |
-| `type` | string | one of `QUESTION`, `ANSWER`, `PROPOSAL`, `VOTE`, `RESULT`, `CHARTER`, `MEMBERSHIP`, `REVOCATION` |
+| `type` | string | one of `QUESTION`, `ANSWER`, `PROPOSAL`, `VOTE`, `RESULT`, `CHARTER`, `MEMBERSHIP`, `REVOCATION`, `STANCE` |
 | `circle_id` | circle id | the target circle |
 | `scope` | scope | the object scope; see section 12 |
 | `author` | public key | signs the envelope |
@@ -394,8 +395,9 @@ Example (the QUESTION golden vector, `signed` form, members in canonical order):
 Events fall into two groups:
 
 * **expiring**: `QUESTION`, `ANSWER`, `MEMBERSHIP`;
-* **permanent**: `PROPOSAL`, `VOTE`, `RESULT`, `CHARTER`, `REVOCATION`. The outcome of a
-  vote must not depend on a clock, and a revocation must never lapse.
+* **permanent**: `PROPOSAL`, `VOTE`, `RESULT`, `CHARTER`, `REVOCATION`, `STANCE`. The
+  outcome of a vote must not depend on a clock, a revocation must never lapse, and what
+  a member put on the record stays there.
 
 At the receiver's local time `now` (`check_time_rules_for`):
 
@@ -443,14 +445,15 @@ explicit `null`. Lengths are code points (section 6).
 
 | type | plane | authorization (section 12) | lifetime |
 |---|---|---|---|
-| `QUESTION` | deliberation | credential capability `ask` on the envelope scope | expiring; default 30 days |
-| `ANSWER` | deliberation | credential capability `answer` | expiring; default 30 days |
+| `QUESTION` | deliberation | the author is on the roll of the circle's **current** charter and its roll entry covers the envelope scope (capability `ask`) | expiring; default 30 days |
+| `ANSWER` | deliberation | the same, with capability `answer` | expiring; default 30 days |
 | `PROPOSAL` | decision | the author is on the roll of the charter the proposal names | permanent |
 | `VOTE` | decision | the author is on that roll | permanent |
 | `RESULT` | decision | the author is on that roll | permanent |
 | `CHARTER` | control | author is the circle root key | permanent |
 | `MEMBERSHIP` | control | embedded credential and acceptance | expiring; `expires_at` = credential `expires_at` |
 | `REVOCATION` | control | author is the circle root key (ADR-010) | permanent |
+| `STANCE` | record | the author is on the roll of the charter the stance names, in the electorate of the rule's scope | permanent |
 
 The default lifetime is what the reference implementation uses when creating events;
 permanent events get `created_at + 400 days`. Receivers enforce only the time rules of
@@ -475,8 +478,12 @@ section 7.3 plus the MEMBERSHIP binding below.
 ```
 
 * `rationale`: 0 to 2000 code points, multi-line.
-* Reference rule (checked once the QUESTION is stored, section 12.5): `question_id`
-  names a QUESTION in the same circle with the **same scope**.
+* Reference rule (section 12.5): `question_id` names a stored QUESTION in the same
+  circle with the **same scope**. An ANSWER whose QUESTION is not stored yet is rejected
+  as retryable.
+* A member may answer the same question again. The reference client shows each member's
+  latest ANSWER by `(created_at, event_id)` as their current one. An answer is an
+  opinion on the record: it is not a ballot and nothing is counted from it.
 
 ### 8.3 PROPOSAL
 
@@ -612,6 +619,60 @@ Bindings:
 The envelope scope may be any valid scope; `*` is recommended. Because the author is the
 root key, the root key signs this envelope, and the root key holds no credential.
 
+### 8.9 STANCE
+
+```json
+{"proposal_id": "sha256:<event id>", "charter": "sha256:<charter digest>",
+ "stance": "opted_out" | "following", "reason?": "<text>"}
+```
+
+A member's public statement about one rule in force: that they keep it off their own
+machine (`opted_out`), or that they follow it, again (`following`). Opting out is a
+local act that needs no event (section 14.6). A STANCE is the member's choice to put it
+on the circle's record.
+
+* `proposal_id`: the event id of the `adopt` PROPOSAL whose rule the stance is about.
+* `charter`: the digest (section 5) of a charter whose roll lists the author. Unlike a
+  ballot, a stance is not judged against the charter the proposal names: the rule may
+  have been adopted before its author joined, so the stance names the charter under
+  which its author is a member. The reference implementation names the circle's current
+  charter at the time of signing.
+* `stance`: lowercase, one of the two values.
+* `reason`: 0 to 2000 code points, multi-line. Human-confirmed, redacted text.
+* The envelope scope MUST equal the proposal's.
+* Reference rule (section 12.4): `proposal_id` names a stored `adopt` PROPOSAL in the
+  same circle with the same envelope scope.
+
+A STANCE is a record and nothing else. No count, certificate, rule set or installation
+reads it (section 14): it cannot make a rule pass or lapse, and it does not withdraw an
+approval. A member's **current** stance on a rule is their latest STANCE for that
+proposal by `(created_at, event_id)`. That ordering is display state. It is acceptable
+only because nothing is decided from it.
+
+Example (the STANCE golden vector, `signed` form). Bob, admitted by `charter_2`, keeps
+the rule of `PROPOSAL/adopt` off his machine and says so:
+
+```json
+{
+  "author": "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+  "body": {
+    "charter": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
+    "proposal_id": "sha256:e1fbc5bb161f2f4f2cc9618add4689af1ee33e8d1021d8ad94b5eb507e627d82",
+    "reason": "Our CI images only ship npm.",
+    "stance": "opted_out"
+  },
+  "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+  "created_at": "2026-11-10T10:00:00Z",
+  "event_id": "sha256:d584f58728107cef0ec5e1ee8e8d1dce6a0da3f545c11b55b56f270b571a02e3",
+  "expires_at": "2027-12-15T10:00:00Z",
+  "nonce": "base64url:GRkZGRkZGRkZGRkZGRkZGQ",
+  "schema": "peerharness.event/0.1",
+  "scope": "team/backend",
+  "signature": "base64url:B98HhDOI-77JKwXjasM6QrhXCONXZT164S5NJUPBvqBOjMBdA45YSmX_JGQ3FPDDHUbtBktpgOXULdSCWt_1Aw",
+  "type": "STANCE"
+}
+```
+
 ## 9. Membership objects
 
 Reference: `crates/ph-protocol/src/credentials.rs`, `crates/ph-protocol/src/charter.rs`,
@@ -619,17 +680,18 @@ Reference: `crates/ph-protocol/src/credentials.rs`, `crates/ph-protocol/src/char
 
 The charter and credentials are separate statements, and v0 uses them for different
 things. The **charter** is per circle; its roll lists people with their devices and
-scopes. The roll is the membership that is in use: it decides who may propose, vote and
-publish a result (section 14), and which peers a node answers and what it serves them
-(section 12.3). A **credential** is per device and expires. It authorizes the author of
-a QUESTION or ANSWER event (section 12.4) and nothing else. It gives no access on the
-wire, because the root key issues it alone, without a vote.
+scopes. The roll is the membership that is in use: it decides who may ask and answer
+(section 12.4), who may propose, vote and publish a result (section 14), and which peers
+a node answers and what it serves them (section 12.3). A **credential** is per device
+and expires. The root key issues it alone, without a vote, which is why it gives no
+access on the wire and why the reference implementation does not let it authorize any
+event (section 12.3).
 
-The reference implementation issues exactly one credential, the founder's own, and no
-command produces QUESTION or ANSWER events yet. It does not create or consume invites,
-and it does not send or check proofs on the wire. The credential, acceptance, proof and
-invite objects below are unchanged parts of the protocol, are implemented and tested in
-the library, and are covered by the golden vectors.
+The reference implementation issues exactly one credential, the founder's own, and
+decides nothing from it. It does not create or consume invites, and it does not send or
+check proofs on the wire. The credential, acceptance, proof and invite objects below are
+unchanged parts of the protocol, are implemented and tested in the library, and are
+covered by the golden vectors.
 
 The first four objects (credential, acceptance, invite, revocation) are standalone
 signed documents. As standalone documents (for example an invite file) they are limited
@@ -711,7 +773,7 @@ verification (9.2) at `now`.
 A credential is **active** for a device key at `now` when a proof for it verifies at
 `now`, the circle is known locally with that root, and the key is not revoked in that
 circle (section 9.5). An active credential does not make its subject a member for
-voting or for access on the wire (section 12.3).
+asking, answering, voting or access on the wire (section 12.3).
 
 ### 9.4 Invite
 
@@ -755,8 +817,9 @@ never outlives its credential.
 
 The reference CLI does not use invites. Accepting a credential would not put the joiner
 on the roll, and the roll is what gives a vote and access. A new member is admitted by
-an amendment and joins from a file or directory of events that contains a charter
-listing its device (section 14.5).
+an amendment. It then gets the circle from a member's node, which answers it because
+its device is on that node's roll (section 13.6), or from a file or directory of events
+that contains a charter listing its device (section 14.5).
 
 ### 9.5 Revocation
 
@@ -1048,30 +1111,42 @@ Request:
 Response:
 
 ```json
-{"type": "authenticated", "memberships": []}
+{"type": "authenticated", "memberships": [], "circles": ["sha256:<circle id>"]}
 ```
 
 * `memberships`: at most 16 membership proofs (section 9.3) in each direction. The
-  message shape is unchanged and still allows them, but a proof presented here proves
-  nothing and gives no access. The reference implementation sends an empty list in both
-  directions and ignores any proof it receives.
+  message shape still allows them, but a proof presented here proves nothing and gives
+  no access. The reference implementation sends an empty list in both directions and
+  ignores any proof it receives.
 * `listen_addrs`: at most 8 multiaddr strings, each 1 to 256 bytes of printable,
   non-space ASCII: where the requester can be dialed. It may be empty (a node that only
   dials has none).
+* `circles` (response, optional): the ids of the circles the responder holds in which
+  the requester's device is an active member by the roll (section 12.3), at most 64. A
+  sender omits the member when the list is empty; an explicit `null` is rejected like
+  everywhere else. The reference responder never has an empty list to send, because it
+  answers `unauthorized` in that case. A requester that receives `authenticated` without
+  `circles` SHOULD treat every circle it believes it shares with the responder as named.
 * The responder answers `authenticated` iff the requester's device key, as bound to the
   connection's `PeerId`, is an active member by the roll of at least one circle the
   responder holds (section 12.3). It then remembers the requester's addresses (those
   that parse as multiaddrs) and which circles the two share. To every other peer it
   answers `error{unauthorized}` and remembers nothing.
-* A requester SHOULD send `authenticate` only to a peer whose device key is on the roll
-  of a circle the requester holds. The reference `sync` checks this first and sends
-  nothing beyond `hello` to a peer it shares no circle with (section 13.2).
+* A requester that holds circles SHOULD send `authenticate` only to a peer whose device
+  key is on the roll of one of them. The reference `sync` checks this first and sends
+  nothing beyond `hello` to a peer it shares no circle with (section 13.2). A device
+  that has just been admitted holds no circle yet and sends it, without addresses, to
+  the node its owner named, in order to join (section 13.6).
 
 `authenticate` is an announcement, not a login. It establishes nothing that later
 requests rely on: every request is authorized on its own (section 12.2), and a member
-that never sends it is served exactly the same. It has two uses: it tells the responder
-where the requester listens, and it tells the requester, before anything else is
-exchanged, whether the responder regards it as a member of any circle.
+that never sends it is served exactly the same. It has three uses: it tells the
+responder where the requester listens; it tells the requester, before anything else is
+exchanged, whether the responder regards it as a member of any circle; and `circles`
+tells it which. The last is what a newly admitted device lacks: it is on the
+responder's roll and so entitled to the circle's records, but it does not know the
+circle id to ask for. The responder names only circles the requester is on the roll of,
+so nobody learns of a circle they are not a member of.
 
 ### 11.6 `push_events`
 
@@ -1106,19 +1181,24 @@ Response:
   makes progress, and reports what is left as `rejected`. Across requests an event whose
   dependency has not arrived (a ballot before its proposal, a proposal before the
   charter it names) is `rejected` and would be accepted later. A sender SHOULD therefore
-  send dependencies first (the reference sender pushes in `(created_at, event_id)`
-  order) and MAY offer a rejected decision event again in a later sync.
+  send dependencies first and offer a rejected event again in a later sync. The
+  reference sender pushes in the order it stored the events, which normally puts an
+  event after the records it depends on, and offers a rejected event and everything it
+  stored after it again next time (section 13.2).
 * After accepting `adopt` PROPOSALs whose bundle it lacks, the reference responder asks
   the pusher for those bundles with `fetch_bundle` over the same connection (section
   13.2). A node that pushes SHOULD therefore keep the connection open and answer
-  requests for a short while.
+  requests. Until that fetch-back and the settling after it are done, for at most 15 s,
+  the reference responder holds back its answer to the pusher's next request, other
+  than `hello` and `fetch_bundle`.
 
 ### 11.7 `fetch_events`
 
 Request:
 
 ```json
-{"type": "fetch_events", "circle_id": "sha256:...", "known": ["sha256:<event id>", ...], "limit": 256}
+{"type": "fetch_events", "circle_id": "sha256:...", "known": ["sha256:<event id>", ...], "limit": 256,
+ "after?": "sha256:<event id>"}
 ```
 
 Response:
@@ -1129,8 +1209,17 @@ Response:
 
 * `known`: at most 4096 event ids the requester already holds for that circle.
 * `limit`: integer 1 to 256.
+* `after` (optional): a cursor. It is the event id of the last envelope of an earlier
+  `events` answer **from the same responder** for the same circle. The responder serves
+  events in the order it stored them and continues after that event. An absent `after`,
+  or one naming an event the responder does not hold in that circle, means from the
+  beginning. A sender omits the member when it has no cursor; an explicit `null` is
+  rejected. `after` only selects where to start: what the requester may read is decided
+  as for any other request.
 * `events`: at most 256 envelopes and the frame stays under 512 KiB; `more` is `true`
-  when further eligible events remain. Section 13 describes the selection.
+  when further eligible events remain. Section 13.3 describes the selection.
+* The response carries no cursor of its own. To continue, the requester sends the event
+  id of the last envelope it received as `after`.
 
 ### 11.8 `fetch_bundle`
 
@@ -1168,7 +1257,7 @@ Response:
 
 | code | meaning |
 |---|---|
-| `unauthorized` | not authorized. Identical for a circle the responder does not hold, a device that is not on the roll of the circle's current charter, a revoked device and an out-of-scope request |
+| `unauthorized` | not authorized. Identical for a circle the responder does not hold, a device that is not on the roll of the circle's current charter, a revoked device and an out-of-scope request. One request is answered differently for one kind of non-member: a `fetch_events` from a device the responder saw voted off the roll (section 13.7) |
 | `rate_limited` | over a per-peer limit; retry later |
 | `bad_request` | malformed request or a bound exceeded |
 | `too_large` | frame or object too large |
@@ -1193,7 +1282,8 @@ and back off on `rate_limited` and `unavailable`.
 ## 12. Authorization
 
 Reference: `crates/ph-governance/src/roll_oracle.rs`, `authz.rs`, `read.rs`,
-`crates/ph-identity/src/registry.rs`, `apps/peerharness/src/peer.rs`.
+`crates/ph-identity/src/registry.rs`, `apps/peerharness/src/peer.rs`,
+`apps/peerharness/src/governance.rs`.
 
 ### 12.1 What a peer that is not a member can learn
 
@@ -1213,29 +1303,39 @@ circle is `rejected` either way.
 No circle names, member lists, skill titles, event counts or circle existence leak.
 What does leak is that a PeerHarness node listens at that address, its `PeerId` (device
 key), and the generic protocol version and capabilities. A device learns from the answer
-to `authenticate` whether its own key is on a roll the node holds; nobody else can ask
-on its behalf, because the question is tied to the key the transport authenticated.
+to `authenticate` whether its own key is on a roll the node holds, and if so the ids of
+those circles and of no others (section 11.5); nobody else can ask on its behalf,
+because the question is tied to the key the transport authenticated.
+
+There is one deliberate exception, and it concerns only devices the node itself knew as
+members. A device that was on the roll of an earlier charter the node holds, and was
+then taken off it by a vote, is not an active member, yet its `fetch_events` for that
+circle is answered with the records of that vote and nothing else (section 13.7). A
+device that was never on a roll the node holds, and a revoked device, get `unauthorized`
+exactly as described above.
 
 ### 12.2 Per-request re-check
 
 Authorization is evaluated on **every** request against the latest local state: the
 current charter of the circle and the revocations the node knows. Nothing is cached from
 `authenticate` or from an earlier request. A device that an amendment removed from the
-roll gets `unauthorized` from a node on its first request after that node accepted the
-new charter, and a revoked device on its first request after the node learned of the
+roll is no longer served as a member from its first request after that node accepted
+the new charter: it gets `unauthorized`, except that a `fetch_events` for that circle
+is answered with the removal notice of section 13.7. A revoked device gets
+`unauthorized` for everything from its first request after the node learned of the
 revocation. A node likewise pushes nothing to a device that is not an active member when
 it is about to send.
 
 ### 12.3 Membership: the roll, and credentials
 
-v0 has two membership statements. They are used for different things and are never
-interchangeable.
+v0 has two membership statements. Only one of them is used to decide anything.
 
-**The roll: access on the wire.** For everything a node does for a peer (answering
-`authenticate`, serving `fetch_events` and `fetch_bundle`, accepting `push_events`,
-choosing what to push), membership is the roll of the circle's **current** charter
-(section 14.5), looked up with the device key the transport authenticated
-(`ph_governance::RollOracle`). `authorize(circle, key, scope, capability)` succeeds iff:
+**The roll.** For everything a node does for a peer (answering `authenticate`, serving
+`fetch_events` and `fetch_bundle`, accepting `push_events`, choosing what to push), and
+for the authors of QUESTION and ANSWER events (section 12.4), membership is the roll of
+the circle's **current** charter (section 14.5), looked up with the device key the
+transport authenticated or the key that signed the event (`ph_governance::RollOracle`).
+`authorize(circle, key, scope, capability)` succeeds iff:
 
 1. the node holds the circle and a current charter for it (else *not member*);
 2. `key` has no locally known revocation in the circle (section 9.5; else *revoked*);
@@ -1246,33 +1346,27 @@ choosing what to push), membership is the roll of the circle's **current** chart
 
 `is_active_member(circle, key)` is steps 1 to 3. Neither reads a clock: an entry on the
 roll does not expire. Only the current charter counts here. The roll of an earlier
-charter, which a node may hold as history, gives no access.
+charter, which a node may hold as history, gives no access and no right to ask or
+answer. Its only use towards a peer is the removal notice of section 13.7.
 
-Credentials are not consulted for any of this, and a peer cannot improve its standing by
-presenting one. The reason is who decides. A credential is issued by the root key alone.
-If credentials gave access, the founder could let anyone read a circle's records without
-a vote, and every member would lose the ability to sync once their credentials expired
-and the root key was no longer available to renew them. The roll changes only by an
-amendment that passed, and it does not expire.
+PROPOSAL, VOTE, RESULT and STANCE events are authorized by a roll as well, but not
+necessarily the current one: the roll of the charter the proposal names, or for a STANCE
+the charter the stance names (section 12.4).
 
-**Credentials: QUESTION and ANSWER events.** The author of a QUESTION or ANSWER event is
-authorized by credential (section 12.4). `authorize(circle, key, scope, capability, now)`
-over credentials succeeds iff, at local `now`:
+**Credentials.** Credentials are not consulted for any of this, and a peer cannot
+improve its standing by presenting one. The reason is who decides. A credential is
+issued by the root key alone. If credentials gave access, the founder could let anyone
+read a circle's records without a vote; if they authorized QUESTION and ANSWER events,
+only devices the founder had signed for could take part in a circle's deliberation,
+which with admission by vote would be the founder alone; and every member would lose
+both once their credentials expired and the root key was no longer available to renew
+them. The roll changes only by an amendment that passed, and it does not expire.
 
-1. the circle is known locally (else *not member*);
-2. `key` is not revoked in the circle (else *revoked*);
-3. `key` has at least one credential in the circle (else *not member*);
-4. at least one of them is active (section 9.3; else *expired*);
-5. a **single** active credential both has a scope covering `scope` (section 2.5) and
-   has a role granting `capability` (section 2.6). Otherwise the denial is *scope denied*
-   if no active credential covers the scope, else *capability denied*.
-
-This lookup is implemented in the library (`ph_identity::MembershipRegistry`). In the
-reference implementation the only credential ever issued is the founder's own and no
-command produces QUESTION or ANSWER events, so it has little to decide yet.
-
-PROPOSAL, VOTE and RESULT events use neither lookup: they are authorized by the roll of
-the charter the proposal names, which need not be the current one (section 12.4).
+The library also implements the credential form of the lookup
+(`ph_identity::MembershipRegistry`: the circle is known, the key is not revoked, and a
+single active credential of the key both covers the scope and has a role granting the
+capability, at local `now`). `authorize_incoming` takes whichever membership statement
+its caller gives it. The reference node gives it the roll, for every event type.
 
 A denial reason is for local logs only; peers only ever see `unauthorized` or `rejected`.
 
@@ -1284,13 +1378,20 @@ After stateless validation (section 7.4), a receiver checks, in order
 1. the time rules for the event's type at `now` again (section 7.3);
 2. the circle is known locally (else `unknown_circle`);
 3. body sanity: bounds and bindings again, and no self-references: an event MUST NOT
-   name its own id as `question_id`, `proposal_id`, an entry of `approvals`,
-   `supersedes`, `related_question`, a repeal `target`, or an entry of an amendment's
-   `carried` (else `bad_reference`);
+   name its own id as `question_id`, `proposal_id` (of a VOTE, a RESULT or a STANCE), an
+   entry of `approvals`, `supersedes`, `related_question`, a repeal `target`, or an
+   entry of an amendment's `carried` (else `bad_reference`);
 4. by event type:
-   * **QUESTION, ANSWER** (credential): the credential form of `authorize(circle_id,
-     author, scope, capability, now)` with the type's capability (section 12.3). Being
-     on the roll is neither required nor sufficient;
+   * **QUESTION, ANSWER** (current roll): `authorize(circle_id, author, scope,
+     capability)` of section 12.3 with the type's capability, `ask` or `answer`: the
+     author's device is on the roll of the circle's **current** charter, its roll entry
+     covers the envelope scope, and the device is not revoked locally. No credential is
+     required or looked at. This is evaluated when the event arrives, against the
+     charter the node holds then. Unlike a decision event, a QUESTION or ANSWER names no
+     charter, so a node that has since accepted a charter without the author refuses it,
+     and a node that has not yet accepted the charter that admits the author refuses it
+     until it has. That is acceptable because these events decide nothing: they expire,
+     and a rule still needs a proposal and a majority;
    * **PROPOSAL, VOTE, RESULT** (roll): let `P` be the proposal that fixes the charter
      and the electorate: the event itself for a PROPOSAL, otherwise the **stored**
      PROPOSAL named by `proposal_id`.
@@ -1305,12 +1406,28 @@ After stateless validation (section 7.4), a receiver checks, in order
      4. `author` MUST NOT have a locally known revocation in the circle (else
         `revoked`).
 
-     Neither lookup of section 12.3 is used and no credential is required: the roll is
-     that of the charter `P` names, which may be an earlier charter than the current
-     one. The answer depends only on signed, permanent records, so it does not change
+     The `authorize` lookup of section 12.3 is not used and no credential is required:
+     the roll is that of the charter `P` names, which may be an earlier charter than the
+     current one. The answer depends only on signed, permanent records, so it does not change
      with time and a node that joins later can replay the circle's decisions. A
      *retryable* rejection means nothing is wrong with the event; the receiver lacks a
      record it depends on and MAY accept the same event after its next sync;
+   * **STANCE** (roll): let `P` be the **stored** PROPOSAL named by `proposal_id`.
+     1. If no PROPOSAL with that id is stored, reject as `missing_proposal` (retryable).
+        If it is stored, it MUST be in the same circle, have the same envelope scope as
+        the event, and be an `adopt` proposal (else `bad_reference`).
+     2. The charter with digest `charter`, the stance's own member and not `P.charter`,
+        MUST be one this node has accepted for the circle, as its current charter or as
+        history (section 14.5). If it is not, reject as `unknown_charter` (retryable).
+     3. `author` MUST be a device on that charter's roll (else `not_on_roll`), and its
+        member MUST be in the electorate `P`'s scope defines on that roll: every member
+        when the scope is `*`, otherwise the members whose roll entry covers it (else
+        `not_in_electorate`).
+     4. `author` MUST NOT have a locally known revocation in the circle (else
+        `revoked`).
+
+     Like a ballot, the answer depends only on signed, permanent records. Storing a
+     STANCE has no effect on any count or rule set;
    * **MEMBERSHIP** (embedded credential): `author == credential.subject_device_key`;
      `credential.circle_id == circle_id`; `circle_id == circle_id(credential.issuer_key)`
      (the issuer is the root); the proof verifies at `now`; the envelope scope is `*` or
@@ -1336,24 +1453,29 @@ Then side effects: a MEMBERSHIP adds the proof to the local credential view; a R
 is recorded, and from its next request on the revoked device is refused (section 12.2);
 a VOTE or RESULT may make its proposal pass (sections 14.2 and 14.3); a CHARTER becomes
 the current charter if it is a legitimate successor, or is kept as history if the chain
-the node holds names it (section 14.5). A QUESTION is meant to go through the local
-anti-spam guard (section 14.8).
+the node holds names it (section 14.5). A STANCE has none.
 
-In the reference node the check in step 5 covers `supersedes` and repeal `target` (a
-VOTE's and a RESULT's proposal is already resolved in step 4). It does not yet run the
-ANSWER reference check of section 12.5 or the QUESTION guard when it stores those two
-event types; both exist in the library. No command produces either type yet.
+In the reference node (`apps/peerharness/src/governance.rs`, `ingest`) the check in
+step 5 covers `supersedes`, the repeal `target` and an ANSWER's `question_id` (a VOTE's,
+a RESULT's and a STANCE's proposal is already resolved in step 4). An ANSWER whose
+QUESTION is not stored is rejected as retryable (`missing_question`); one whose QUESTION
+is in another circle or has another scope is rejected for good. Before step 6 a QUESTION
+authored by another device also passes the local guard of section 14.8: a blocked
+author's question is not stored and is reported as `rejected`; the guard's other
+verdicts leave the event stored and only decide whether the owner is shown it.
 
 Pushing a stored event again is harmless: it is a `duplicate`.
 
 ### 12.5 References between events
 
-An ANSWER, a VOTE, a RESULT, an `adopt` PROPOSAL with `supersedes` and a `repeal`
-PROPOSAL reference another event. If the referenced event is not stored yet, the
-reference is *missing*: a VOTE or RESULT is rejected as retryable (section 12.4), other
-events may be kept and re-checked after the next sync, and none has any effect until
-then. If the referenced event is stored but inconsistent (wrong type, kind, circle,
-scope or skill name, as listed in section 8), the event is rejected.
+An ANSWER, a VOTE, a RESULT, a STANCE, an `adopt` PROPOSAL with `supersedes` and a
+`repeal` PROPOSAL reference another event. If the referenced event is not stored yet,
+the reference is *missing*. A VOTE, RESULT, STANCE or ANSWER is then rejected as
+retryable (section 12.4). A PROPOSAL whose `supersedes` or repeal `target` is missing is
+kept; the reference is checked only when the PROPOSAL arrives, and it has no effect
+until the referenced event is there. If the referenced event is stored but inconsistent
+(wrong type, kind, circle, scope or skill name, as listed in section 8), the event is
+rejected.
 
 A RESULT also references the ballots it lists and a CHARTER references the RESULT that
 justifies it. Those are resolved when the result or charter is verified (sections 14.3
@@ -1367,14 +1489,22 @@ and 14.5), where a ballot that is not held yet is again a retryable condition.
 * Charters: signed only by the circle root key, and accepted by other nodes only when a
   passed amendment justifies them (section 14.5). The root key notarizes; it does not
   decide.
-* REVOCATION and CHARTER events: authored by the root key (ADR-010).
+* REVOCATION and CHARTER events: authored by the root key (ADR-010). A revocation is the
+  one thing the root key holder decides alone (the reference `circle revoke`). It takes
+  effect on each node that learns of it, needs no vote, and cannot be undone. It can
+  only deny: the revoked device is no longer answered and its ballots are no longer
+  counted, while its member stays on the roll and in every electorate (section 14.2), so
+  a revocation can keep a proposal from passing and can never make one pass.
 * MEMBERSHIP events: authored by the credential subject.
-* QUESTION and ANSWER events: authored by a device holding an active credential with the
-  type's capability on the event scope (section 12.3).
+* QUESTION and ANSWER events: authored by a device on the roll of the circle's current
+  charter whose roll entry covers the event scope (section 12.3). The root key cannot
+  give anyone this by signing a credential.
 * PROPOSAL, VOTE and RESULT events: authored by a device on the roll of the charter the
   proposal names, for a member in the proposal's electorate. The `propose`, `vote` and
   `publish` capabilities are not used. The circle root key is not on the roll and cannot
   vote.
+* STANCE events: authored by a device on the roll of the charter the stance names, for a
+  member the rule's scope concerns.
 * Access on the wire: nobody issues it. It follows from the roll of the current charter
   (section 12.3), which changes only by a passed amendment (section 14.5). The root key
   cannot grant it by signing a credential.
@@ -1385,9 +1515,9 @@ and 14.5), where a ballot that is not held yet is again a retryable condition.
 device key, as authenticated by the transport, against the roll of the circle's current
 charter. The peer's scopes are those of its member's roll entry.
 
-* A QUESTION or ANSWER, and a decision event (PROPOSAL, VOTE, RESULT) whose envelope
-  scope is not `*`, is readable by a peer iff `authorize(circle, peer, event.scope,
-  read)` succeeds.
+* A QUESTION or ANSWER, and a decision event (PROPOSAL, VOTE, RESULT) or STANCE whose
+  envelope scope is not `*`, is readable by a peer iff `authorize(circle, peer,
+  event.scope, read)` succeeds.
 * A control-plane event (MEMBERSHIP, REVOCATION, CHARTER) is readable by every active
   member of its circle regardless of scope, so revocations and the charter reach
   everyone who must enforce them.
@@ -1395,6 +1525,9 @@ charter. The peer's scopes are those of its member's roll entry.
   circle. A `*` proposal concerns the whole circle and its electorate is the whole roll
   (every `amend` proposal is one), and members cannot vote on what they cannot read.
   This exception does not apply to QUESTION and ANSWER.
+* A STANCE is read exactly like the decision events of the rule it is about: by every
+  active member when its envelope scope is `*`, otherwise by the peers that may read
+  that scope.
 * A bundle is served for `fetch_bundle {circle_id, digest}` only if a stored `adopt`
   PROPOSAL in that circle has that `bundle_digest` and is readable by the requester now
   under the rules above.
@@ -1402,6 +1535,8 @@ charter. The peer's scopes are those of its member's roll entry.
 * Passing a rule gives nobody access: nothing in the read rules looks at a ballot. Who
   may read changes only when the roll does, by an amendment that every member can see
   and vote on (section 14.5), or when a device is revoked.
+* The removal notice (section 13.7) is not a read rule: it is a fixed set of records
+  served to a former member, selected by charter and not by scope.
 
 ## 13. Sync
 
@@ -1415,49 +1550,85 @@ order and no canonical head: sync is set reconciliation by event id. Events are
 immutable and content-addressed, so the same event received from several peers is
 stored once.
 
-The reference implementation has no gossip, no background dialing, no periodic resync
-and no delivery queue. Events move between two nodes when the owner of one of them runs
-a sync with the other (section 13.2), or when records are carried as files (Appendix B).
+The reference implementation has no gossip and no delivery queue. Events move between
+two nodes when the owner of one of them runs a sync with the other, when a daemon whose
+owner set a sync interval syncs with a peer it already has an address for (section
+13.2), or when records are carried as files (Appendix B). A node never dials an address
+it was not given by its owner or by the peer itself in an earlier exchange.
 
 ### 13.2 Session
 
-This is the session the reference implementation runs. A node takes one of two parts. A
-node running `daemon` listens and only answers; it never dials. A node running `sync`
-dials one peer, runs the steps below and disconnects. It does not need to be listening,
-but while it is connected it answers requests like any node.
+This is the session the reference implementation runs. A node takes one of two parts.
 
-The syncing node:
+A node running `daemon` listens and answers. It dials nobody unless its owner started it
+with a sync interval (`daemon --sync-every <seconds>`, 30 to 86,400). Then, on that
+timer, it runs the session below with every peer it has a stored address for, one after
+the other.
 
-1. dials the address and sends `hello`;
+A node running `sync` dials one peer, runs the steps below and disconnects. Run without
+an argument it does so with every peer it has a stored address for. It does not need to
+be listening, but while it is connected it answers requests like any node.
+
+A stored address has one of two sources: an address the owner dialed and that completed
+the handshake below (`connect`, `sync`, `circle join`), or the `listen_addrs` a member
+announced to this node in `authenticate` (section 11.5). Neither form of sync dials a
+peer this node has not exchanged with before, and step 2 applies to every peer in the
+same way. The forms that sync with every known peer skip a peer that is marked as
+blocked locally.
+
+The syncing node keeps two cursors per peer and circle: the **fetch cursor** (the last
+event that peer served it; it means something only to that peer) and the **push cursor**
+(the last event of its own log that peer has taken). It:
+
+1. dials the address and sends `hello`. It stops unless the answer lists `0.1`;
 2. works out, from its own records, the circles in which both its own device and the
    peer's device (taken from the `PeerId`) are active members by the roll (section
    12.3). If there is none it stops here. Nothing that names a circle is ever sent to a
    peer it shares none with;
-3. sends `authenticate` to announce itself (section 11.5). If the answer is
-   `unauthorized`, the peer does not regard it as a member of anything, and it stops;
-4. then, for each shared circle in turn:
-   1. sends `fetch_events` with `known` set to its newest unexpired event ids for the
-      circle (at most 4096; permanent events never expire) and `limit` 256, and
-      validates and stores what comes back. It repeats this until a round stores
-      nothing new or `more` is `false`, for at most 64 rounds;
+3. sends `authenticate` to announce itself (section 11.5). The circles of step 2 that
+   the answer names in `circles` are the **shared** circles (an `authenticated` answer
+   without `circles` names them all). If the answer is `unauthorized`, none is shared;
+4. for each shared circle in turn:
+   1. **fetches.** It sends `fetch_events` with `after` set to its fetch cursor (absent
+      on a first sync), `known` set to its newest unexpired event ids for the circle (at
+      most 4096; permanent events never expire) and `limit` 256, and validates and
+      stores what comes back. An event it cannot place yet (a retryable rejection,
+      section 12.4) goes into a pool and is offered again together with every later
+      answer. It sets `after` to the last event of the answer and repeats until an
+      answer is empty or has `more` `false`, for at most 64 rounds; it also stops when
+      the pool exceeds 8192 events. If the pool is empty at the end, the last event
+      received becomes the new fetch cursor. If it is not, the cursor stays where it
+      was, so the next sync reads the same stretch again and no event is skipped for
+      good because of the order it arrived in;
    2. sends `fetch_bundle` for each bundle digest that a stored `adopt` PROPOSAL names
       and it lacks;
    3. settles (below);
-   4. sends `push_events` with every event of the circle the peer may read (section
-      12.7), in `(created_at, event_id)` order, in batches of at most 64 events that
-      each fit a frame. It does not know what the peer already has; the peer answers
-      `duplicate` for those;
-   5. waits, for at most 10 s, until the peer has fetched from it the bundles named by
-      the `adopt` PROPOSALs the peer just reported as `accepted`;
-   6. fetches events and bundles once more, to receive what the exchange produced on the
-      peer's side (a RESULT, a new CHARTER), and settles again;
-   7. pushes once more if that settling made it sign a RESULT or a CHARTER.
+   4. **pushes.** It sends `push_events` with the events of the circle that the peer may
+      read (section 12.7) and that it stored after its push cursor, in the order it
+      stored them, in batches of at most 64 events that each fit a frame. On a first
+      sync that is everything the peer may read; the peer answers `duplicate` for what
+      it has. If the peer rejected nothing, the push cursor moves to the last event
+      considered. Otherwise it moves to the last event before the first one the peer
+      rejected: a rejection may only mean that the peer lacks a record the event depends
+      on, so that event and everything stored after it is offered again next time;
+   5. fetches events and bundles once more, to receive what the exchange produced on the
+      peer's side (a RESULT, a new CHARTER), and settles again. The peer does not answer
+      this fetch before it has fetched the bundles of what was just pushed and settled
+      (below);
+   6. pushes once more if that settling made it sign a RESULT or a CHARTER;
+5. for each circle of step 2 that is not shared, asks the peer why (section 13.7).
+
+If no circle is shared and step 5 did not show this node a vote that removed it, the
+sync fails: the peer does not regard this node as a member of anything.
 
 The answering node handles each request on its own (section 12.2). When it accepts
 pushed events it settles the circles concerned before it answers, with one exception: if
 it lacks the bundle of an `adopt` PROPOSAL it holds for one of those circles, it answers
 first, then sends `fetch_bundle` for the missing bundles to the pusher over the same
-connection, and settles after that.
+connection, and settles after that. Until that is done, and for at most 15 s, it holds
+back its answer to the pusher's next request, other than `hello` and `fetch_bundle`. The
+pusher's second fetch (step 4.5) therefore finds what settling signed, and waits exactly
+as long as that work takes.
 
 **Settling** is local and not part of the wire protocol. For a circle that received
 events, the node publishes a RESULT for each proposal that has passed and has none (if
@@ -1467,54 +1638,71 @@ root key and an amendment has passed (section 14.5), and applies the rules in fo
 
 What this session cannot do:
 
-* A device that is on no roll its own node holds cannot sync, because step 2 finds no
-  shared circle. A new member therefore joins first from a file or directory of events
-  that contains a charter listing its device (section 14.5, Appendix B), and syncs after
-  that.
-* A member removed by vote is refused by every peer that has accepted the new charter
-  (step 3 or 4 gets `unauthorized`). The peer does not send it that charter, so its own
-  node is not told over the network that it was removed. It learns of it from a file or
-  a shared directory.
-* When the answering node had to fetch bundles first, anything it signs while settling
-  afterwards (a RESULT, a CHARTER) may be too late for the syncing node's last fetch.
-  The next sync picks it up.
+* A device that is on no roll its own node holds cannot run it, because step 2 finds no
+  shared circle. A device that was just admitted gets the circle with the join exchange
+  of section 13.6, or from a file or directory of events (section 14.5, Appendix B), and
+  syncs after that.
+* A member removed by vote is no longer served as a member by any peer that has accepted
+  the new charter. Such a peer shows it the vote that removed it (section 13.7) and
+  nothing else.
+* If the answering node's fetch-back takes longer than 15 s, what it signs afterwards (a
+  RESULT, a CHARTER) is too late for the syncing node's second fetch. The next sync
+  picks it up.
 
 ### 13.3 `fetch_events` selection
 
 The responder MUST first check that the requester is an active member of the circle by
-the roll (section 12.3; else `unauthorized`, the same answer as for a circle it does not
-hold). It then returns events of that circle that:
+the roll (section 12.3). If it is not, the answer is `unauthorized`, the same answer as
+for a circle the responder does not hold, with the one exception of section 13.7. For a
+member it returns events of that circle that:
 
+* it stored after the event `after` names. An absent `after`, or one naming an event the
+  responder does not hold in that circle, means from the beginning;
 * have not expired at the responder's `now`. Permanent events (section 7.3) never
   expire and are always eligible, however old they are;
 * are not in `known`;
-* the requester may read (section 12.7): control-plane events and decision events with
-  scope `*` always, everything else only when the requester may read its scope,
+* the requester may read (section 12.7): control-plane events, and decision events and
+  stances with scope `*`, always; everything else only when the requester may read its
+  scope,
 
-ordered by `(created_at, event_id)` ascending, at most `limit` (and 256), within a byte
-budget that keeps the frame under 512 KiB (at least one event is returned if any is
-eligible). `more` is `true` iff further eligible events remain.
+in the order the responder stored them, at most `limit` (and 256), within a byte budget
+that keeps the frame under 512 KiB (at least one event is returned if any is eligible).
+`more` is `true` iff further eligible events remain.
 
 Notes for implementers:
 
+* The order is the responder's own storage order, not `created_at`. An event can arrive
+  long after it was created (a ballot signed offline last week) and would fall behind a
+  cursor based on time; in storage order it is always after every cursor handed out
+  before it arrived. Each responder has its own order, so a cursor means something only
+  to the responder whose answer it came from. Keep one per peer and circle, and never
+  send one responder's cursor to another: an id the responder does not hold restarts
+  from the beginning, which is correct but slow.
+* `after` selects where to start and nothing else. It is not an authorization and is
+  not remembered by the responder.
 * An expired QUESTION, ANSWER or MEMBERSHIP event is never served, so it cannot be
-  obtained by sync. PROPOSAL, VOTE, RESULT, CHARTER and REVOCATION events always can, so
-  a node that joins later can fetch the circle's decisions and every revocation.
-* Events arrive in `(created_at, event_id)` order, which normally delivers a proposal
-  before its ballots and a charter after the result that justifies it. A receiver MUST
-  NOT rely on that: a decision event whose proposal or charter is missing is rejected as
-  retryable (section 12.4) and should be offered again after the next round. The
-  reference requester tries the events of one response again, in any order, for as long
-  as that makes progress.
+  obtained by sync. PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION and STANCE events always
+  can, so a node that joins later can fetch the circle's decisions, every revocation and
+  what members put on the record.
+* Storage order normally delivers an event after the records it depends on, because a
+  node stores a ballot only once it holds the proposal, and a proposal only once it
+  holds the charter it names. A receiver MUST NOT rely on that. For example a node that
+  joined from a later charter stores the CHARTER events of earlier charters afterwards,
+  and serves them in that order. An event whose proposal, question or charter is missing
+  is rejected as retryable (section 12.4) and MUST be offered to the local validation
+  again once more events have arrived. A requester that pages with `after` MUST NOT move
+  the cursor it saves past an event it could not place, or it will never be offered that
+  event again. The reference requester keeps such events in a pool across the rounds of
+  one sync and saves the cursor only when the pool is empty (section 13.2).
 * A requester SHOULD discard a returned event that is not of the circle it asked for;
   the reference requester does.
-* `known` is capped at 4096 ids and there is no cursor. A circle with more than 4096
-  unexpired events cannot be fully described in one `known` list; the responder may
-  then keep returning events the requester already holds with `more = true`. Bound the
-  number of rounds per sync (the reference requester stops after a round that stores
-  nothing new, and after 64 rounds at the latest, so beyond this limit it can miss
-  events). Because decision events are permanent and v0 does not prune them, a
-  long-lived circle reaches this limit eventually.
+* `known` is capped at 4096 ids, so a circle with more unexpired events than that cannot
+  be described in one list. With `after` this no longer limits what can be fetched: a
+  log of any size is read in pages of at most 256 events. Events the requester holds but
+  could not list are sent to it once more, as duplicates, the first time it reads that
+  stretch of a responder's log, and are behind its cursor afterwards. `known` remains
+  useful for recent events both sides already hold, such as the ones the requester
+  pushed to this responder earlier.
 * Every received event goes through the full validation of sections 7.4 and 12.4.
 
 ### 13.4 Idempotency and replay
@@ -1533,6 +1721,95 @@ revocation reaches a node only when it syncs with a node that has it, or imports
 until then that node may keep serving the revoked key (see `docs/security-model.md`).
 The same holds for a charter: a node that has not yet accepted the charter that removed
 a member still answers that member.
+
+### 13.6 Joining from a member's node
+
+A device that an amendment admitted is on the roll of the circle's current charter on
+every node that has accepted that charter. It holds nothing of the circle itself, not
+even its id, so it cannot run the session of section 13.2. The reference
+`circle join <address>` does this instead:
+
+1. dials the address and sends `hello`. It stops unless the answer lists `0.1`;
+2. sends `authenticate` with empty `memberships` and empty `listen_addrs`. If the answer
+   is `unauthorized`, the peer has this device on no roll, and the join stops there;
+3. for each circle the answer names in `circles` that this node does not hold, sends
+   `fetch_events` with an empty `known`, `limit` 256 and no `after`, and pages with
+   `after` until `more` is `false` (bounded at 256 rounds and 64 MiB). What comes back
+   is held in memory. Nothing is stored;
+4. looks, among the fetched events of each such circle, for the newest CHARTER event
+   that passes stateless validation (section 7.4), whose roll lists this device, whose
+   `circle_id` is the circle asked for and is derived from the charter's `issuer_key`
+   (section 5). If the owner said which root fingerprint to expect, only a circle with
+   that fingerprint qualifies. If the owner did not, and more than one circle
+   qualifies, the join stops and asks for the fingerprint;
+5. shows the owner that charter, its rules and its roll, and the root fingerprint, and
+   stores nothing before the owner confirms. A fingerprint that differs from the one the
+   owner expected is a refusal;
+6. on confirmation takes that charter as its trust anchor (section 14.5), applies
+   sections 7, 12.4 and 14 to every fetched event exactly as to a file of events,
+   settles, records the peer's address and the last event the peer served as its fetch
+   cursor, and runs the session of section 13.2 with the same peer, which also fetches
+   the bundles.
+
+Before the owner's confirmation the joining node has sent a `hello`, an `authenticate`
+that carries no address, and `fetch_events` requests naming only circle ids the peer
+itself had just named. The responder does nothing new for this: it answers a device
+that is on its roll (section 12.3). A device on no roll gets `unauthorized` at step 2
+and learns no circle id. The check that matters is the same as for a file: the owner
+compares the root fingerprint with what the founder told them through another channel,
+because a root signature only proves that a charter belongs to the circle that key
+defines.
+
+### 13.7 Removal notice
+
+Section 12.1 has one exception. A `fetch_events {circle_id}` from a device that
+
+* is not an active member of that circle (section 12.3),
+* has no locally known revocation in it, and
+* is on the roll of at least one charter the responder holds for that circle, which is
+  then necessarily an earlier one (a previous current charter, or history, section
+  14.5),
+
+is answered with an `events` response instead of `unauthorized`. Let `L` be the highest
+`seq` among the responder's charters of that circle that list the device. For each
+charter the responder holds with `seq <= L + 1`, in ascending `seq`, the response
+contains, where the responder holds them:
+
+* the `amend` PROPOSAL named by the RESULT that is the charter's `justification`;
+* every VOTE the responder holds for that proposal;
+* that RESULT;
+* the CHARTER event that carries the charter,
+
+without the ids in `known`. It holds at most 256 events, with `more` `true` when the
+rest did not fit; the request's `limit` and `after` are not used. Nothing else is in it:
+no charter with a higher `seq`, so no later roll; no `adopt` or `repeal` proposal and no
+ballot on one; no QUESTION, ANSWER, MEMBERSHIP, REVOCATION or STANCE; and no bundle,
+because `fetch_bundle` stays refused. When the requester already has all of it the
+response is an empty `events`.
+
+Every other request from that device (`authenticate`, `push_events`, `fetch_bundle`) is
+answered `unauthorized` as for any non-member. A device that was never on a roll the
+responder holds, and a revoked device, get `unauthorized` for this request as well.
+
+This discloses nothing the device could not already read. The charters up to `seq = L`
+and the records behind them are control-plane events and decision events of scope `*`
+from a time when the device was an active member, all readable by every member (section
+12.7). The charter with `seq = L + 1` is the removal. Its content is, word for word, the
+`next` of an `amend` proposal that named charter `L` (section 14.5, step 6). That
+proposal's electorate was the whole roll of charter `L`, the device's member included,
+and the ballots and the RESULT are the ones cast on it. What the device learns is that
+the amendment passed and that the root key notarized it.
+
+The syncing side (section 13.2, step 5): for a circle it holds, with the peer on its
+roll, that the peer did not name, it sends `fetch_events` with `known` set as usual and
+no `after`, and repeats while an answer brings events it did not have and has `more`
+`true`. It applies sections 7.4, 12.4 and 14.5 to what comes back as to any events: the
+removing charter is accepted only as a legitimate successor of the charter it holds,
+justified by a RESULT it verifies from the ballots itself. Only if its own device is
+then off the roll of its current charter does it treat itself as removed, and settle,
+which takes out the rules that circle installed. A peer cannot talk a node out of a
+circle: `unauthorized`, an empty answer, or records that do not verify change nothing
+on the asking node.
 
 ## 14. Governance: voting under a charter
 
@@ -1686,11 +1963,11 @@ Consequences an implementer can rely on:
 
 A node's **first** charter for a circle is its trust anchor and is not subject to these
 steps: the founder creates charter 1, and a node that joins later starts from whatever
-charter it is given (in the reference implementation: the newest CHARTER event, in a
-file or directory of exported events, whose roll lists the joining device) and takes
-that charter's `carried` list on the root's signature. From then on every charter it
-accepts must pass
-steps 1 to 7. The founding charter of a circle has `seq` 1 and the founder as its only
+charter it is given (in the reference implementation: the newest CHARTER event whose
+roll lists the joining device, in a file or directory of exported events or among the
+events fetched from a member's node, section 13.6) and takes that charter's `carried`
+list on the root's signature. From then on every charter it accepts must pass steps 1
+to 7. The founding charter of a circle has `seq` 1 and the founder as its only
 member, so the founder's single approval admits the second member, and the first two
 members together admit the third.
 
@@ -1723,9 +2000,23 @@ order:
    if the owner chose to be *asked*.
 
 A node starts in *follow* after its owner accepts a charter with `rules.binding = true`
-and in *ask* otherwise; the owner may choose *ask* at any time. `rules.binding` has no
-other effect, and none on counting. Opting out is local and is not broadcast; a member's
-public record of disagreement is their `reject` ballot.
+and in *ask* otherwise; the owner may choose *ask* at any time, and *follow* again with
+a confirmation. `rules.binding` has no other effect, and none on counting.
+
+Opting out is local, takes effect at once and needs nobody's permission. Nothing is sent
+because of it. The owner may separately choose to put it on the circle's record with a
+STANCE event (section 8.9), and later to record that they follow the rule again. A
+STANCE is never required and none of sections 14.2 to 14.5 reads one: it exists so that
+members can see who follows a rule they made binding. The reference client shows, for
+each rule in force, the current stance of every member on the current roll who recorded
+one, and leaves out stances signed by a revoked device. A `reject` ballot remains the
+record of disagreement with a proposal while it is being voted on; it is not available
+to a member who was admitted after the rule passed, which is one reason a STANCE names
+its own charter.
+
+An owner can also stop following a circle altogether on their own machine (the
+reference `circle leave`): nothing of that circle stays installed there. Coming off the
+roll is a separate matter and is an amendment like any other (section 14.5).
 
 ### 14.7 Conflicts and supersede
 
@@ -1736,10 +2027,20 @@ records lineage only; it moves no approvals and is not a veto.
 
 ### 14.8 Received questions
 
-Local anti-spam, not a protocol rule (defaults): at most 20 accepted questions per author
-per 24 h (all circles) and 100 per circle per 24 h; dedup by circle and normalized
-question text; local mute and block lists. Dropped questions may still be stored as
-events so sync stays idempotent.
+Local anti-spam, not a protocol rule. The reference node applies it when a QUESTION
+authored by another device arrives, after the authorization of section 12.4, with these
+defaults: at most 20 questions per author per 24 h (across all circles) and 100 per
+circle per 24 h, counted by local receive time; one entry per circle and normalized
+question text; local mute and block lists. The verdicts, in order of precedence:
+
+* **blocked author**: the event is not stored;
+* **muted author**: the event is stored and the owner is not shown the question;
+* **duplicate text**: the event is stored and the question gets no second entry;
+* **over a quota**: the event is stored and the owner is not shown the question.
+
+Keeping the event in the first place makes sync idempotent and lets an ANSWER to it be
+checked. A question the node's own owner asked is never held back. The peer that carried
+the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
 
 ### 14.9 Known limits
 
@@ -1755,18 +2056,29 @@ events so sync stays idempotent.
   converge at the next charter change.
 * **Trust anchor.** A node's first charter, including its `carried` list, is taken on
   the root's signature.
-* **Joining needs a file.** A new member is on no roll its own node holds, so it cannot
-  fetch its first charter over the wire. It joins from a file or directory of events and
-  syncs after that (section 13.2).
-* **A removed member is not told.** Peers that have accepted the charter that removed a
-  member refuse it and send it nothing, including that charter. Its own node learns of
-  the removal only from a file or a shared directory, and until then still regards
-  itself as a member.
+* **Joining over the wire needs a node that holds the admission.** A new member gets
+  its first charter from a member's node only if that node has accepted the charter
+  that lists the new device (section 13.6). A node that has not is `unauthorized` to
+  it. A file or directory of events works without any node.
+* **A removed member is told only by a node that holds the history.** The removal
+  notice (section 13.7) needs the responder to hold a charter that lists the device. A
+  node that joined later and never fetched the earlier charters answers `unauthorized`,
+  and a revoked device is told nothing by anyone. Until its node has verified the
+  removal, from a peer or from a file, it still regards itself as a member.
+* **Revocation is unilateral.** The root key holder can revoke any device without a vote
+  (section 12.6). A revocation can only deny: the device is no longer answered and its
+  approvals stop counting, the electorate keeps its size, so it can keep something from
+  passing and can never pass anything.
+* **Questions follow the current roll at arrival.** A QUESTION or ANSWER is judged
+  against the charter the receiving node holds when it arrives (section 12.4), so nodes
+  that hold different charters at that moment can differ on whether they keep it.
+  Nothing is decided from these events.
 * **Access follows each node's own view of the roll.** A node that has not yet accepted
   a newer charter keeps answering a member that charter removed, and does not yet answer
   one it admitted. Nodes agree once they hold the same charter.
-* **Growth.** Decision events are permanent and v0 has no pruning, while `fetch_events`
-  can describe at most 4096 known events and has no cursor (section 13.3).
+* **Growth.** Decision events and stances are permanent and v0 has no pruning: every
+  node keeps the whole log. Sync no longer stalls on it. `fetch_events` is paged by a
+  cursor (section 13.3), so a log of any size is transferred in bounded steps.
 
 ## 15. Versioning
 
@@ -1781,9 +2093,20 @@ events so sync stays idempotent.
 * v0 has **no extension points**. Unknown members, unknown event types, unknown roles,
   unknown proposal kinds, unknown error codes and unknown message types are rejected.
   Adding a member to any object, a new event type, a new proposal kind or a new message
-  is therefore a breaking change: it needs a
-  new schema version (and, for the wire, a new protocol id and `hello` version), and the
-  golden vectors are regenerated.
+  is therefore not understood by any node that predates it. Between released versions
+  such a change needs a new schema version (and, for the wire, a new protocol id and
+  `hello` version), and the golden vectors are regenerated.
+* `0.1` is a draft that has not been released, and three additions were made to it in
+  place, without a new version: the `STANCE` event type (section 8.9), the optional
+  `after` member of `fetch_events` (section 11.7) and the optional `circles` member of
+  `authenticated` (section 11.5). Every object that existed before is byte for byte what
+  it was: the golden vectors gained one entry and none changed, and a `fetch_events`
+  without a cursor and an `authenticated` without circles are encoded as before. A node
+  built before these additions rejects a STANCE as an unknown event type, without
+  effect on anything else it holds or on the other events of the same batch; answers a
+  `fetch_events` that carries `after` with `bad_request`; and fails to read an
+  `authenticated` that carries `circles`. Such a node and a current one therefore cannot
+  complete the session of section 13.2 with each other.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.
@@ -1799,7 +2122,7 @@ files byte for byte, so they always match the reference implementation.
 |---|---|
 | `keys.json` | seeds `01`x32 (device), `02`x32 (root), `03`x32 (peer); public keys, fingerprints, the circle id and its exact hashed input |
 | `jcs.json` | `valid` cases (`input` and expected `canonical`) and `invalid` cases a strict parser must reject (`max_depth` 8) |
-| `events.json` | thirteen envelopes covering all eight types and all three proposal kinds, telling one story (below). Each `name` is the type, optionally followed by `/` and a label, for example `PROPOSAL/amend` |
+| `events.json` | fourteen envelopes covering all nine types and all three proposal kinds, telling one story (below). Each `name` is the type, optionally followed by `/` and a label, for example `PROPOSAL/amend` |
 | `charters.json` | `charter_1` (the founding charter) and `charter_2` (its successor), each with the electorates and approval counts it implies |
 | `credentials.json` | `membership_credential`, `acceptance`, `revocation`, `invite` |
 | `bundle.json` | one `SKILL.md`, its manifest, canonical manifest, digest input and digest |
@@ -1826,8 +2149,10 @@ becomes member `bob`, and the root key notarizes:
    electorate and `need` is 2.
 5. `PROPOSAL/repeal`: bob proposes to take that rule out of force.
 6. `MEMBERSHIP`, `REVOCATION`: one control-plane event of each kind.
+7. `STANCE`: bob records that he keeps the adopted rule off his own machine. It names
+   `PROPOSAL/adopt` and `charter_2`, and has the proposal's scope.
 
-The five permanent types must still verify ten years after `verify_at`; QUESTION, ANSWER
+The six permanent types must still verify ten years after `verify_at`; QUESTION, ANSWER
 and MEMBERSHIP must not.
 
 ### 16.1 Worked example: the QUESTION vector
@@ -1872,10 +2197,11 @@ fail.
 
 The vectors were checked with an independent Python implementation (a short JCS
 function, `hashlib` and the `cryptography` package), which reproduced the canonical
-form, signing input, digest and signature of all thirteen events, the four membership
-objects and both charters, and confirmed the links between them (`charter_2.previous`,
-`charter_2.justification`, the `charter` member of each proposal, and the amendment's
-`next`).
+form, signing input, digest and signature of the thirteen events of steps 1 to 6, the
+four membership objects and both charters, and confirmed the links between them
+(`charter_2.previous`, `charter_2.justification`, the `charter` member of each proposal,
+and the amendment's `next`). The `STANCE` vector was added later and its canonical form,
+signing input, digest and signature were reproduced the same way.
 
 ### 16.2 Writing a new client
 
@@ -1895,12 +2221,14 @@ objects and both charters, and confirmed the links between them (`charter_2.prev
    with `charters.json`; count the ballots and check that `RESULT/amend` and
    `RESULT/adopt` verify; check that `charter_2` is accepted as the successor of
    `charter_1`; check that the rule adopted by `PROPOSAL/adopt` is in force under
-   `charter_2`.
+   `charter_2`, and that it is still in force, with the same approvals, after `STANCE`
+   is stored.
 6. Implement the wire messages (section 11), the validation order (sections 7.4 and
    12.4) and the session (section 13.2). A reference node can be run on loopback with
    `peerharness daemon --listen /ip4/127.0.0.1/udp/0/quic-v1`. It answers a client
    beyond `hello` only if the client's device key is on the roll of a circle the node
-   holds (section 12.3), so the client's key has to be admitted to a circle first.
+   holds (section 12.3), so the client's key has to be admitted to a circle first. The
+   client can then get that circle from the node with the exchange of section 13.6.
 
 ## Appendix A: limits
 
@@ -1915,9 +2243,9 @@ objects and both charters, and confirmed the links between them (`charter_2.prev
 | integers | `±(2^53 - 1)` |
 | clock skew allowance | 300 s (not applied to REVOCATION) |
 | event lifetime / credential lifetime | at most 400 days each |
-| expiring / permanent event types | QUESTION, ANSWER, MEMBERSHIP / PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION |
+| expiring / permanent event types | QUESTION, ANSWER, MEMBERSHIP / PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION, STANCE |
 | QUESTION `question` / `topic` | 1-2000 (multi-line) / 1-128 (single-line) code points |
-| ANSWER / VOTE `rationale` | 0-2000 code points, multi-line |
+| ANSWER / VOTE `rationale`, STANCE `reason` | 0-2000 code points, multi-line |
 | PROPOSAL `title` / `summary` | 1-200 single-line / 0-1000 multi-line |
 | `adopt` PROPOSAL `description` | 1-1024 code points, multi-line |
 | RESULT `approvals` | 1-64, sorted, unique |
@@ -1934,11 +2262,17 @@ objects and both charters, and confirmed the links between them (`charter_2.prev
 | multiaddr strings (`issuer_addrs`, `listen_addrs`) | at most 8, each 1-256 bytes |
 | `hello` versions / capabilities | at most 8, each 1-32 bytes |
 | `authenticate` / `authenticated` memberships | at most 16 (the reference implementation sends none) |
+| `authenticated` circles | at most 64; omitted when empty |
 | `push_events` events / `push_result` results | at most 64 |
-| `fetch_events` known / limit | at most 4096 / 1-256 |
+| `fetch_events` known / limit / after | at most 4096 / 1-256 / one event id, optional |
 | `events` response | at most 256 events |
 | `bundle` response files / path | at most 16 / 1-256 bytes |
-| reference `sync`, per circle | at most 64 `fetch_events` rounds; waits at most 10 s for the peer to fetch bundles |
+| reference `sync`, per circle | at most 64 `fetch_events` rounds per fetch; at most 8192 events kept aside while the records they depend on are missing |
+| reference join from a peer, per circle | at most 256 `fetch_events` rounds and 64 MiB of records in all |
+| reference responder | holds a peer's next request, other than `hello` and `fetch_bundle`, until its own bundle fetch-back from that peer and the settling after it are done, at most 15 s |
+| removal notice | at most 256 events per answer |
+| reference `daemon --sync-every` | 30 to 86,400 seconds |
+| reference question guard | 20 questions per author and 100 per circle per 24 h |
 | default lifetimes | QUESTION, ANSWER 30 d; permanent types 400 d (not enforced); invite 24 h (max 7 d); member credential 30 d; founder credential 365 d |
 
 ## Appendix B: differences from architecture.md
@@ -1979,20 +2313,30 @@ or different:
   documents at most 16 KiB, invite address strings printable ASCII; these limits are not
   in architecture.md.
 * **`authenticate`.** It is not how authorization happens. A device on the roll of a
-  circle the responder holds gets `authenticated` with an empty `memberships` list; every
-  other peer gets `unauthorized`, so `hello` is the only request a stranger gets a real
-  answer to. Access is decided on each request from the roll (section 12.3). The
-  message shapes are unchanged, so the golden vectors are too.
-* **Credentials on the wire.** The reference node neither sends nor checks membership
-  proofs on the wire, issues no credential but the founder's own, and does not use
-  invites. Those objects, and credential-based authorization of QUESTION and ANSWER
-  events, are implemented and tested in the library only (sections 9 and 12.3).
+  circle the responder holds gets `authenticated` with an empty `memberships` list and
+  the ids of the circles it is on the roll of; every other peer gets `unauthorized`, so
+  `hello` is the only request a stranger gets a real answer to. Access is decided on
+  each request from the roll (section 12.3).
+* **Credentials.** The reference node neither sends nor checks membership proofs on the
+  wire, issues no credential but the founder's own, does not use invites, and
+  authorizes no event by credential: QUESTION and ANSWER authors are checked against the
+  roll of the current charter (section 12.4). The credential objects, and the credential
+  form of the membership lookup, are implemented and tested in the library only
+  (sections 9 and 12.3).
 * **What the reference node does on the wire.** `peerharness daemon` answers requests
   and `peerharness sync` runs the session of section 13.2, so two reference nodes can be
-  run against each other over QUIC. Not implemented: gossip, background dialing,
-  periodic resync, a delivery queue, a local control endpoint, and disconnecting a peer
-  when its revocation arrives (it is refused on its next request instead). No command
-  produces QUESTION or ANSWER events.
+  run against each other over QUIC. `sync` without an argument, and
+  `daemon --sync-every`, run it with every peer whose address the node has stored.
+  `circle join <address>` runs the exchange of section 13.6. Not implemented: gossip,
+  dialing a peer the node has not exchanged with before, a delivery queue, a local
+  control endpoint, and disconnecting a peer when its revocation arrives (it is refused
+  on its next request instead).
+* **Sync order and cursor.** Architecture describes `fetch_events` by `known` alone. In
+  the source the responder serves events in the order it stored them and the request
+  may carry `after` (sections 11.7 and 13.3); the syncing node keeps a fetch cursor and
+  a push cursor per peer and circle (section 13.2).
+* **Removal notice.** A device that was voted off a roll is answered once more, for one
+  request type and with a fixed set of records (section 13.7).
 * **`hello` versions.** The reference `sync` stops, as section 11.4 requires, unless the
   response lists `0.1`. The reference responder answers `hello` whatever versions the
   request lists.
@@ -2003,4 +2347,5 @@ or different:
   `bundle-<64 hex of the bundle digest>.json`; a name is a convenience and is not
   trusted. The receiver applies sections 7, 12.4 and 14 to every record as it does to a
   pushed event (there is no pusher to check), and accepts a bundle only if a stored
-  `adopt` proposal names its digest. This is also how a new member joins (section 13.2).
+  `adopt` proposal names its digest. A new member can join from such a file or
+  directory, as well as from a member's node (section 13.6).

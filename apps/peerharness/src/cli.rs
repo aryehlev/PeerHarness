@@ -365,6 +365,12 @@ pub enum CircleCommand {
     },
     /// Choose how rules that pass reach this machine: installed at once, or after asking you.
     Mode(CircleModeArgs),
+    /// Choose where the rules of a scope are installed on this machine: in one project
+    /// directory, or for every project.
+    ///
+    /// A rule about one repository belongs in that repository. Members agree on a scope
+    /// for it (for example `repo/web`); each member says once where their checkout is.
+    Place(CirclePlaceArgs),
     /// Cut off a lost or stolen device at once (only on the node that founded the circle).
     ///
     /// A revocation stops the device from syncing and from voting on every node that
@@ -423,6 +429,24 @@ pub struct CircleDeviceArgs {
     /// The member's handle on the roll (default: yours).
     #[arg(long, value_name = "HANDLE")]
     pub member: Option<String>,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(group(ArgGroup::new("target").args(["project", "user"]).required(true)))]
+pub struct CirclePlaceArgs {
+    /// The scope whose rules to place (it also covers the scopes below it).
+    pub scope: String,
+    #[arg(long, value_name = "NAME")]
+    pub circle: String,
+    /// Install them in this project only (`<DIR>/.claude/skills`).
+    #[arg(long, value_name = "DIR")]
+    pub project: Option<PathBuf>,
+    /// Install them for every project again (the default).
+    #[arg(long)]
+    pub user: bool,
     /// Skip the confirmation prompt (after reviewing the preview).
     #[arg(long)]
     pub yes: bool,
@@ -891,6 +915,25 @@ mod tests {
             vec![
                 "peerharness",
                 "circle",
+                "place",
+                "repo/web",
+                "--circle",
+                "team",
+                "--project",
+                ".",
+            ],
+            vec![
+                "peerharness",
+                "circle",
+                "place",
+                "repo/web",
+                "--circle",
+                "team",
+                "--user",
+            ],
+            vec![
+                "peerharness",
+                "circle",
                 "revoke",
                 "bob",
                 "--circle",
@@ -953,6 +996,10 @@ mod tests {
             Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
         assert!(Cli::try_parse_from(["peerharness", "daemon", "--sync-every", "5"]).is_err());
+        assert!(
+            Cli::try_parse_from(["peerharness", "circle", "place", "x", "--circle", "team"])
+                .is_err()
+        );
         assert!(Cli::try_parse_from([
             "peerharness",
             "rule",

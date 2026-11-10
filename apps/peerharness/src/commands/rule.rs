@@ -94,6 +94,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
     let mut t = Text::new();
     for c in &circles {
         let (charter, rules, _) = governance::rule_set(&node.store, &c.circle_id)?;
+        let places = node.store.rule_places(&c.circle_id)?;
         t.line(format!(
             "{} (charter {}, your mode: {}): {} rule(s) in force",
             safe(&c.name),
@@ -112,7 +113,10 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                     &ph_protocol::Electorate::Scope(rule.scope()),
                 )
                 .is_some();
-            let here = match installer.status(rule.skill_name()) {
+            // Where this machine puts rules of that scope (`circle place`).
+            let target =
+                governance::Target::of(&installer, governance::place_for(&places, rule.scope()));
+            let here = match target.installer.status(rule.skill_name()) {
                 _ if !binds_me => "does not bind you: you are not in its electorate",
                 Ok(InstallState::Managed { digest, modified })
                     if digest == rule.bundle_digest() =>
@@ -136,6 +140,9 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 rule.scope(),
                 short_id(&rule.proposal_id())
             ));
+            if let Some(dir) = &target.dir {
+                t.line(format!("      in the project {dir}"));
+            }
             let recorded = governance::stances(
                 &node.store,
                 &c.circle_id,
@@ -165,6 +172,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 "opted_out": opted_out,
                 "binds_you": binds_me,
                 "state": here,
+                "project": target.dir,
                 "on_record": recorded.iter().map(|s| json!({
                     "member": s.member,
                     "stance": s.stance.as_str(),

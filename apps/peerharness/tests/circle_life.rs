@@ -776,3 +776,132 @@ fn an_opt_out_can_be_put_on_the_circles_record() {
         .unwrap();
     assert_eq!(carols["stance"], "following");
 }
+
+#[test]
+fn the_rules_of_a_scope_can_live_in_one_project() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol, _) = trio(root, "*");
+    let all = [&alice, &bob, &carol];
+
+    // A rule about one repository is proposed in a scope the members use for it.
+    let noted = alice.run(&["note", "Use pnpm, not npm, in this repository."]);
+    let proposed = alice.run(&[
+        "proposal",
+        "create",
+        noted["candidate_id"].as_str().unwrap(),
+        "--circle",
+        "team",
+        "--scope",
+        "repo/web",
+        "--yes",
+    ]);
+    let web_rule = proposed["proposal_id"].as_str().unwrap().to_owned();
+    let web = proposed["skill_name"].as_str().unwrap().to_owned();
+    // And one for the whole circle.
+    let (wide_rule, wide) = propose(&alice, "Run the tests before you say you are done.");
+    for rule in [&web_rule, &wide_rule] {
+        alice.run(&["proposal", "vote", rule, "approve", "--yes"]);
+    }
+    carry(root, &all);
+    for rule in [&web_rule, &wide_rule] {
+        bob.run(&["proposal", "vote", rule, "approve", "--yes"]);
+    }
+    carry(root, &all);
+    assert!(bob.has_skill(&web) && bob.has_skill(&wide));
+
+    // Bob says where his checkout of that repository is. Only a person can.
+    let checkout = root.join("bob-web");
+    std::fs::create_dir(&checkout).unwrap();
+    let dir = checkout.to_str().unwrap();
+    let in_project = |name: &str| checkout.join(".claude/skills").join(name).join("SKILL.md");
+    assert_eq!(
+        bob.fail_as_agent(&[
+            "circle",
+            "place",
+            "repo/web",
+            "--circle",
+            "team",
+            "--project",
+            dir,
+            "--yes"
+        ]),
+        3
+    );
+    assert_eq!(
+        bob.fail(&[
+            "circle",
+            "place",
+            "repo/web",
+            "--circle",
+            "team",
+            "--project",
+            root.join("missing").to_str().unwrap(),
+            "--yes"
+        ]),
+        2
+    );
+    let placed = bob.run(&[
+        "circle",
+        "place",
+        "repo/web",
+        "--circle",
+        "team",
+        "--project",
+        dir,
+        "--yes",
+    ]);
+    assert_eq!(names(&placed["moved"]), [web.as_str()]);
+    // The repository's rule is in the repository and nowhere else; the circle-wide rule
+    // is where it was.
+    assert!(in_project(&web).is_file());
+    assert!(!bob.has_skill(&web));
+    assert!(bob.has_skill(&wide) && !in_project(&wide).exists());
+    let rules = bob.run(&["rule", "list"]);
+    let listed = rules["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["skill_name"] == web.as_str())
+        .unwrap();
+    assert_eq!(listed["state"], "installed");
+    assert!(listed["project"].as_str().unwrap().ends_with("bob-web"));
+    // Nobody else's machine changed.
+    assert!(alice.has_skill(&web) && carol.has_skill(&web));
+
+    // An opt-out, and opting back in, act on the copy in the project.
+    bob.run(&["rule", "opt-out", &web, "--circle", "team"]);
+    assert!(!in_project(&web).exists() && !bob.has_skill(&web));
+    bob.run(&["rule", "opt-in", &web, "--circle", "team"]);
+    assert!(in_project(&web).is_file() && !bob.has_skill(&web));
+
+    // A repeal by vote removes it from the project too.
+    let repeal = alice.run(&["rule", "repeal", &web, "--circle", "team", "--yes"]);
+    let repeal = repeal["proposal_id"].as_str().unwrap().to_owned();
+    alice.run(&["proposal", "vote", &repeal, "approve", "--yes"]);
+    carry(root, &all);
+    carol.run(&["proposal", "vote", &repeal, "approve", "--yes"]);
+    carry(root, &all);
+    assert!(!in_project(&web).exists());
+    assert!(!bob.has_skill(&web) && !alice.has_skill(&web));
+    assert!(bob.has_skill(&wide), "the other rule is untouched");
+
+    // Placing the whole circle in a project and taking it back moves the rule there
+    // and back.
+    bob.run(&[
+        "circle",
+        "place",
+        "*",
+        "--circle",
+        "team",
+        "--project",
+        dir,
+        "--yes",
+    ]);
+    assert!(in_project(&wide).is_file() && !bob.has_skill(&wide));
+    let back = bob.run(&[
+        "circle", "place", "*", "--circle", "team", "--user", "--yes",
+    ]);
+    assert_eq!(names(&back["moved"]), [wide.as_str()]);
+    assert!(!in_project(&wide).exists() && bob.has_skill(&wide));
+}

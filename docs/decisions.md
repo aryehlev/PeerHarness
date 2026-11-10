@@ -376,3 +376,23 @@ Adding an event type is a protocol change: the envelope schema version is unchan
 (existing events are byte-for-byte what they were, and the golden vectors only gained
 one entry), and a node that predates the type rejects a STANCE as an unknown event type
 without affecting anything else it holds.
+
+## ADR-030: A scope's rules can be placed in one project directory
+A rule about one repository ("use pnpm here") was installed in the user's skills
+directory and so applied in every repository. The protocol already has the right handle:
+a rule has a scope, and a team can agree that `repo/web` means one repository. What was
+missing is the last step on each machine. `circle place <scope> --project <dir>` records,
+on that machine only, that rules of that scope (and the scopes below it) are installed in
+`<dir>/.claude/skills` instead; `--user` undoes it. The most specific placed scope that
+covers a rule wins. `rule_installs.project_dir` remembers where a vote put each rule, so
+a repeal, an opt-out, a removal from the roll or a changed placement removes exactly
+that copy. The project installer is confined to the directory (`Installer::confine_to`),
+so a linked `.claude` in an untrusted checkout is refused.
+
+Nothing about this is shared or voted: where a member keeps a checkout is their own
+business, and the directory comes from the owner's command line, never from a hook
+payload or a peer. Choosing a place is a confirmation step like `circle mode follow`,
+because it decides where files are written. Rejected: binding a rule to a repository
+identity inside the proposal (a remote URL or a hash of one). It would put repository
+names or their hashes on the wire and in the vote, and it would still need each member
+to say where their checkout is.
