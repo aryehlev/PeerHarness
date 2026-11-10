@@ -346,8 +346,100 @@ pub enum CircleCommand {
     },
     /// Propose removing a member. Removal is decided by vote of the current members.
     Remove(CircleRemoveArgs),
-    /// Revoke a member (founder only).
+    /// Stop following a circle on this machine and ask to be taken off its roll.
+    ///
+    /// The rules the circle installed here are removed at once. Coming off the roll is
+    /// an amendment like any other: the members vote on it.
+    Leave(CircleLeaveArgs),
+    /// Propose changing the rules of the vote: the thresholds, or binding versus advisory.
+    Amend(CircleAmendArgs),
+    /// Propose adding or removing one of a member's devices.
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
+    /// Choose how rules that pass reach this machine: installed at once, or after asking you.
+    Mode(CircleModeArgs),
+    /// Cut off a lost or stolen device at once (only on the node that founded the circle).
+    ///
+    /// A revocation stops the device from syncing and from voting on every node that
+    /// learns of it. It does not take the member off the roll: that is `circle remove`.
     Revoke(CircleRevokeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CircleLeaveArgs {
+    #[arg(long, value_name = "NAME")]
+    pub circle: String,
+    /// Follow the circle again on this machine (your request to leave stays on record).
+    #[arg(long)]
+    pub undo: bool,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(group(ArgGroup::new("force").args(["binding", "advisory"])))]
+pub struct CircleAmendArgs {
+    #[arg(long, value_name = "NAME")]
+    pub circle: String,
+    /// A rule passes with more than this share of its electorate, for example 1/2 or 2/3.
+    #[arg(long, value_name = "N/D")]
+    pub pass: Option<String>,
+    /// Changing these rules needs more than this share of the roll (at least --pass).
+    #[arg(long, value_name = "N/D")]
+    pub amend: Option<String>,
+    /// Passed rules are installed for every member (each can opt out of any rule).
+    #[arg(long)]
+    pub binding: bool,
+    /// Passed rules are advisory: every member is asked before anything is installed.
+    #[arg(long)]
+    pub advisory: bool,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DeviceCommand {
+    /// Propose adding a device to a member (default: to yourself).
+    Add(CircleDeviceArgs),
+    /// Propose removing a device from a member (default: from yourself).
+    Remove(CircleDeviceArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CircleDeviceArgs {
+    /// The device's `ed25519:` key (its owner sees it with `peerharness status`).
+    pub device: String,
+    #[arg(long, value_name = "NAME")]
+    pub circle: String,
+    /// The member's handle on the roll (default: yours).
+    #[arg(long, value_name = "HANDLE")]
+    pub member: Option<String>,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ModeArg {
+    /// Rules that pass are installed without asking each time.
+    Follow,
+    /// You are asked before any rule is installed.
+    Ask,
+}
+
+#[derive(Debug, Args)]
+pub struct CircleModeArgs {
+    #[arg(value_enum)]
+    pub mode: ModeArg,
+    #[arg(long, value_name = "NAME")]
+    pub circle: String,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -412,12 +504,15 @@ pub struct CircleJoinArgs {
 
 #[derive(Debug, Args)]
 pub struct CircleRevokeArgs {
-    /// The member's peer id or `ed25519:` device key.
-    pub member: String,
+    /// The device to cut off: its `ed25519:` key, its peer id, or the handle of a member
+    /// who has exactly one device.
+    pub device: String,
     #[arg(long, value_name = "NAME")]
     pub circle: String,
+    /// Why, in one line of at most 200 characters. Every member can read it.
     #[arg(long, default_value = "")]
     pub reason: String,
+    /// Skip the confirmation prompt (after reviewing the preview).
     #[arg(long)]
     pub yes: bool,
 }
@@ -438,7 +533,7 @@ pub enum DecisionArg {
 
 #[derive(Debug, Subcommand)]
 pub enum QuestionCommand {
-    /// Share a sanitized question about an approved candidate.
+    /// Ask a circle about a candidate rule before proposing it.
     Send {
         candidate: String,
         #[arg(long, value_name = "NAME")]
@@ -461,6 +556,13 @@ pub enum QuestionCommand {
         rationale: Option<String>,
         #[arg(long)]
         yes: bool,
+    },
+    /// Take a received question out of your inbox. Nothing is sent.
+    Dismiss {
+        question: String,
+        /// Also keep later questions from that device out of your inbox.
+        #[arg(long)]
+        mute_author: bool,
     },
 }
 
@@ -710,6 +812,65 @@ mod tests {
                 "CI only ships npm",
             ],
             vec!["peerharness", "circle", "remove", "bob", "--circle", "team"],
+            vec!["peerharness", "circle", "leave", "--circle", "team"],
+            vec![
+                "peerharness",
+                "circle",
+                "leave",
+                "--circle",
+                "team",
+                "--undo",
+            ],
+            vec![
+                "peerharness",
+                "circle",
+                "amend",
+                "--circle",
+                "team",
+                "--pass",
+                "2/3",
+                "--advisory",
+            ],
+            vec![
+                "peerharness",
+                "circle",
+                "device",
+                "add",
+                "ed25519:x",
+                "--circle",
+                "team",
+            ],
+            vec!["peerharness", "circle", "mode", "ask", "--circle", "team"],
+            vec![
+                "peerharness",
+                "circle",
+                "revoke",
+                "bob",
+                "--circle",
+                "team",
+                "--reason",
+                "laptop lost",
+            ],
+            vec![
+                "peerharness",
+                "question",
+                "send",
+                "cand_0123456789abcdef",
+                "--circle",
+                "team",
+            ],
+            vec!["peerharness", "question", "list"],
+            vec![
+                "peerharness",
+                "question",
+                "answer",
+                "abcd1234",
+                "--answer",
+                "agree",
+                "--rationale",
+                "we already do",
+            ],
+            vec!["peerharness", "question", "dismiss", "abcd1234"],
             vec!["peerharness", "demo"],
             vec!["peerharness", "proposal", "vote", "abcd1234", "approve"],
             vec!["peerharness", "reset", "--confirm"],
@@ -729,6 +890,16 @@ mod tests {
         assert!(
             Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
+        assert!(Cli::try_parse_from([
+            "peerharness",
+            "circle",
+            "amend",
+            "--circle",
+            "team",
+            "--binding",
+            "--advisory"
+        ])
+        .is_err());
         assert!(Cli::try_parse_from([
             "peerharness",
             "events",

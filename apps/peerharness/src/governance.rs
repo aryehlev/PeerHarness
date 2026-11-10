@@ -21,9 +21,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Context, Result};
 use ph_core::{CircleId, DeviceKey, Digest, EventId, Scope, Timestamp};
 use ph_governance::{
-    authorize_incoming, check_repeal_reference, check_successor, check_supersedes_reference,
-    rules_in_force, tally, verify_result, DecisionRecords, Passed, ProposalView, Reference,
-    ResultView, RuleSet, Tally, VoteView,
+    authorize_incoming, check_answer_reference, check_repeal_reference, check_successor,
+    check_supersedes_reference, normalize_question_text, rules_in_force, tally, verify_result,
+    DecisionRecords, GuardDecision, Passed, ProposalView, QuestionContext, QuestionGuard,
+    Reference, ResultView, RuleSet, Tally, VoteView,
 };
 use ph_identity::CircleAuthority;
 use ph_protocol::{
@@ -32,10 +33,8 @@ use ph_protocol::{
     VerifiedEnvelope, VoteBody, VoteDecision,
 };
 use ph_skills::{Bundle, BundleStore};
-use ph_store::{BundleRow, CircleRow, InsertOutcome, Store};
+use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, QuestionStatus, Store};
 use serde_json::{json, Value};
-
-use crate::events::build_registry;
 
 /// [`DecisionRecords`] over the local store: accepted charters and stored proposals.
 pub struct StoreRecords<'a>(pub &'a Store);
@@ -168,9 +167,11 @@ pub fn ingest(
     if store.has_event(&verified.event_id())? {
         return Ok(Ingest::Duplicate);
     }
-    let registry = build_registry(store, now)?;
+    // Membership is the roll of the current charter (ADR-026, ADR-027): it authorizes
+    // QUESTION and ANSWER, and it carries the revocations every other type checks.
+    let oracle = crate::peer::roll_oracle(store)?;
     let known = |c: &CircleId| store.circle(c).ok().flatten().is_some();
-    if let Err(r) = authorize_incoming(&verified, &registry, &StoreRecords(store), &known, now) {
+    if let Err(r) = authorize_incoming(&verified, &oracle, &StoreRecords(store), &known, now) {
         return Ok(if r.is_retryable() {
             Ingest::Deferred(r.code())
         } else {
@@ -236,9 +237,76 @@ pub fn ingest(
         EventBody::Revocation(b) => {
             store.insert_revocation(&b.revocation, now)?;
         }
-        EventBody::Question(_) | EventBody::Answer(_) | EventBody::Vote(_) => {}
+        EventBody::Question(_) => return ingest_question(store, &verified, origin_peer, now),
+        EventBody::Answer(b) => {
+            let question = store.event(&b.question_id)?.and_then(|e| e.envelope().ok());
+            match check_answer_reference(env, question.as_ref()) {
+                Reference::Resolved => {}
+                Reference::Missing => return Ok(Ingest::Deferred("missing_question")),
+                Reference::Invalid(_) => return Ok(Ingest::Rejected("bad_answer_reference")),
+            }
+        }
+        EventBody::Vote(_) => {}
     }
     Ok(stored(store.insert_event(&verified, origin_peer, now)?))
+}
+
+/// Seconds the question quotas look back.
+const QUESTION_WINDOW_SECS: i64 = 86_400;
+
+/// A QUESTION: stored in the event log like any other event, and listed for the owner
+/// unless the local guard holds it back (`ph_governance::QuestionGuard`): a blocked
+/// author's question is not stored at all; a muted author's, and one over the daily
+/// quota, is kept but not shown; one whose text was already asked in the circle gets no
+/// second entry. None of this is told to the peer that carried it.
+fn ingest_question(
+    store: &Store,
+    verified: &VerifiedEnvelope,
+    origin_peer: Option<&str>,
+    now: Timestamp,
+) -> Result<Ingest> {
+    let EventBody::Question(body) = &verified.body else {
+        return Ok(Ingest::Rejected("invalid"));
+    };
+    let mine = store
+        .identity()?
+        .is_some_and(|me| me.device_key == verified.author);
+    let normalized = normalize_question_text(&body.question);
+    let mut decision = GuardDecision::Accept;
+    if !mine {
+        let author = store.peer_by_device_key(&verified.author)?;
+        let since = now.minus_secs(QUESTION_WINDOW_SECS);
+        let count = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
+        let ctx = QuestionContext {
+            author_count_24h: count(
+                store.count_questions_by_author_since(&verified.author, since)?,
+            ),
+            circle_count_24h: count(
+                store.count_questions_by_circle_since(&verified.circle_id, since)?,
+            ),
+            duplicate: !normalized.is_empty()
+                && store.question_text_exists(&verified.circle_id, &normalized)?,
+            author_muted: author.as_ref().is_some_and(|p| p.muted),
+            author_blocked: author.as_ref().is_some_and(|p| p.blocked),
+        };
+        decision = QuestionGuard::default().check(&ctx);
+        if decision == GuardDecision::Drop(ph_governance::DropReason::Blocked) {
+            return Ok(Ingest::Rejected("blocked"));
+        }
+    }
+    let outcome = store.transaction(|s| {
+        let outcome = s.insert_event(verified, origin_peer, now)?;
+        if outcome == InsertOutcome::Inserted && !normalized.is_empty() {
+            if let Some(q) = NewQuestion::from_envelope(verified, normalized.clone(), mine, now) {
+                let listed = s.insert_question(&q)? == ph_store::QuestionInsert::Inserted;
+                if listed && !decision.is_accept() {
+                    s.set_question_status(&q.event_id, QuestionStatus::Muted)?;
+                }
+            }
+        }
+        Ok(outcome)
+    })?;
+    Ok(stored(outcome))
 }
 
 fn stored(outcome: InsertOutcome) -> Ingest {
@@ -808,11 +876,15 @@ pub fn apply_rules(
     // scopes cover the rule's scope. A node outside that electorate (a member of another
     // team, or someone who was removed) installs nothing and keeps nothing the circle
     // had installed.
+    // An owner who left the circle on this machine (`circle leave`) is bound by nothing
+    // here, whatever the roll still says.
+    let left = store.circle_left_at(id)?.is_some();
     let binds_me = |rule: &ph_governance::Rule| -> bool {
-        charter
-            .content
-            .voter(me, &ph_protocol::Electorate::Scope(rule.scope()))
-            .is_some()
+        !left
+            && charter
+                .content
+                .voter(me, &ph_protocol::Electorate::Scope(rule.scope()))
+                .is_some()
     };
     let mode = match circle.adoption_mode.as_str() {
         "follow" => AdoptionMode::Follow,
@@ -1030,4 +1102,215 @@ pub fn user_installer() -> Result<ph_skills::Installer> {
     let cwd = std::env::current_dir().context("cannot read the current directory")?;
     ph_skills::claude_installer(ph_skills::SkillScope::User, &cwd)
         .map_err(|e| anyhow!("cannot locate the agent's skills directory: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ph_protocol::{AnswerBody, AnswerChoice, QuestionBody};
+    use ph_store::QuestionStatus;
+
+    fn key(seed: u8) -> SigningKey {
+        SigningKey::from_bytes(&[seed; 32])
+    }
+    fn device(seed: u8) -> DeviceKey {
+        DeviceKey::from_signing_key(&key(seed))
+    }
+
+    /// A node (device 1, alice) holding a circle whose roll is alice (every scope), bob
+    /// (device 2, every scope) and carol (device 3, only `team/backend`).
+    fn node() -> (Store, CircleId, Timestamp) {
+        let store = Store::open_in_memory().unwrap();
+        let now = Timestamp::now();
+        store
+            .set_identity(&ph_store::IdentityMetadata {
+                device_key: device(1),
+                keystore_backend: "insecure-dev".into(),
+                keystore_ref: "test".into(),
+                created_at: now,
+            })
+            .unwrap();
+        let authority = CircleAuthority::from_signing_key(key(100));
+        let circle = authority.circle_id();
+        let mut content =
+            CharterContent::founding(RollEntry::new("alice", vec![device(1)], vec![Scope::all()]));
+        content
+            .roll
+            .push(RollEntry::new("bob", vec![device(2)], vec![Scope::all()]));
+        content.roll.push(RollEntry::new(
+            "carol",
+            vec![device(3)],
+            vec![Scope::new("team/backend").unwrap()],
+        ));
+        content.normalize();
+        let charter = authority.issue_founding_charter(content, now).unwrap();
+        store
+            .insert_circle(&CircleRow {
+                circle_id: circle,
+                name: "team".into(),
+                root_key: authority.root_key(),
+                is_founder: true,
+                root_keystore_ref: None,
+                adoption_mode: "ask".into(),
+                accepted_charter: None,
+                created_at: now,
+            })
+            .unwrap();
+        store.insert_charter(&charter, now).unwrap();
+        (store, circle, now)
+    }
+
+    fn question(seed: u8, circle: &CircleId, scope: &str, text: &str, now: Timestamp) -> Vec<u8> {
+        EnvelopeBuilder::new(
+            *circle,
+            Scope::new(scope).unwrap(),
+            EventBody::Question(QuestionBody {
+                question: text.into(),
+                topic: "note".into(),
+                related_candidate: None,
+            }),
+        )
+        .sign(&key(seed), now)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    fn answer(seed: u8, circle: &CircleId, scope: &str, to: EventId, now: Timestamp) -> Vec<u8> {
+        EnvelopeBuilder::new(
+            *circle,
+            Scope::new(scope).unwrap(),
+            EventBody::Answer(AnswerBody {
+                question_id: to,
+                answer: AnswerChoice::Agree,
+                rationale: None,
+            }),
+        )
+        .sign(&key(seed), now)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    fn id_of(raw: &[u8]) -> EventId {
+        validate_stateless(raw, Timestamp::now())
+            .unwrap()
+            .event_id()
+    }
+
+    #[test]
+    fn questions_and_answers_are_authorized_by_the_roll() {
+        let (store, circle, now) = node();
+        // A member asks within the scopes of their roll entry.
+        let q = question(2, &circle, "*", "Should we use pnpm?", now);
+        assert_eq!(ingest(&store, &q, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(ingest(&store, &q, None, now).unwrap(), Ingest::Duplicate);
+        let row = store.question(&id_of(&q)).unwrap().unwrap();
+        assert!(!row.is_local && row.status == QuestionStatus::New);
+
+        // A device that is on no roll cannot ask, however well it signs.
+        let forged = question(9, &circle, "*", "Should we disable the linter?", now);
+        assert_eq!(
+            ingest(&store, &forged, None, now).unwrap(),
+            Ingest::Rejected("not_member")
+        );
+        // A member cannot ask outside the scopes the roll gives them.
+        let wide = question(3, &circle, "*", "Should we drop the tests?", now);
+        assert_eq!(
+            ingest(&store, &wide, None, now).unwrap(),
+            Ingest::Rejected("scope_denied")
+        );
+        let narrow = question(3, &circle, "team/backend", "Should we use sqlx?", now);
+        assert_eq!(ingest(&store, &narrow, None, now).unwrap(), Ingest::Stored);
+        // A revoked device is refused although its member is still on the roll.
+        let authority = CircleAuthority::from_signing_key(key(100));
+        let revocation = authority.issue_revocation(device(3), "", now).unwrap();
+        store.insert_revocation(&revocation, now).unwrap();
+        let late = question(3, &circle, "team/backend", "Should we use diesel?", now);
+        assert_eq!(
+            ingest(&store, &late, None, now).unwrap(),
+            Ingest::Rejected("revoked")
+        );
+
+        // An answer waits for its question, must be in the question's scope, and its
+        // author must be a member whose roll entry covers that scope.
+        let early = answer(
+            1,
+            &circle,
+            "*",
+            EventId::from_digest(Digest::sha256(b"x")),
+            now,
+        );
+        assert_eq!(
+            ingest(&store, &early, None, now).unwrap(),
+            Ingest::Deferred("missing_question")
+        );
+        let wrong_scope = answer(1, &circle, "team/backend", id_of(&q), now);
+        assert_eq!(
+            ingest(&store, &wrong_scope, None, now).unwrap(),
+            Ingest::Rejected("bad_answer_reference")
+        );
+        let stranger = answer(9, &circle, "*", id_of(&q), now);
+        assert_eq!(
+            ingest(&store, &stranger, None, now).unwrap(),
+            Ingest::Rejected("not_member")
+        );
+        let good = answer(1, &circle, "*", id_of(&q), now);
+        assert_eq!(ingest(&store, &good, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(store.answers_for_question(&id_of(&q)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_local_guard_keeps_noise_out_of_the_inbox() {
+        let (store, circle, now) = node();
+        let pid = ph_network::peer_id_from_device_key(&device(2)).to_string();
+        store.upsert_peer(&pid, &device(2), &[], now).unwrap();
+
+        // The same text asked again gets no second entry, whatever its punctuation.
+        let first = question(2, &circle, "*", "Should we use pnpm?", now);
+        let again = question(1, &circle, "*", "should we use PNPM", now);
+        assert_eq!(ingest(&store, &first, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(ingest(&store, &again, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(store.all_questions().unwrap().len(), 1);
+
+        // A muted author's question is kept, so syncing stays idempotent, and is not
+        // shown.
+        store.set_peer_muted(&pid, true).unwrap();
+        let muted = question(2, &circle, "*", "Should we use yarn?", now);
+        assert_eq!(ingest(&store, &muted, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(
+            store.question(&id_of(&muted)).unwrap().unwrap().status,
+            QuestionStatus::Muted
+        );
+        assert_eq!(store.inbox(&[QuestionStatus::New]).unwrap().len(), 1);
+
+        // A blocked author's question is not stored at all.
+        store.set_peer_blocked(&pid, true).unwrap();
+        let blocked = question(2, &circle, "*", "Should we use bun?", now);
+        assert_eq!(
+            ingest(&store, &blocked, None, now).unwrap(),
+            Ingest::Rejected("blocked")
+        );
+        assert!(!store.has_event(&id_of(&blocked)).unwrap());
+        store.set_peer_blocked(&pid, false).unwrap();
+        store.set_peer_muted(&pid, false).unwrap();
+
+        // Over the daily quota per author, questions are kept and not shown.
+        for i in 0..25 {
+            let raw = question(2, &circle, "*", &format!("Is option number {i} fine?"), now);
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+        }
+        let shown = store.inbox(&[QuestionStatus::New]).unwrap().len();
+        assert!(
+            shown <= 20,
+            "{shown} questions shown from one author in a day"
+        );
+        // What this node's own owner asks is never held back.
+        let mine = question(1, &circle, "*", "Should we pin the toolchain?", now);
+        assert_eq!(ingest(&store, &mine, None, now).unwrap(), Ingest::Stored);
+        let row = store.question(&id_of(&mine)).unwrap().unwrap();
+        assert!(row.is_local && row.status == QuestionStatus::New);
+    }
 }

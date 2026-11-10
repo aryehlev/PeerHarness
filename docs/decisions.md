@@ -274,3 +274,34 @@ v0. `daemon` only answers, `sync` is one exchange with one peer, and a held file
 (not a pid or a port) says whether a daemon runs. Costs: a new member cannot join over
 the network (it holds no roll yet) and joins from a file or directory; a removed
 member's node is not told of its removal by peers.
+
+## ADR-027: Questions and answers are authorized by the roll; the founder keeps one emergency power
+ADR-026 left QUESTION and ANSWER on membership credentials because no command produced
+them. With `question` wired, that would have meant that only devices holding a
+root-issued credential could ask or answer, and since admission is by vote and issues no
+credential, in practice only the founder. `governance::ingest` therefore passes
+`ph_governance::RollOracle` to `authorize_incoming` for every event: a QUESTION or
+ANSWER is accepted when its author's device is on the roll of the circle's **current**
+charter, the roll entry covers the event's scope, and the device is not revoked. The
+library's rule ("ask the membership oracle for the capability") is unchanged; what
+changed is which membership statement the application gives it. Unlike decision events,
+questions and answers are judged against the current roll at the time they arrive, so a
+node that has since accepted a charter without the author refuses them. That is
+acceptable because they decide nothing: they expire, they are advisory, and a rule still
+needs a proposal and a majority. The local guard (`QuestionGuard`: quotas, duplicates,
+mute and block) and `check_answer_reference` now run in `ingest`.
+
+Also decided here, with the commands that complete the circle's life cycle:
+
+* `circle revoke` is the one thing the founder's node does alone. It signs a REVOCATION
+  of one device key with the root key (architecture 10.8, "Emergency"). It can stop a
+  device from syncing and from being counted; it cannot add an approval, and it does not
+  change the roll or the size of any electorate, so it can block and never pass. It
+  refuses to revoke the device it runs on.
+* `circle leave` acts on the owner's machine at once (nothing of that circle stays
+  installed, `circles.left_at`) and puts the owner's removal to the vote. A unilateral
+  exit from the roll was rejected: it would be a second way for the roll to change, and
+  a threshold other than a majority of the electorate.
+* `circle amend`, `circle device add|remove` and `circle remove` are amendments like an
+  admission. `circle mode` is the owner's standing choice (10.9); switching to `follow`
+  is consent and needs the owner, switching to `ask` does not.

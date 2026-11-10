@@ -69,15 +69,6 @@ pub fn refused(message: impl Into<String>) -> anyhow::Error {
     .into()
 }
 
-/// A command of a later build stage (exit 1).
-pub fn not_implemented(what: &str) -> anyhow::Error {
-    CliError {
-        kind: ExitKind::Runtime,
-        message: format!("`peerharness {what}` is not yet implemented in this build"),
-    }
-    .into()
-}
-
 /// The exit kind selected by `err` (the first [`CliError`] in its chain).
 pub fn exit_kind(err: &anyhow::Error) -> ExitKind {
     err.chain()
@@ -98,8 +89,5 @@ mod tests {
         assert_eq!(exit_kind(&usage("bad")), ExitKind::Usage);
         assert_eq!(exit_kind(&anyhow::anyhow!("other")), ExitKind::Runtime);
         assert_eq!(ExitKind::Refused.code(), 3);
-        assert!(not_implemented("daemon")
-            .to_string()
-            .contains("not yet implemented"));
     }
 }

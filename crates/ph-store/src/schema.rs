@@ -276,7 +276,15 @@ CREATE TABLE rule_installs (
 "#;
 
 /// All migrations, in order. `MIGRATIONS[i]` moves from version `i` to `i + 1`.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+// V4: a member can stop following a circle on this machine before the roll is amended
+// (`left_at`), and a sync remembers how far it has read a peer's log (`after_event_id`,
+// the last event that peer served; meaningful only to that peer).
+const V4: &str = r#"
+ALTER TABLE circles ADD COLUMN left_at INTEGER;
+ALTER TABLE sync_cursors ADD COLUMN after_event_id TEXT;
+"#;
+
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
 
 /// Reads `PRAGMA user_version`.
 pub(crate) fn user_version(conn: &Connection) -> Result<u32> {

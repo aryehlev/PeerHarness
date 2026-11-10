@@ -1,7 +1,7 @@
 //! `peerharness status`: mode, identity, circles, hooks and local counts. Never unlocks.
 
 use anyhow::Result;
-use ph_core::{CandidateStatus, MembershipOracle};
+use ph_core::CandidateStatus;
 use serde_json::json;
 
 use super::{claude_settings_path, hook_command, Ctx};
@@ -11,24 +11,44 @@ use crate::output::{safe, Report, Text};
 
 pub fn run(ctx: &Ctx) -> Result<Report> {
     let node = ctx.open_node()?;
-    let now = node.now();
     let retention = node.config.retention.observation_secs();
     detect::drain_spool(&node.home.spool_path(), &node.store, retention);
 
     let circles = node.store.circles()?;
-    let reg = crate::events::build_registry(&node.store, now)?;
     let me = node.device_key();
+    // Membership is the roll of the current charter (ADR-026): what this node shows is
+    // what it would answer a peer.
+    let mut standing: Vec<(usize, &'static str)> = Vec::new();
+    for c in &circles {
+        let charter = node.store.current_charter(&c.circle_id)?;
+        let members = charter.as_ref().map_or(0, |ch| ch.content.roll.len());
+        let on_roll = charter
+            .as_ref()
+            .is_some_and(|ch| ch.content.member_of(&me).is_some());
+        let state = if node.store.is_revoked(&c.circle_id, &me)? {
+            "this device was revoked"
+        } else if !on_roll {
+            "you are not on the roll"
+        } else if node.store.circle_left_at(&c.circle_id)?.is_some() {
+            "you left on this machine; still on the roll"
+        } else {
+            "member"
+        };
+        standing.push((members, state));
+    }
     let circles_json: Vec<_> = circles
         .iter()
-        .map(|c| {
-            let members = reg.members(&c.circle_id, now);
+        .zip(&standing)
+        .map(|(c, (members, state))| {
             json!({
                 "name": c.name,
                 "circle_id": c.circle_id,
                 "is_founder": c.is_founder,
                 "root_fingerprint": c.root_key.fingerprint(),
-                "active_members": members.iter().filter(|m| m.active).count(),
-                "self_active": reg.is_active_member(&c.circle_id, &me, now),
+                "members": members,
+                "self_active": *state == "member",
+                "standing": state,
+                "adoption_mode": c.adoption_mode,
             })
         })
         .collect();
@@ -43,7 +63,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
     }
     let skills = node.store.skills()?;
     let installs = node.store.active_installations()?;
-    let pending = node.store.pending_outbox_count()?;
+    let peers = node.store.peers()?.len();
     let observations = node.store.observation_count()?;
 
     let settings = claude_settings_path(None).ok();
@@ -77,7 +97,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         "observations": observations,
         "skills": skills.len(),
         "active_installations": installs.len(),
-        "pending_outbox": pending,
+        "known_peers": peers,
         "hooks": hooks,
         "daemon": daemon.as_ref().map(|d| json!({"pid": d.pid, "listen_addrs": d.listen_addrs})),
     });
@@ -118,19 +138,23 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         "skills",
         format!("{} ({} installed)", skills.len(), installs.len()),
     );
-    t.kv("pending outbox", pending);
+    t.kv("known peers", peers);
     if circles.is_empty() {
         t.kv("circles", "none");
     } else {
         t.line("  circles:");
-        for c in &circles {
-            let members = reg.members(&c.circle_id, now);
+        for (c, (members, state)) in circles.iter().zip(&standing) {
             t.line(format!(
-                "    {} ({}) root {} - {} active member(s)",
+                "    {} ({}) root {} - {members} member(s), mode {}{}",
                 safe(&c.name),
-                if c.is_founder { "founder" } else { "member" },
+                if c.is_founder { "founder" } else { "joined" },
                 c.root_key.fingerprint(),
-                members.iter().filter(|m| m.active).count()
+                c.adoption_mode,
+                if *state == "member" {
+                    String::new()
+                } else {
+                    format!(" - {state}")
+                }
             ));
         }
     }

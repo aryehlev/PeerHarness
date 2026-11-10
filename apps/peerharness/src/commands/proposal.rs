@@ -195,6 +195,16 @@ fn create(
                     .update_candidate_status(&cand.id, status, next, Actor::Human, now)?;
         }
     }
+    // A question the owner asked this circle about the same candidate, in the same
+    // scope, is named by the proposal so that voters can find the answers.
+    let related_question = match cand.question_event_id {
+        Some(q) => node
+            .store
+            .question(&q)?
+            .filter(|row| row.circle_id == circle.circle_id && row.scope == scope)
+            .map(|row| row.event_id),
+        None => None,
+    };
     let key = node.device()?.signing_key();
     let proposal = governance::propose(
         &node.store,
@@ -209,7 +219,7 @@ fn create(
                 description: bundle.description().to_owned(),
                 bundle_digest: bundle.digest(),
                 bundle_size: bundle.size(),
-                related_question: None,
+                related_question,
                 supersedes: None,
             }),
         },
@@ -242,6 +252,7 @@ fn create(
             "bundle_digest": bundle.digest(),
             "circle": circle.name,
             "scope": scope,
+            "related_question": related_question,
         }),
         t.finish(),
     ))
@@ -300,6 +311,12 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     t.kv("count", &tally);
     if !p.body().summary.is_empty() {
         t.line(format!("  why: {}", safe(&p.body().summary)));
+    }
+    if let Some(q) = p.adopt().and_then(|a| a.related_question) {
+        t.line(format!(
+            "  follows question {} (`peerharness question list` shows the answers)",
+            short_id(&q)
+        ));
     }
     for a in tally.approvals() {
         t.line(format!("  approve  {}", a.member));

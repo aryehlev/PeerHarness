@@ -141,9 +141,17 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
                     ),
                     Err(e) => c.add("identity", Level::Fail, e.to_string()),
                 }
-                match store.pending_outbox_count() {
-                    Ok(n) => c.add("outbox", Level::Ok, format!("{n} pending deliveries")),
-                    Err(e) => c.add("outbox", Level::Warn, e.to_string()),
+                match store.peers() {
+                    Ok(peers) => c.add(
+                        "peers",
+                        Level::Ok,
+                        format!(
+                            "{} known, {} with an address to sync with",
+                            peers.len(),
+                            peers.iter().filter(|p| !p.addrs.is_empty()).count()
+                        ),
+                    ),
+                    Err(e) => c.add("peers", Level::Warn, e.to_string()),
                 }
                 match store.bundles() {
                     Ok(rows) => {

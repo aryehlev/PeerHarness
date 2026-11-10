@@ -164,6 +164,38 @@ impl Store {
         }
         Ok(())
     }
+
+    /// When the owner stopped following `id` on this machine (`circle leave`), if they
+    /// did. A circle that was left installs nothing here; the node stays on the roll
+    /// until the members amend it.
+    pub fn circle_left_at(&self, id: &CircleId) -> Result<Option<Timestamp>> {
+        let left: Option<Option<i64>> = self
+            .conn
+            .query_row(
+                "SELECT left_at FROM circles WHERE circle_id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match left.flatten() {
+            Some(secs) => Timestamp::from_unix_seconds(secs)
+                .map(Some)
+                .map_err(|_| StoreError::Corrupt { what: "left_at" }),
+            None => Ok(None),
+        }
+    }
+
+    /// Records that the owner left `id` at `at`, or (`None`) follows it again.
+    pub fn set_circle_left(&self, id: &CircleId, at: Option<Timestamp>) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE circles SET left_at = ?2 WHERE circle_id = ?1",
+            params![id.to_string(), at.map(|t| t.unix_seconds())],
+        )?;
+        if n == 0 {
+            return Err(StoreError::NotFound { what: "circle" });
+        }
+        Ok(())
+    }
 }
 
 fn check_adoption_mode(mode: &str) -> Result<()> {

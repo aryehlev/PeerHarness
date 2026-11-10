@@ -7,11 +7,11 @@ pub mod exchange;
 pub mod export;
 pub mod inbox;
 pub mod init;
-pub mod later;
 pub mod net;
 pub mod note;
 pub mod observe;
 pub mod proposal;
+pub mod question;
 pub mod reset;
 pub mod review;
 pub mod rule;
@@ -65,7 +65,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         Command::Review(a) => review::run(ctx, a),
         Command::Skills { command } => skills::run(ctx, command),
         Command::Circle { command } => circle::run(ctx, command),
-        Command::Question { command } => later::question(ctx, command),
+        Command::Question { command } => question::run(ctx, command),
         Command::Proposal { command } => proposal::run(ctx, command),
         Command::Events { command } => exchange::run(ctx, command),
         Command::Rule { command } => rule::run(ctx, command),

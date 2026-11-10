@@ -13,7 +13,6 @@ mod consent;
 mod daemon_info;
 mod detect;
 mod error;
-mod events;
 mod governance;
 mod home;
 mod hook;
