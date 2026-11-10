@@ -22,6 +22,7 @@ use zeroize::Zeroizing;
 
 use crate::codec::{encode_response, PhCodec, RequestFrame, ResponseFrame, PROTOCOL};
 use crate::config::NetworkConfig;
+use crate::discovery::{Discovery, DiscoveryEvent};
 use crate::error::NetError;
 use crate::handler::{PeerInfo, RequestHandler};
 use crate::identity::{
@@ -65,6 +66,36 @@ pub enum NetEvent {
     ListenAddr(Multiaddr),
     /// A local listen address is no longer active.
     ListenAddrExpired(Multiaddr),
+    /// LAN discovery (only with [`NetworkConfig::lan_discovery`]): a libp2p node
+    /// announced itself on the local network under this peer id.
+    ///
+    /// `addrs` are the addresses that were not known before, each in the form
+    /// `/ip4|ip6/…/udp/…/quic-v1/p2p/<peer_id>`, ready for [`NetworkHandle::dial`]
+    /// (which then requires the other end to prove that peer id). Another event follows
+    /// if the peer is later heard at further addresses; [`NetworkHandle::discovered`]
+    /// returns everything known.
+    ///
+    /// This is a hint, not a fact: mDNS is unauthenticated, so any host on the network
+    /// can announce any peer id at any address. Nothing was dialed, nothing was
+    /// authorized, and the event says nothing about circles. The application decides
+    /// whether this device key is one it wants to dial.
+    PeerDiscovered {
+        /// The announced peer id. It is always one that binds to a device key
+        /// ([`crate::device_key_from_peer_id`] returns `Some`).
+        peer_id: PeerId,
+        /// The newly announced addresses, at least one.
+        addrs: Vec<Multiaddr>,
+    },
+    /// LAN discovery: addresses of a discovered peer were not announced again in time
+    /// and left the list. The peer is no longer listed at all once
+    /// [`NetworkHandle::discovered`] does not return it. Connections to it are not
+    /// affected.
+    PeerExpired {
+        /// The peer.
+        peer_id: PeerId,
+        /// The addresses that expired, at least one.
+        addrs: Vec<Multiaddr>,
+    },
 }
 
 enum Command {
@@ -88,6 +119,9 @@ enum Command {
         peer: PeerId,
         reply: oneshot::Sender<bool>,
     },
+    Discovered {
+        reply: oneshot::Sender<Vec<(PeerId, Vec<Multiaddr>)>>,
+    },
     Shutdown {
         reply: oneshot::Sender<()>,
     },
@@ -98,6 +132,7 @@ enum Command {
 struct Behaviour {
     policy: PeerPolicy,
     rr: request_response::Behaviour<PhCodec>,
+    discovery: Discovery,
 }
 
 /// Listen state shared with handles.
@@ -159,8 +194,10 @@ impl fmt::Debug for NetworkHandle {
 /// # Errors
 ///
 /// [`NetError::NoRuntime`] outside a Tokio runtime, [`NetError::InvalidConfig`],
-/// [`NetError::Identity`], or [`NetError::Listen`] if any listen address cannot be bound
-/// (only `/ip4|ip6/<addr>/udp/<port>/quic-v1` addresses are supported).
+/// [`NetError::Identity`], [`NetError::Listen`] if any listen address cannot be bound
+/// (only `/ip4|ip6/<addr>/udp/<port>/quic-v1` addresses are supported), or
+/// [`NetError::Discovery`] if [`NetworkConfig::lan_discovery`] is set and LAN discovery
+/// cannot be started.
 pub fn start(
     seed: Zeroizing<[u8; 32]>,
     config: NetworkConfig,
@@ -176,6 +213,19 @@ pub fn start(
     let rr_config = request_response::Config::default()
         .with_request_timeout(config.request_timeout)
         .with_max_concurrent_streams(config.max_concurrent_streams);
+    let discovery = if config.lan_discovery {
+        // The interface watcher registers with the runtime on some platforms.
+        let _guard = runtime.enter();
+        match Discovery::lan(local_peer_id) {
+            Ok(discovery) => discovery,
+            Err(_) => {
+                tracing::warn!("failed to start LAN discovery");
+                return Err(NetError::Discovery);
+            }
+        }
+    } else {
+        Discovery::off(local_peer_id)
+    };
     let behaviour = Behaviour {
         policy: PeerPolicy::new(
             config.max_connections,
@@ -187,6 +237,7 @@ pub fn start(
             [(PROTOCOL, ProtocolSupport::Full)],
             rr_config,
         ),
+        discovery,
     };
     let stream_limit = u32::try_from(config.max_concurrent_streams).unwrap_or(u32::MAX);
     let idle_timeout = config.idle_timeout;
@@ -259,6 +310,9 @@ pub fn start(
         stopping: false,
     };
     tracing::info!(peer = %local_peer_id, "network starting");
+    if event_loop.swarm.behaviour().discovery.is_on() {
+        tracing::info!(peer = %local_peer_id, "LAN discovery on: the peer id and listen addresses are announced over mDNS");
+    }
     let join = runtime.spawn(event_loop.run());
     Ok((handle, join))
 }
@@ -380,10 +434,29 @@ impl NetworkHandle {
         rx.await.map_err(|_| NetError::Shutdown)
     }
 
+    /// The peers currently known from LAN discovery, ordered by peer id, each with its
+    /// announced addresses (at most [`crate::discovery::MAX_DISCOVERED_PEERS`] peers and
+    /// [`crate::discovery::MAX_ADDRS_PER_PEER`] addresses per peer). Empty unless
+    /// [`NetworkConfig::lan_discovery`] is set.
+    ///
+    /// Everything said about [`NetEvent::PeerDiscovered`] holds here: the addresses end
+    /// in `/p2p/<peer_id>`, they are unauthenticated hints, none of these peers was
+    /// dialed, and being listed gives a peer no standing. A peer stays listed until its
+    /// records expire (minutes after it left) whether or not it is connected.
+    ///
+    /// # Errors
+    ///
+    /// [`NetError::Shutdown`].
+    pub async fn discovered(&self) -> Result<Vec<(PeerId, Vec<Multiaddr>)>, NetError> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Command::Discovered { reply }).await?;
+        rx.await.map_err(|_| NetError::Shutdown)
+    }
+
     /// Subscribes to [`NetEvent`]s from now on. Events emitted before the call are not
-    /// replayed (use [`NetworkHandle::connected_peers`] and
-    /// [`NetworkHandle::listen_addrs`] for current state). After shutdown the receiver
-    /// yields `RecvError::Closed`.
+    /// replayed (use [`NetworkHandle::connected_peers`],
+    /// [`NetworkHandle::listen_addrs`] and [`NetworkHandle::discovered`] for current
+    /// state). After shutdown the receiver yields `RecvError::Closed`.
     pub fn subscribe(&self) -> broadcast::Receiver<NetEvent> {
         match self.inner.events.upgrade() {
             Some(tx) => tx.subscribe(),
@@ -391,7 +464,8 @@ impl NetworkHandle {
         }
     }
 
-    /// Stops the network: fails pending requests and dials with
+    /// Stops the network: stops LAN discovery (its multicast sockets are closed and
+    /// nothing is announced any more), fails pending requests and dials with
     /// [`NetError::Shutdown`], aborts in-flight handler tasks, closes every connection
     /// (waiting up to 3 s for clean closes), and releases the sockets. Resolves when the
     /// event loop has finished. Idempotent; returns immediately if already stopped.
@@ -551,6 +625,8 @@ impl EventLoop {
     async fn shutdown(mut self) {
         tracing::info!(peer = %self.swarm.local_peer_id(), "network shutting down");
         self.stopping = true;
+        // First, so that the node is no longer announced while connections close.
+        self.swarm.behaviour_mut().discovery.stop();
         self.commands.close();
         while let Ok(cmd) = self.commands.try_recv() {
             self.reject_command(cmd);
@@ -602,7 +678,8 @@ impl EventLoop {
             // Dropping the reply sender makes the caller see `Shutdown`.
             Command::ConnectedPeers { .. }
             | Command::PeerInfo { .. }
-            | Command::Disconnect { .. } => {}
+            | Command::Disconnect { .. }
+            | Command::Discovered { .. } => {}
         }
     }
 
@@ -656,6 +733,9 @@ impl EventLoop {
                 let was = self.swarm.disconnect_peer_id(peer).is_ok();
                 let _ = reply.send(was);
             }
+            Command::Discovered { reply } => {
+                let _ = reply.send(self.swarm.behaviour().discovery.snapshot());
+            }
             Command::Shutdown { reply } => self.shutdown_acks.push(reply),
         }
     }
@@ -695,6 +775,15 @@ impl EventLoop {
         match event {
             SwarmEvent::Behaviour(BehaviourEvent::Rr(e)) => self.on_rr_event(e),
             SwarmEvent::Behaviour(BehaviourEvent::Policy(never)) => match never {},
+            // Reported and nothing else: ph-network never dials a discovered peer.
+            SwarmEvent::Behaviour(BehaviourEvent::Discovery(e)) => self.emit(match e {
+                DiscoveryEvent::Discovered { peer_id, addrs } => {
+                    NetEvent::PeerDiscovered { peer_id, addrs }
+                }
+                DiscoveryEvent::Expired { peer_id, addrs } => {
+                    NetEvent::PeerExpired { peer_id, addrs }
+                }
+            }),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 connection_id,

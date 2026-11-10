@@ -95,6 +95,15 @@ pub struct NetworkConfig {
     /// Capacity of the [`crate::NetEvent`] broadcast channel. Slow subscribers that fall
     /// further behind see `RecvError::Lagged`. Default 256.
     pub event_buffer: usize,
+    /// Discovery of other nodes on the local network over mDNS ([`crate::discovery`]).
+    /// Default `false`: no multicast socket is opened and nothing is announced.
+    ///
+    /// When `true` the node announces its peer id (the device public key) and its
+    /// non-loopback IPv4 listen addresses to every host on the local network, and
+    /// reports the nodes it hears as [`crate::NetEvent::PeerDiscovered`] and through
+    /// [`crate::NetworkHandle::discovered`]. Discovered peers are never dialed by this
+    /// crate.
+    pub lan_discovery: bool,
 }
 
 impl Default for NetworkConfig {
@@ -111,6 +120,7 @@ impl Default for NetworkConfig {
             max_pending_inbound: 64,
             max_inbound_buffer_bytes: 32 * 1024 * 1024,
             event_buffer: 256,
+            lan_discovery: false,
         }
     }
 }
@@ -159,6 +169,19 @@ mod tests {
         assert_eq!(c.rate_limits.bytes_per_sec, 512 * 1024);
         assert_eq!(c.rate_limits.max_concurrent_inbound, 8);
         assert_eq!(c.rate_limits.byte_capacity(), 512 * 1024 + 4);
+    }
+
+    #[test]
+    fn lan_discovery_is_off_unless_asked_for() {
+        assert!(!NetworkConfig::default().lan_discovery);
+        let addr: Multiaddr = "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap();
+        assert!(!NetworkConfig::listening_on([addr]).lan_discovery);
+        // Turning it on is a choice, not a limit to validate: both values are valid.
+        let on = NetworkConfig {
+            lan_discovery: true,
+            ..NetworkConfig::default()
+        };
+        assert_eq!(on.validate(), Ok(()));
     }
 
     #[test]

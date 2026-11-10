@@ -14,9 +14,14 @@
 //!   `error{rate_limited}`. Connection counts (total, per peer, still handshaking) are
 //!   bounded, and a shared inbound buffer budget caps the memory that request bodies
 //!   in flight can occupy across all peers (over it: `error{unavailable}`).
-//! * **No discovery**: no mDNS, DHT or gossip. Peers are reached only by explicit
+//! * **No dialing by itself**: no DHT or gossip. Peers are reached only by explicit
 //!   [`NetworkHandle::dial`]. This crate knows wire types but nothing about circles;
 //!   the application's handler performs all authorization.
+//! * **Discovery is opt-in and only reports**: with [`NetworkConfig::lan_discovery`]
+//!   (default off) the node announces its peer id and listen addresses over mDNS on the
+//!   local network and reports the libp2p nodes it hears ([`NetEvent::PeerDiscovered`],
+//!   [`NetworkHandle::discovered`]). It never dials them. See [`discovery`] for what
+//!   goes on the wire and what is guaranteed.
 //!
 //! # Usage
 //!
@@ -41,6 +46,7 @@
 
 pub mod codec;
 mod config;
+pub mod discovery;
 mod error;
 mod handler;
 mod identity;

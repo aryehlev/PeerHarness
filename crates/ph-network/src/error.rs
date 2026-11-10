@@ -20,6 +20,10 @@ pub enum NetError {
     /// `/ip4|ip6/…/udp/…/quic-v1`).
     #[error("failed to listen on a configured address")]
     Listen,
+    /// [`crate::NetworkConfig::lan_discovery`] is set and LAN discovery could not be
+    /// started (no interface watcher, or no thread for it). Nothing was announced.
+    #[error("failed to start LAN discovery")]
+    Discovery,
     /// Dialing failed: unreachable or dead address, handshake failure, wrong peer id,
     /// a peer identity that is not Ed25519, a connection limit, or the dial timeout.
     #[error("dial failed")]
