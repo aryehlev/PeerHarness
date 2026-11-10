@@ -37,6 +37,7 @@ use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, QuestionStatus,
 use serde_json::{json, Value};
 
 use crate::amendment::{self, Changes};
+use crate::carrier::Record;
 
 /// [`DecisionRecords`] over the local store: accepted charters and stored proposals.
 pub struct StoreRecords<'a>(pub &'a Store);
@@ -895,10 +896,13 @@ pub struct ImportSummary {
     pub rejection_codes: Vec<(String, usize)>,
 }
 
-/// Imports lines produced by [`export_circle`]. Every event goes through [`ingest`];
-/// events are retried in passes until a pass stores nothing new, so the order of the
-/// lines does not matter. A bundle is stored only if an `adopt` proposal this node
-/// holds names its digest and it validates as an instruction-only skill.
+/// Imports lines produced by [`export_circle`]. Every line is parsed strictly
+/// (`carrier::parse_record`: a size limit, no member twice, nothing but the one member a
+/// line has) and one that is not a record is counted as rejected. Every event goes
+/// through [`ingest`]; events are retried in passes until a pass stores nothing new, so
+/// the order of the lines does not matter. A bundle is stored only if an `adopt`
+/// proposal this node holds names its digest and it validates as an instruction-only
+/// skill.
 pub fn import_lines<'a>(
     store: &Store,
     bundles: &BundleStore,
@@ -913,24 +917,12 @@ pub fn import_lines<'a>(
         if line.is_empty() {
             continue;
         }
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            summary.rejected += 1;
-            continue;
-        };
-        if let Some(ev) = v.get("event") {
-            events.push(ev.to_string());
-        } else if let Some(b) = v.get("bundle") {
-            let digest = b
-                .get("digest")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse().ok());
-            let md = b.get("skill_md").and_then(Value::as_str);
-            match (digest, md) {
-                (Some(d), Some(md)) => offered_bundles.push((d, md.to_owned())),
-                _ => summary.rejected += 1,
-            }
-        } else {
-            summary.rejected += 1;
+        // Strictly, like a frame from the wire: the event that goes on to `ingest` is
+        // the one in the line, not what a lenient parser made of it.
+        match crate::carrier::parse_record(line) {
+            Some(Record::Event(event)) => events.push(event.to_string()),
+            Some(Record::Bundle { digest, skill_md }) => offered_bundles.push((digest, skill_md)),
+            None => summary.rejected += 1,
         }
     }
     let mut pending = events;

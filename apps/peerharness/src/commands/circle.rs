@@ -15,8 +15,10 @@
 //! owner may be asked about in a window when they allowed it (ADR-037): `invite` and
 //! `join`. `create` shares nothing and asks nothing, in a session as in a terminal.
 
+use std::collections::BTreeSet;
+
 use anyhow::{anyhow, Context, Result};
-use ph_core::{DeviceKey, Scope};
+use ph_core::{CircleId, DeviceKey, Scope};
 use ph_governance::{
     add_device, admit_member, change_rules, remove_device, remove_member, threshold_for,
     ProposalView, Tally,
@@ -29,6 +31,7 @@ use ph_protocol::{
 use ph_store::CircleRow;
 use serde_json::{json, Value};
 
+use crate::carrier::Record;
 use crate::cli::{
     CircleAmendArgs, CircleCommand, CircleDeviceArgs, CircleInviteArgs, CircleJoinArgs,
     CircleLeaveArgs, CircleModeArgs, CirclePlaceArgs, CircleRemoveArgs, CircleRevokeArgs,
@@ -1146,28 +1149,82 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
     ))
 }
 
-/// The newest charter in `lines` whose roll lists `device`, verified statelessly.
-fn charter_for(lines: &[&str], device: &DeviceKey, now: ph_core::Timestamp) -> Option<Charter> {
-    let mut best: Option<Charter> = None;
+/// The charters in `lines` whose roll lists `device`, verified statelessly, in the order
+/// of the lines. A line is parsed strictly, like every imported record
+/// (`carrier::parse_record`): what is shown to the owner before a join is what the
+/// import after it will accept.
+fn charters_for(lines: &[&str], device: &DeviceKey, now: ph_core::Timestamp) -> Vec<Charter> {
+    let mut found = Vec::new();
     for line in lines {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
+        let Some(Record::Event(event)) = crate::carrier::parse_record(line) else {
             continue;
         };
-        let Some(ev) = v.get("event") else { continue };
-        let Ok(verified) = validate_stateless(ev.to_string().as_bytes(), now) else {
+        let Ok(verified) = validate_stateless(event.to_string().as_bytes(), now) else {
             continue;
         };
         let EventBody::Charter(body) = &verified.body else {
             continue;
         };
-        let charter = &body.charter;
-        if charter.content.member_of(device).is_some()
-            && best.as_ref().is_none_or(|b| charter.seq > b.seq)
-        {
-            best = Some(charter.clone());
+        if body.charter.content.member_of(device).is_some() {
+            found.push(body.charter.clone());
+        }
+    }
+    found
+}
+
+/// The newest of `charters`: the first one with the highest number.
+fn newest(charters: impl IntoIterator<Item = Charter>) -> Option<Charter> {
+    let mut best: Option<Charter> = None;
+    for charter in charters {
+        if best.as_ref().is_none_or(|b| charter.seq > b.seq) {
+            best = Some(charter);
         }
     }
     best
+}
+
+/// The newest charter in `lines` whose roll lists `device`, verified statelessly.
+fn charter_for(lines: &[&str], device: &DeviceKey, now: ph_core::Timestamp) -> Option<Charter> {
+    newest(charters_for(lines, device, now))
+}
+
+/// The charter a file or a directory is joined by, out of the charters in it that list
+/// this device (`found`): the newest one of a single circle, or `None` when there is
+/// none.
+///
+/// Which circle is for the owner to say, not for the file. A file is whatever someone
+/// put together, and a shared directory takes records from everyone who can write to
+/// it: anyone can sign a charter of a circle of their own that lists this device's key,
+/// with any number. So when the owner gave a root fingerprint, only charters under the
+/// root key with that fingerprint are looked at, and the newest is chosen among those.
+/// Without one, charters of several circles are not chosen between: the highest number
+/// says nothing about which circle the owner was admitted to.
+///
+/// With one circle in the file nothing changes: its newest charter is returned, and
+/// `plan_join` refuses a fingerprint that is not its own.
+fn charter_from_source(found: Vec<Charter>, expected: Option<&str>) -> Result<Option<Charter>> {
+    let circles: BTreeSet<CircleId> = found.iter().map(|c| c.circle_id).collect();
+    if circles.len() <= 1 {
+        return Ok(newest(found));
+    }
+    let Some(expected) = expected else {
+        return Err(usage(
+            "that file holds charters of several circles with this device on the roll: \
+             pass --expect-fingerprint with the root fingerprint the founder gave you, to \
+             say which circle you mean",
+        ));
+    };
+    let expected = expected.trim();
+    let of_that_root = found
+        .into_iter()
+        .filter(|c| c.issuer_key.fingerprint() == expected);
+    match newest(of_that_root) {
+        Some(charter) => Ok(Some(charter)),
+        None => Err(refused(
+            "none of the circles in that file has the root fingerprint you expected. \
+             Do not join.",
+        )),
+    }
 }
 
 /// A join the owner has confirmed: the charter that becomes this node's trust anchor.
@@ -1308,13 +1365,14 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
     let me = node.device_key();
     let source = crate::carrier::read_source(&args.invite_file)?;
     let lines: Vec<&str> = source.lines.iter().map(String::as_str).collect();
-    let charter = charter_for(&lines, &me, now).ok_or_else(|| {
-        refused(
+    let found = charters_for(&lines, &me, now);
+    let Some(charter) = charter_from_source(found, args.expect_fingerprint.as_deref())? else {
+        return Err(refused(
             "that file holds no charter with this device on its roll. Ask a member to run \
              `peerharness circle invite` with your device key (see `peerharness status`) \
              and to export again once the admission has passed.",
-        )
-    })?;
+        ));
+    };
     if node.store.circle(&charter.circle_id)?.is_some() {
         return Err(usage(
             "this node is already in that circle: use `peerharness events import`",

@@ -10,11 +10,20 @@
 //! through `governance::ingest`, which verifies it, and a file whose content does not
 //! verify is simply not stored. Reading is bounded, takes regular files only and never
 //! follows a symbolic link.
+//!
+//! A record is parsed the way a frame from the wire is ([`parse_record`]): with the
+//! protocol's strict parser, under a size and a depth limit that are applied before
+//! anything in it is looked at. Nothing here reads a record with plain `serde_json`,
+//! which keeps the last of two members with the same name and so would hand the checks
+//! that follow a different object from the one in the file.
 
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use ph_core::Digest;
+use ph_protocol::jcs::{self, ParseLimits};
+use ph_protocol::limits::MAX_DEPTH;
 use serde_json::Value;
 
 use crate::error::usage;
@@ -23,9 +32,17 @@ use crate::home::{read_bounded_file, write_shared_file};
 /// Most bytes read from one file or one directory.
 pub const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Most bytes of one record file in a directory (an event is at most 64 KiB and a
-/// bundle at most 256 KiB before JSON escaping).
+/// Most bytes of one record: a line of a file, or a record file in a directory (an
+/// event is at most 64 KiB and a bundle at most 256 KiB before JSON escaping).
 pub const MAX_ENTRY_BYTES: u64 = 1024 * 1024;
+
+/// The limits one record is parsed under: [`MAX_ENTRY_BYTES`], and one level of nesting
+/// more than a signed object may have, for the object that wraps it. The event inside
+/// is held to the protocol's own limits again when it is verified.
+pub const RECORD_LIMITS: ParseLimits = ParseLimits {
+    max_bytes: MAX_ENTRY_BYTES as usize,
+    max_depth: MAX_DEPTH + 1,
+};
 
 /// Most entries looked at in a directory.
 pub const MAX_DIR_ENTRIES: usize = 100_000;
@@ -47,7 +64,8 @@ were voted on. There is one file per record, named by its hash.\n\
 /// What was read from a file or a directory.
 #[derive(Debug, Default)]
 pub struct Source {
-    /// One JSON object per element (`{"event": …}` or `{"bundle": …}`), unverified.
+    /// One record per element (`{"event": …}` or `{"bundle": …}`), as it was read:
+    /// neither parsed ([`parse_record`]) nor verified.
     pub lines: Vec<String>,
     /// Directory entries that were not read: other files, links, oversized files.
     pub ignored: usize,
@@ -67,14 +85,45 @@ pub fn is_entry_name(name: &str) -> bool {
         .is_some_and(is_hex64)
 }
 
+/// One record as a file or a directory carries it: strictly parsed, and not verified.
+pub enum Record {
+    /// `{"event": <envelope>}`: the envelope object, to be offered to
+    /// `governance::ingest`.
+    Event(Value),
+    /// `{"bundle": {"digest": …, "skill_md": …}}`: the text of a rule and the digest it
+    /// is offered under.
+    Bundle { digest: Digest, skill_md: String },
+}
+
+/// Parses one record, the way a frame from the wire is parsed: at most
+/// [`MAX_ENTRY_BYTES`] (checked before anything is parsed), integers only, no member
+/// twice at any level, and nothing but the one member a record has. `{"event": …}`
+/// beside a `"bundle": null`, or beside a member this version does not know, is not a
+/// record. Whether the event verifies is for `governance::ingest` to say.
+pub fn parse_record(line: &str) -> Option<Record> {
+    let Ok(Value::Object(members)) = jcs::parse_strict(line.as_bytes(), RECORD_LIMITS) else {
+        return None;
+    };
+    let mut members = members.into_iter();
+    let (Some((name, value)), None) = (members.next(), members.next()) else {
+        return None;
+    };
+    match (name.as_str(), value) {
+        ("event", event @ Value::Object(_)) => Some(Record::Event(event)),
+        ("bundle", Value::Object(bundle)) if bundle.len() == 2 => Some(Record::Bundle {
+            digest: bundle.get("digest")?.as_str()?.parse().ok()?,
+            skill_md: bundle.get("skill_md")?.as_str()?.to_owned(),
+        }),
+        _ => None,
+    }
+}
+
 /// The file name a line is kept under in a directory, taken from the line's own
 /// content: the event id or the bundle digest it states.
 pub fn entry_name(line: &str) -> Option<String> {
-    let v: Value = serde_json::from_str(line).ok()?;
-    let (kind, id) = if let Some(ev) = v.get("event") {
-        ("event", ev.get("event_id")?.as_str()?)
-    } else {
-        ("bundle", v.get("bundle")?.get("digest")?.as_str()?)
+    let (kind, id) = match parse_record(line)? {
+        Record::Event(event) => ("event", event.get("event_id")?.as_str()?.to_owned()),
+        Record::Bundle { digest, .. } => ("bundle", digest.to_string()),
     };
     let hex = id.strip_prefix("sha256:")?;
     is_hex64(hex).then(|| format!("{kind}-{hex}.json"))
@@ -218,6 +267,85 @@ mod tests {
         assert!(!is_entry_name(&format!("vote-{hex}.json")));
         assert!(!is_entry_name("event-abc.json"));
         assert!(!is_entry_name(README_NAME));
+    }
+
+    #[test]
+    fn a_record_is_one_member_in_strict_json() {
+        let hex = "ab".repeat(32);
+        let event = event_line(&hex);
+        assert!(matches!(
+            parse_record(&event),
+            Some(Record::Event(v)) if v["event_id"] == format!("sha256:{hex}")
+        ));
+        let bundle = format!(r#"{{"bundle":{{"digest":"sha256:{hex}","skill_md":"x"}}}}"#);
+        assert!(matches!(
+            parse_record(&bundle),
+            Some(Record::Bundle { digest, skill_md })
+                if digest.to_string() == format!("sha256:{hex}") && skill_md == "x"
+        ));
+        // Whitespace is not content: what is signed is the canonical form.
+        assert!(parse_record(r#" { "event" : { "a" : 1 } } "#).is_some());
+
+        let inner = r#"{"event_id":"sha256:00","type":"VOTE"}"#;
+        for bad in [
+            // A member twice: in the record, and inside the event.
+            format!(r#"{{"event":{{}},"event":{inner}}}"#),
+            r#"{"event":{"type":"VOTE","type":"PROPOSAL"}}"#.to_owned(),
+            format!(
+                r#"{{"bundle":{{"digest":"sha256:{hex}","digest":"sha256:{hex}","skill_md":"x"}}}}"#
+            ),
+            // A member a record does not have, and an explicit null.
+            format!(r#"{{"event":{inner},"note":"x"}}"#),
+            format!(r#"{{"event":{inner},"bundle":null}}"#),
+            format!(r#"{{"bundle":{{"digest":"sha256:{hex}","skill_md":"x","name":"y"}}}}"#),
+            format!(r#"{{"bundle":{{"digest":"sha256:{hex}","skill_md":null}}}}"#),
+            format!(r#"{{"bundle":{{"digest":"sha256:{hex}"}}}}"#),
+            r#"{"bundle":{"digest":"abc","skill_md":"x"}}"#.to_owned(),
+            // Not an object where one belongs, or nothing at all.
+            r#"{"event":"x"}"#.to_owned(),
+            r#"{"event":null}"#.to_owned(),
+            r#"{"bundle":[]}"#.to_owned(),
+            r#"{"other":{}}"#.to_owned(),
+            "{}".to_owned(),
+            "[]".to_owned(),
+            // Numbers that are not integers, and data after the record.
+            r#"{"event":{"n":1.5}}"#.to_owned(),
+            r#"{"event":{"n":1e3}}"#.to_owned(),
+            format!("{event}{event}"),
+            "not json".to_owned(),
+        ] {
+            assert!(parse_record(&bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_record_is_held_to_a_size_and_a_depth_before_it_is_read() {
+        // The size counts the line as it is, padding included.
+        let pad = |len: usize| {
+            let event = r#"{"a":1}}"#;
+            let head = r#"{"event":"#;
+            format!(
+                "{head}{}{event}",
+                " ".repeat(len - head.len() - event.len())
+            )
+        };
+        let limit = RECORD_LIMITS.max_bytes;
+        assert_eq!(limit as u64, MAX_ENTRY_BYTES);
+        assert_eq!(pad(limit).len(), limit);
+        assert!(parse_record(&pad(limit)).is_some());
+        assert!(parse_record(&pad(limit + 1)).is_none());
+
+        // An event may be as deep as the protocol lets a signed object be, inside the
+        // one object that wraps it, and no deeper.
+        let nested = |depth: usize| {
+            format!(
+                r#"{{"event":{}1{}}}"#,
+                r#"{"a":"#.repeat(depth),
+                "}".repeat(depth)
+            )
+        };
+        assert!(parse_record(&nested(MAX_DEPTH)).is_some());
+        assert!(parse_record(&nested(MAX_DEPTH + 1)).is_none());
     }
 
     #[test]
