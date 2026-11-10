@@ -181,12 +181,15 @@ pub fn is_valid_metadata_key(k: &str) -> bool {
         && k != "-"
 }
 
-/// Whether `c` is forbidden in a frontmatter value: the control and bidi characters of
-/// [`ph_protocol::text::is_forbidden_char`] (with `lines` deciding whether `\n`, `\r`,
-/// `\t` are allowed) plus invisible characters that can hide text (zero-width spaces
-/// and joiners, BOM, soft hyphen, word joiner, invisible operators, tag characters,
-/// Hangul fillers and U+2028/U+2029). Emoji variation selectors (U+FE00-U+FE0F) are
-/// allowed.
+/// Whether `c` is forbidden in a frontmatter value: everything
+/// [`ph_protocol::text::is_forbidden_char`] forbids (controls, bidi characters and the
+/// zero-width / invisible format characters U+200B-U+200D, U+2060, U+FEFF, U+180E and
+/// the tag characters; `lines` decides whether `\n`, `\r`, `\t` are allowed) plus the
+/// wider set of hidden characters the risk scanner knows (soft hyphen, combining
+/// grapheme joiner, invisible operators U+2061-U+2064, deprecated format characters
+/// U+206A-U+206F, Mongolian free variation selectors, Khmer inherent vowels, Hangul
+/// fillers, variation selectors supplement and, in every field, U+2028/U+2029).
+/// Emoji variation selectors (U+FE00-U+FE0F) are allowed.
 pub fn is_forbidden_field_char(c: char, lines: Lines) -> bool {
     is_forbidden_char(c, lines) || (is_hidden_char(c) && !matches!(c, '\u{fe00}'..='\u{fe0f}'))
 }

@@ -308,6 +308,19 @@ pub enum BundleError {
     /// A wire file's base64 could not be decoded.
     #[error("bundle file encoding is invalid")]
     Encoding,
+    /// The skill declares `allowed-tools`, which pre-approves tool use for the agent.
+    /// A bundle is instructions only (architecture section 10.10).
+    #[error("bundle declares allowed-tools; a shared skill may not pre-approve tools")]
+    ToolPreapproval,
+    /// The body contains shell-injection syntax that Claude Code would execute when
+    /// the skill loads, before the model sees it: an exclamation mark directly followed
+    /// by a backtick, or a fenced block opened with three backticks and an exclamation
+    /// mark. A bundle is instructions only (architecture section 10.10).
+    #[error("bundle body line {line} contains shell-injection syntax; a shared skill may not run commands")]
+    ShellInjection {
+        /// 1-based line number in the SKILL.md body.
+        line: usize,
+    },
     /// SKILL.md failed to parse.
     #[error(transparent)]
     Parse(#[from] SkillError),

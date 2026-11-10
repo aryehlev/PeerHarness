@@ -99,8 +99,9 @@ pub fn digest_for_skill_md(content: &[u8]) -> Result<Digest, BundleError> {
 }
 
 /// Builds a bundle from local SKILL.md text: checks size and NUL, parses, validates
-/// (with `expected_name` as the directory name, when given) and computes the manifest
-/// and digest. The bytes are hashed exactly as given (no normalization).
+/// (with `expected_name` as the directory name, when given), enforces
+/// [`check_instruction_only`], and computes the manifest and digest. The bytes are
+/// hashed exactly as given (no normalization).
 pub fn build_bundle(skill_md: &str, expected_name: Option<&str>) -> Result<Bundle, BundleError> {
     let text = check_skill_bytes(skill_md.as_bytes()).map_err(file_error)?;
     let doc = parse_and_validate(text, expected_name)?;
@@ -117,7 +118,51 @@ pub fn build_bundle(skill_md: &str, expected_name: Option<&str>) -> Result<Bundl
 fn parse_and_validate(text: &str, expected_name: Option<&str>) -> Result<SkillDoc, BundleError> {
     let doc = parse_skill_md(text)?;
     validate_skill(&doc, expected_name).map_err(BundleError::Invalid)?;
+    check_instruction_only(&doc)?;
     Ok(doc)
+}
+
+/// Enforces "a bundle is instructions only" (architecture section 10.10: no vote runs
+/// code). Applied to every bundle, whether built locally or received from a peer.
+///
+/// A single `SKILL.md` can still make an agent run things in two ways, and both are
+/// refused outright rather than left to the advisory risk scanner:
+///
+/// * `allowed-tools` in the frontmatter pre-approves tools, so the agent uses them
+///   without asking its user;
+/// * Claude Code's dynamic-context syntax in the body runs a shell command when the
+///   skill loads, before the model sees anything. See [`has_shell_injection`] for the
+///   exact forms.
+pub fn check_instruction_only(doc: &SkillDoc) -> Result<(), BundleError> {
+    if doc.frontmatter.allowed_tools.is_some() {
+        return Err(BundleError::ToolPreapproval);
+    }
+    match doc.body.lines().position(has_shell_injection) {
+        Some(i) => Err(BundleError::ShellInjection { line: i + 1 }),
+        None => Ok(()),
+    }
+}
+
+/// Whether one line of a skill body contains syntax that Claude Code executes as a
+/// shell command when the skill loads:
+///
+/// * inline: an exclamation mark directly followed by a backtick, with another backtick
+///   later on the same line to close it (`!` then a command in backticks);
+/// * block: a fence opened with three backticks or three tildes directly followed by an
+///   exclamation mark.
+///
+/// The inline rule errs on the side of refusing: any closing backtick later on the
+/// line counts, so a line such as "use `!` and `x`" is refused even though a human
+/// reads it as two code spans. A lone `!` in a code span with nothing after it is fine.
+pub fn has_shell_injection(line: &str) -> bool {
+    let fence = line.trim_start();
+    if fence.starts_with("```!") || fence.starts_with("~~~!") {
+        return true;
+    }
+    line.match_indices("!`").any(|(i, m)| {
+        line.get(i + m.len()..)
+            .is_some_and(|rest| rest.contains('`'))
+    })
 }
 
 fn file_error(e: ValidationError) -> BundleError {

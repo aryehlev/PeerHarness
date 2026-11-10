@@ -178,7 +178,8 @@ pub(crate) fn forbidden_raw(c: char) -> Option<SyntaxError> {
     match c {
         '\n' => None,
         '\t' => Some(SyntaxError::Tab),
-        '\r' | '\u{2028}' | '\u{2029}' | '\u{feff}' => Some(SyntaxError::ControlCharacter),
+        // `is_forbidden_char` also covers U+FEFF and the other zero-width characters.
+        '\r' | '\u{2028}' | '\u{2029}' => Some(SyntaxError::ControlCharacter),
         c if is_forbidden_char(c, Lines::Multi) => Some(SyntaxError::ControlCharacter),
         _ => None,
     }
@@ -910,6 +911,13 @@ mod tests {
             kind("name: a\u{feff}\ndescription: b\n"),
             SyntaxError::ControlCharacter
         );
+        for zw in ['\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{e0041}'] {
+            assert_eq!(
+                kind(&format!("name: a\ndescription: b{zw}c\n")),
+                SyntaxError::ControlCharacter,
+                "{zw:?}"
+            );
+        }
         assert_eq!(
             kind("name: a\u{85}\ndescription: b\n"),
             SyntaxError::ControlCharacter
