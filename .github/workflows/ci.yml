@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  # No PEERHARNESS_* variables are needed: every test creates its own temporary
+  # PEERHARNESS_HOME, skills directory, settings path and passphrase, and tests that
+  # would touch the real OS keychain are #[ignore]d.
+
+jobs:
+  test:
+    name: fmt, clippy, test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # No extra system packages are needed on Linux: SQLite is bundled (rusqlite
+      # "bundled"), the crypto stack builds with the default C compiler, and the
+      # keyring crate's Linux backend is the pure-Rust zbus Secret Service client,
+      # which needs no libdbus/libsecret at build time (and is only used at run time
+      # when `--keystore os` is chosen explicitly).
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          # Keep warnings as warnings for `cargo test`; clippy below uses -D warnings.
+          rustflags: ""
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  msrv:
+    name: MSRV (Rust 1.89)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.89"
+          rustflags: ""
+      - name: cargo check
+        run: cargo check --workspace --locked
+
+  cargo-deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features --locked
+
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Fails on any RustSec vulnerability. "unmaintained" and "yanked" findings are
+      # reported as warnings here; cargo-deny (deny.toml) decides which of those fail.
+      - name: cargo audit
+        run: cargo audit
