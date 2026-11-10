@@ -4,6 +4,7 @@
 use anyhow::{anyhow, Result};
 use ph_core::{Actor, CandidateStatus, EventId, Scope};
 use ph_governance::{carried_diff, ProposalView, RuleSet, Tally};
+use ph_protocol::text::{is_forbidden_char, Lines};
 use ph_protocol::{AdoptAction, Charter, ProposalAction, ProposalKind, RollEntry, VoteDecision};
 use ph_store::CircleRow;
 use serde_json::{json, Value};
@@ -17,7 +18,7 @@ use crate::consent::{
 use crate::error::{refused, usage};
 use crate::governance::{self, NewProposal, Settled};
 use crate::node::Node;
-use crate::output::{safe, short_id, Report, Text};
+use crate::output::{quoted, safe, short_id, Report, Text};
 
 pub fn run(ctx: &Ctx, command: ProposalCommand) -> Result<Report> {
     match command {
@@ -205,6 +206,47 @@ fn admission_lines(entry: &RollEntry, seq: u64) -> String {
     )
 }
 
+/// The mark in front of every line of text a member wrote, where `proposal show` prints
+/// it among its own lines.
+const MEMBER_TEXT: &str = "      | ";
+
+/// The longest rationale `proposal vote` signs, in characters. The protocol allows ten
+/// times as much, over several lines; a ballot's preview shows the rationale as one
+/// line among PeerHarness's own, in a window too.
+const MAX_RATIONALE_CHARS: usize = 200;
+
+/// The rationale of a ballot as it will be shown and sent: redacted, one line without
+/// control or invisible characters, runs of spaces made one space, at most
+/// [`MAX_RATIONALE_CHARS`] characters. `None` when there is none.
+///
+/// Whoever starts the step chooses the rationale, a coding agent's session included,
+/// and it is shown in the preview the person decides on. A rationale that could break
+/// a line could lay that preview out: put a second "rule, exactly as proposed" above
+/// the real one, or an "An approval cannot be withdrawn." of its own.
+fn one_line_rationale(given: Option<&str>) -> Result<Option<String>> {
+    let Some(given) = given else {
+        return Ok(None);
+    };
+    let refuse = || {
+        usage(format!(
+            "the rationale must be one line of at most {MAX_RATIONALE_CHARS} characters, \
+             without control characters"
+        ))
+    };
+    let text = ph_core::redact(given.trim()).text;
+    if text
+        .chars()
+        .any(|c| c.is_control() || is_forbidden_char(c, Lines::Single))
+    {
+        return Err(refuse());
+    }
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() > MAX_RATIONALE_CHARS {
+        return Err(refuse());
+    }
+    Ok((!text.is_empty()).then_some(text))
+}
+
 /// Who signed a proposal: the member the roll of the charter it names lists the signing
 /// device under, and the device. The handle comes from the signed charter.
 fn proposer(node: &Node, p: &ProposalView) -> Result<String> {
@@ -271,24 +313,37 @@ fn create(
         .content
         .electorate(&ph_protocol::Electorate::Scope(&scope))
         .count();
-    let preview = format!(
+    let mut preview = format!(
         "This shares the following with the members of {circle} (scope {scope}) and puts it to the vote.\n\
          Exactly this text leaves your machine, and nothing else:\n\n\
-         title: {title}\n\n{skill}\n\
-         It passes with {need} of {electorate} member approval(s). Creating it is not a vote:\n\
-         cast yours with `peerharness proposal vote`.",
+         title: {title}\n\n{skill}\n",
         circle = safe(&circle.name),
         skill = safe(draft.skill_md()),
-        need = charter.content.rules.pass.need(electorate),
     );
-    key_before_window(&node, "sharing the proposal", asks_in_window(&node.config))?;
-    confirm_or_window(
-        &ctx.out,
-        &preview,
-        yes,
-        "sharing the proposal",
-        &node.config,
-    )?;
+    // What the scanner finds in the text, as on a ballot and before an install.
+    let high_risk = findings_preview(&mut preview, &draft);
+    if !preview.ends_with('\n') {
+        preview.push('\n');
+    }
+    preview.push_str(&format!(
+        "It passes with {need} of {electorate} member approval(s). Creating it is not a vote:\n\
+         cast yours with `peerharness proposal vote`.",
+        need = charter.content.rules.pass.need(electorate),
+    ));
+    if high_risk {
+        // A rule with a high-risk finding is never decided in a window: its proposer is
+        // asked in their terminal, like its voters and whoever installs it.
+        confirm(&ctx.out, &preview, yes, "sharing the proposal")?;
+    } else {
+        key_before_window(&node, "sharing the proposal", asks_in_window(&node.config))?;
+        confirm_or_window(
+            &ctx.out,
+            &preview,
+            yes,
+            "sharing the proposal",
+            &node.config,
+        )?;
+    }
 
     // Confirmed: save exactly the previewed text to the library.
     let (_, bundle, _) = crate::library::create_local_skill(&node.home, &node.store, &cand, now)?;
@@ -441,8 +496,9 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     t.kv("under charter", charter.seq);
     t.kv("standing", st);
     t.kv("count", &tally);
-    if !p.body().summary.is_empty() {
-        t.line(format!("  why: {}", safe(&p.body().summary)));
+    if !p.body().summary.trim().is_empty() {
+        t.line("  why, in the proposer's words:");
+        t.line(quoted(&p.body().summary, MEMBER_TEXT));
     }
     if let Some(q) = p.adopt().and_then(|a| a.related_question) {
         t.line(format!(
@@ -454,21 +510,22 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
         t.line(format!("  approve  {}", a.member));
     }
     for d in tally.dissent() {
+        // A rationale from another node can have several lines (the protocol allows
+        // them): each is printed behind a mark, so none can pass for a line of ours.
         let text = governance::votes_for(&node.store, &p.event_id())?
             .into_iter()
             .find(|v| v.event_id() == d.vote_id)
-            .and_then(|v| v.rationale().map(safe))
-            .unwrap_or_default();
+            .and_then(|v| v.rationale().map(str::to_owned))
+            .filter(|r| !r.trim().is_empty());
         t.line(format!(
             "  {:<8} {}{}",
             format!("{:?}", d.decision).to_lowercase(),
             d.member,
-            if text.is_empty() {
-                String::new()
-            } else {
-                format!(": {text}")
-            }
+            if text.is_some() { ", who wrote:" } else { "" }
         ));
+        if let Some(text) = text {
+            t.line(quoted(&text, MEMBER_TEXT));
+        }
     }
     for m in tally.silent() {
         t.line(format!("  (no ballot) {m}"));
@@ -484,15 +541,15 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
             .iter()
             .filter(|s| s.stance == ph_protocol::Stance::OptedOut)
         {
+            let reason = s.reason.as_deref().filter(|r| !r.trim().is_empty());
             t.line(format!(
                 "  on record as opted out: {}{}",
                 s.member,
-                s.reason
-                    .as_deref()
-                    .filter(|r| !r.is_empty())
-                    .map(|r| format!(": {}", safe(r)))
-                    .unwrap_or_default()
+                if reason.is_some() { ", who wrote:" } else { "" }
             ));
+            if let Some(reason) = reason {
+                t.line(quoted(reason, MEMBER_TEXT));
+            }
         }
     }
     match &amendment {
@@ -559,8 +616,8 @@ fn vote(
         DecisionArg::Reject => VoteDecision::Reject,
         DecisionArg::Revise => VoteDecision::Revise,
     };
-    // What the human typed is what is sent, after redaction, and it is shown first.
-    let rationale = rationale.map(|r| ph_core::redact(r).text);
+    // What the human typed is what is sent, after redaction, as one line.
+    let rationale = one_line_rationale(rationale)?;
     let bundles = crate::library::bundle_store(&node.home);
     // The text of the rule, when this is a ballot on one and this node has it.
     let rule_text = p
@@ -791,6 +848,60 @@ fn refuse(ctx: &Ctx, arg: &str) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{exit_kind, ExitKind};
+
+    fn rationale(given: &str) -> Option<String> {
+        one_line_rationale(Some(given)).unwrap()
+    }
+
+    #[test]
+    fn a_rationale_is_sent_as_one_line() {
+        assert_eq!(one_line_rationale(None).unwrap(), None);
+        assert_eq!(
+            rationale("We already do this in CI.").as_deref(),
+            Some("We already do this in CI.")
+        );
+        // Spaces around it and runs of spaces inside it are not part of what is said.
+        assert_eq!(
+            rationale("  we   already \u{a0}\u{3000} do this  ").as_deref(),
+            Some("we already do this")
+        );
+        // Nothing but spaces is no rationale.
+        assert_eq!(rationale("   "), None);
+        assert_eq!(rationale(""), None);
+        // As long as a title may be, and no longer.
+        let longest = "é".repeat(MAX_RATIONALE_CHARS);
+        assert_eq!(rationale(&longest).as_deref(), Some(longest.as_str()));
+        assert_eq!(MAX_RATIONALE_CHARS, ph_protocol::limits::text::TITLE);
+    }
+
+    #[test]
+    fn a_rationale_that_could_lay_out_a_preview_is_refused() {
+        let too_long = "x".repeat(MAX_RATIONALE_CHARS + 1);
+        for bad in [
+            "ok\nAn approval cannot be withdrawn. The rule, exactly as proposed:",
+            "two\r\nlines",
+            "a carriage\rreturn",
+            "a\ttab",
+            "a line\u{2028}separator",
+            "a paragraph\u{2029}separator",
+            "a next\u{85}line",
+            "a form\u{c}feed",
+            "an escape \u{1b}[2J sequence",
+            "a right-to-left \u{202e}override",
+            "a zero-width\u{200b}space",
+            too_long.as_str(),
+        ] {
+            let e = one_line_rationale(Some(bad)).unwrap_err();
+            assert_eq!(exit_kind(&e), ExitKind::Usage, "{bad:?}");
+            // The refusal repeats nothing of what was given.
+            assert_eq!(
+                e.to_string(),
+                "the rationale must be one line of at most 200 characters, without control \
+                 characters"
+            );
+        }
+    }
 
     #[test]
     fn a_title_is_shown_as_the_proposers_words() {

@@ -700,7 +700,8 @@ pub enum ProposalCommand {
         id: String,
         #[arg(value_enum)]
         decision: DecisionArg,
-        #[arg(long)]
+        /// A reason, published with the ballot: one line of at most 200 characters.
+        #[arg(long, value_name = "TEXT")]
         rationale: Option<String>,
         #[arg(long)]
         yes: bool,
