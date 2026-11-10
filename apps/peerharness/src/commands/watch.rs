@@ -4,6 +4,11 @@
 //! `--install` also installs the small skill that asks the agent to report corrections
 //! with `peerharness note --from-agent` (see `crate::agent_notes`), unless
 //! `--no-agent-notes` is given. `--remove` removes both.
+//!
+//! `--install --windows` is where the owner allows confirmation windows (ADR-033), and
+//! `--install --no-windows` or `--remove` is where they take that back. Like every
+//! change here it is previewed and confirmed in the owner's own terminal: an agent's
+//! session cannot turn windows on, with or without a window.
 
 use anyhow::Result;
 use ph_observer::{HookEvent, HookStatus};
@@ -13,8 +18,10 @@ use serde_json::json;
 use super::{claude_settings_path, hook_command, Ctx};
 use crate::agent_notes;
 use crate::cli::WatchClaudeArgs;
+use crate::config::Config;
 use crate::consent::confirm;
 use crate::output::{Report, Text};
+use crate::window::Window;
 
 /// Where the reporting skill stands in the agent's skills directory.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -61,30 +68,74 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
     })?;
     let backups = ctx.home.backups_dir();
     let installer = crate::governance::user_installer()?;
-    let notes_bundle = agent_notes::bundle(&cmd.render_program())?;
+    // The owner's setting, and what this command would make it.
+    let mut config = if ctx.home.is_initialized() {
+        Some(Config::load(&ctx.home)?)
+    } else {
+        None
+    };
+    let windows_now = config.as_ref().is_some_and(|c| c.agent.windows);
+    let windows_after = if a.install {
+        (windows_now || a.windows) && !a.no_windows
+    } else {
+        windows_now && !a.remove
+    };
+    // The reporting skill says what the agent may start, so it follows the setting.
+    let notes_bundle = agent_notes::bundle(&cmd.render_program(), windows_after)?;
     let notes = notes_state(&installer, &notes_bundle);
 
     if a.install {
-        if !ctx.home.is_initialized() {
+        let Some(config) = config.as_mut() else {
             return Err(crate::error::usage(
                 "this home is not initialized: run `peerharness init` before installing hooks",
             ));
+        };
+        if a.windows && Window::find().is_none() {
+            return Err(crate::error::usage(
+                "confirmation windows need macOS in this build: nothing was changed",
+            ));
         }
+        let want_windows = windows_after != windows_now;
         let want_hooks = !status.is_installed_for(&cmd);
         // Never replace a skill the owner wrote or edited.
         let want_notes = !a.no_agent_notes && matches!(notes, Notes::Absent | Notes::Outdated);
-        if !want_hooks && !want_notes {
+        if !want_hooks && !want_notes && !want_windows {
             return Ok(done(
                 &settings,
                 "install",
                 false,
                 None,
                 &status,
-                notes,
+                Setup {
+                    notes,
+                    windows: windows_now,
+                },
                 "Already installed; nothing changed.",
             ));
         }
         let mut preview = Text::new();
+        if want_windows && windows_after {
+            preview.line(
+                "This lets your agent put three decisions in front of you while you work with it:",
+            );
+            preview.line("  proposing a rule to a circle,");
+            preview.line("  your ballot on a proposed rule,");
+            preview.line("  installing a rule that passed and waits for you.");
+            preview.line(
+                "Each one opens a window on your screen that shows exactly what would be shared, \
+                 signed or installed. Nothing happens unless you click Proceed in that window. \
+                 Your agent cannot answer it and --yes does not skip it. Every other decision \
+                 still needs your own terminal.",
+            );
+            preview.line("Turn it off with `peerharness watch claude --install --no-windows`.");
+            preview.line("");
+        }
+        if want_windows && !windows_after {
+            preview.line(
+                "This turns confirmation windows off: every decision needs your own terminal again.",
+            );
+            preview.line("");
+        }
         if want_hooks {
             preview.line(format!("This will edit {}", settings.display()));
             preview.line(
@@ -106,11 +157,16 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                 agent_notes::SKILL_NAME,
                 dir.display()
             ));
-            preview.line(
+            preview.line(if windows_after {
+                "It asks your agent to write down a rule when you correct it, and tells it which \
+                 three steps it may start when you ask. The agent cannot approve, share or \
+                 install anything: that is your click in the window. \
+                 Skip it with --no-agent-notes. Its exact text:"
+            } else {
                 "It asks your agent to write down a rule when you correct it. The agent can only \
                  add a note to your inbox; it cannot approve, share or install anything. \
-                 Skip it with --no-agent-notes. Its exact text:",
-            );
+                 Skip it with --no-agent-notes. Its exact text:"
+            });
             preview.line("");
             preview.line(notes_bundle.skill_md().trim_end());
             preview.line("");
@@ -123,6 +179,13 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         )?;
         let mut changed = false;
         let mut backup = None;
+        if want_windows {
+            // The setting first: if a later step fails, windows that were turned off
+            // are off.
+            config.agent.windows = windows_after;
+            config.save(&ctx.home)?;
+            changed = true;
+        }
         if want_hooks {
             let r = ph_observer::install_hooks(&settings, &cmd, &backups).map_err(|e| {
                 anyhow::anyhow!("{e}").context(format!("cannot update {}", settings.display()))
@@ -143,7 +206,10 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             changed,
             backup.as_deref(),
             &st,
-            notes_state(&installer, &notes_bundle),
+            Setup {
+                notes: notes_state(&installer, &notes_bundle),
+                windows: windows_after,
+            },
             "Installed.",
         ));
     }
@@ -156,14 +222,17 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             .count();
         // An edited copy is the owner's now: it is left in place and they are told.
         let remove_notes = matches!(notes, Notes::Current | Notes::Outdated);
-        if ours == 0 && !remove_notes {
+        if ours == 0 && !remove_notes && !windows_now {
             return Ok(done(
                 &settings,
                 "remove",
                 false,
                 None,
                 &status,
-                notes,
+                Setup {
+                    notes,
+                    windows: false,
+                },
                 "No PeerHarness hooks for this home; nothing changed.",
             ));
         }
@@ -181,6 +250,11 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                 agent_notes::SKILL_NAME
             ));
         }
+        if windows_now {
+            preview.line(
+                "This turns confirmation windows off: every decision needs your own terminal again.",
+            );
+        }
         confirm(
             &ctx.out,
             &preview.finish(),
@@ -190,6 +264,11 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         let mut changed = false;
         let mut backup = None;
         let mut removed_entries = 0;
+        if let Some(config) = config.as_mut().filter(|_| windows_now) {
+            config.agent.windows = false;
+            config.save(&ctx.home)?;
+            changed = true;
+        }
         if ours > 0 {
             let r = ph_observer::remove_hooks_for(&settings, &cmd, &backups).map_err(|e| {
                 anyhow::anyhow!("{e}").context(format!("cannot update {}", settings.display()))
@@ -211,7 +290,10 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             changed,
             backup.as_deref(),
             &st,
-            notes_state(&installer, &notes_bundle),
+            Setup {
+                notes: notes_state(&installer, &notes_bundle),
+                windows: false,
+            },
             &format!(
                 "Removed {removed_entries} hook entr{}{}.",
                 if removed_entries == 1 { "y" } else { "ies" },
@@ -233,6 +315,8 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
         "peerharness_entries": status.entries.len(),
         "foreign_hooks": status.foreign_hook_count,
         "agent_notes": notes.as_str(),
+        "windows": windows_now,
+        "windows_available": Window::find().is_some(),
     });
     let mut t = Text::new();
     t.kv("settings", settings.display());
@@ -247,7 +331,22 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
     t.kv("PeerHarness entries", status.entries.len());
     t.kv("other hooks", status.foreign_hook_count);
     t.kv("reporting skill", notes.as_str());
+    t.kv("windows", windows_label(windows_now));
     Ok(Report::new(json, t.finish()))
+}
+
+fn windows_label(on: bool) -> &'static str {
+    match (on, Window::find().is_some()) {
+        (true, true) => "on (your agent may put three decisions in front of you)",
+        (true, false) => "on, but this machine has no window PeerHarness can show",
+        (false, _) => "off (every decision needs your own terminal)",
+    }
+}
+
+/// What the agent has been given after a command: the reporting skill and the windows.
+struct Setup {
+    notes: Notes,
+    windows: bool,
 }
 
 fn done(
@@ -256,9 +355,10 @@ fn done(
     changed: bool,
     backup: Option<&std::path::Path>,
     st: &HookStatus,
-    notes: Notes,
+    setup: Setup,
     headline: &str,
 ) -> Report {
+    let Setup { notes, windows } = setup;
     let json = json!({
         "action": action,
         "settings": settings,
@@ -267,11 +367,13 @@ fn done(
         "installed_events": st.installed_events.iter().map(|e| e.event_name()).collect::<Vec<_>>(),
         "foreign_hooks": st.foreign_hook_count,
         "agent_notes": notes.as_str(),
+        "windows": windows,
     });
     let mut t = Text::new();
     t.line(headline);
     t.kv("settings", settings.display());
     t.kv("reporting skill", notes.as_str());
+    t.kv("windows", windows_label(windows));
     if notes == Notes::Edited {
         t.line("  You edited the reporting skill, so it was left as it is.");
     }

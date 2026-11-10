@@ -8,8 +8,9 @@ every member's agent follows it. There is no server: each person runs their own 
 with their own keys, and every node checks every signature and counts every vote for
 itself.
 
-Agents can suggest rules. Only people decide: every step that approves, shares, votes
-or installs refuses to run inside an agent's session.
+Agents can suggest rules. Only people decide: no step that approves, shares, votes or
+installs can be answered from inside an agent's session. If you allow it, your agent
+can put a proposal or a ballot in front of you in a window, and your click decides.
 
 > **Status: pre-release, not audited.** The commands on this page work and are tested
 > end to end. Read [What works today](#what-works-today) and
@@ -117,6 +118,20 @@ To have your agent report corrections by itself, run `peerharness watch claude
 redacted observations locally, and a small skill that asks the agent to note a rule
 when you correct it. The note waits in `peerharness inbox`; approving it stays yours.
 `peerharness watch claude --remove` takes it out again.
+
+On macOS you can also decide without leaving the agent. Add `--windows`:
+
+```sh
+peerharness watch claude --install --windows
+```
+
+When you then tell your agent "propose that to the team" or "vote approve on it", a
+window opens on your screen with the exact text that would be shared, signed or
+installed, and buttons Cancel and Proceed. Only your click on Proceed does anything;
+your agent cannot answer the window and `--yes` does not skip it. It covers three
+steps: proposing a rule, your ballot on a proposed rule, and installing a rule that
+passed. Everything else, and any text too long to show in full, still needs your own
+terminal. `--install --no-windows` turns it off.
 
 To experiment without touching your real setup:
 
@@ -261,7 +276,10 @@ command has `--help`.
   and miss others. They never prove that a text is safe.
 * **The agent guard is not a wall.** Consent steps recognize an agent's session by an
   environment variable. That stops an agent that is trying to help, not a process that
-  hides the variable on purpose.
+  hides the variable on purpose. With `--windows` your agent chooses when a window
+  appears; reading what it shows before you click is your part.
+* **Confirmation windows are macOS only**, and need a key in the OS keychain (the
+  default there). On Linux every decision still needs your own terminal.
 * **Internet mode identifies your device to strangers.** Servers run by volunteers see
   the same public key with your IP address wherever you connect. Whether two nodes
   get a direct connection depends on their routers.

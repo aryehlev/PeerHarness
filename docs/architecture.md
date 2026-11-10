@@ -985,6 +985,19 @@ written down directly.
   sets in every command it runs) or `PEERHARNESS_AGENT_SESSION` being set to anything
   but empty or `0`. This stops an agent that is trying to help. It is not a security
   boundary: a process that clears the variable is not stopped by it (ADR-022).
+* **Three steps can be asked in a window** (ADR-033). When the owner has turned it on
+  (`watch claude --install --windows`, stored as `[agent] windows` in `config.toml`,
+  off by default, never settable from a session), `proposal create`, `proposal vote` on
+  an `adopt` proposal and `proposal adopt` go through `consent::confirm_or_window`.
+  Inside a session that shows the exact preview in a window of the operating system
+  (`apps/peerharness/src/window.rs`; macOS, `/usr/bin/osascript`) and returns `Ok` only
+  for a click on "Proceed". Cancel, the return and escape keys, no answer within 90
+  seconds, a window that cannot be shown and `--yes` all refuse with exit code 3. The
+  preview is not printed into the session. A text that would not fit on the screen is
+  not shown in part: the step is refused. A rule with a high-risk scanner finding, a
+  ballot on anything but a rule, and every other consent step refuse inside a session
+  as before. The reporting skill then also names these three commands and `inbox`, and
+  says that only the user's click decides.
 
 ## 13. Privacy invariants (all crates)
 

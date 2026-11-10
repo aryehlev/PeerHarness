@@ -24,6 +24,7 @@ mod node;
 mod output;
 mod peer;
 mod runtime;
+mod window;
 
 use clap::Parser;
 

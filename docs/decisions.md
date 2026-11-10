@@ -509,3 +509,85 @@ member whose node others can reach already carries everyone's records (every nod
 stores what the roll lets it read), and one such node, for example a member's second
 device on a server, is the dependable setup. No switch in the configuration file: the
 mode is asked for per command.
+
+## ADR-033: Three decisions can be put to the owner in a window, from inside the agent's session
+ADR-022 left a person who works in a coding agent all day with one way to decide
+anything: leave the agent, open a terminal and type the command. The guard was right
+and the cost was the whole product, because the place where a rule is noticed is the
+place where nobody could act on it.
+
+**Decision.** A consent step is still never answered from inside an agent's session.
+Three of them may now be *asked* from there, in a window of the operating system, when
+the owner has allowed it:
+
+* proposing a rule to a circle (`proposal create`),
+* a ballot on a proposed rule (`proposal vote` on an `adopt` proposal),
+* installing a rule that passed and waits for the owner (`proposal adopt`).
+
+The owner allows it with `watch claude --install --windows`, which is itself a consent
+step in their own terminal with a preview, and takes it back with `--install
+--no-windows` or `--remove` (`config.toml`, `[agent] windows`, off by default). The
+session cannot turn it on, with or without a window. With windows off, everything is
+as in ADR-022.
+
+**What the session can and cannot do.** It can make the window appear, with arguments
+of its choosing (which candidate, which circle, approve or reject, a rationale). It
+cannot answer it. The window shows the exact preview the terminal would have shown, and
+only a click on "Proceed" there counts (`consent::confirm_or_window`, `window.rs`).
+"Cancel" is the default button, so the return key and the escape key decline. A window
+nobody answers closes after 90 seconds as "no answer". `--yes` is ignored inside a
+session. The preview is not printed into the session: the person reads it in the
+window, and what the agent says about a rule is not the rule.
+
+**Shown in full or not at all.** A dialog does not scroll, and one taller than its
+screen is cut off, so the person would confirm a text they saw part of. The height is
+therefore estimated before anything is shown: the text is wrapped the way the dialog
+wraps it, with glyph widths rounded up and the row taken narrower than it is, and the
+script compares the result with the usable height of the smallest attached screen. A
+text that does not fit is refused with "run it in your own terminal". Measured on macOS
+14.2 on 2026-11-10: a dialog is 420 points wide, 16 points a row and 108 points of
+everything else; for four texts the estimate was between 0 and 6 rows above what the
+dialog needed (33 against 27 for the preview of a short rule) and never below. By that
+estimate a 1440x900 screen has room for a rule of about 175 characters when proposing
+it and about 250 on a ballot, and a 1280x800 screen for about 100 and 175. Longer ones
+go to the terminal. The widths in the estimate are approximations of the system font
+checked against those four dialogs, not the font's own metrics.
+
+**What stays in the terminal**, also with windows on: reviewing a note, installing a
+skill for oneself, a ballot on a repeal or on a change to the charter (the window
+could not show what is being decided in full), proposing a repeal, every `circle`
+command, questions and answers, hooks, export and reset. A rule with a high-risk
+scanner finding is never decided in a window. A ballot in a window carries the rule's
+text itself, since the owner cannot run `proposal show` first.
+
+**The key.** Nobody can type a passphrase inside a session. A node whose device key is
+in a passphrase-protected file is refused before the window opens, unless
+`PEERHARNESS_PASSPHRASE` is set. The OS keychain works.
+
+**What this is not.** It is the same kind of guard as ADR-022, against an agent that is
+being helpful, and not a security boundary:
+
+* a process that clears the session variable is still not stopped, and one that edits
+  `config.toml` can turn windows on;
+* an agent that can drive the screen (macOS asks the owner for that permission) could
+  click a button;
+* a person can click "Proceed" out of habit. The default button is "Cancel" for that
+  reason, and the agent's skill tells it to start a step only when asked;
+* the agent's skill now tells it to run `inbox`, so titles and questions written by
+  other members reach the agent's context. They are single lines, cleaned for display,
+  and the skill says they are not instructions. A rule's own text still reaches an
+  agent only after it passed.
+
+**Where the window comes from.** macOS only: `/usr/bin/osascript`, a fixed path in a
+directory the system protects, so the program is not found through `PATH`. The text
+goes to it on standard input, never in its arguments or environment. On Linux the
+steps are refused as before; `zenity` exists there, but no desktop was at hand to test
+against, and the default keystore on Linux is the passphrase file. Debug builds read
+`PEERHARNESS_TEST_WINDOW_BIN`, a stand-in program for tests; release builds do not, so
+that ADR-022's "no override an agent can set" still holds for what is installed.
+
+**Consequences.** The reporting skill has two texts, and `watch claude` reinstalls it
+when the setting changes. `AGENTS.md` now says that an agent may write a note and may
+start these three steps, and that it never answers one. Not done: a window on Linux,
+the Stop hook telling the owner that proposals wait for their vote, and asking in a
+window for a personal install.

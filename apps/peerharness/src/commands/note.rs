@@ -105,7 +105,11 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
     let mut t = Text::new();
     if a.from_agent {
         // Read by the agent: say what happened and that its part is over.
-        t.line("Noted for the user's review. Do not run any other peerharness command.");
+        t.line(if node.config.agent.windows {
+            "Noted for the user's review. Start nothing else unless the user asks you to."
+        } else {
+            "Noted for the user's review. Do not run any other peerharness command."
+        });
     } else {
         t.line(format!("Noted: \"{}\"", safe(&statement)));
         if redacted {

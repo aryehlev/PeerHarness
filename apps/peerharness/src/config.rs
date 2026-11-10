@@ -29,6 +29,19 @@ pub struct Config {
     pub policy: LocalPolicy,
     #[serde(default)]
     pub retention: RetentionConfig,
+    #[serde(default)]
+    pub agent: AgentConfig,
+}
+
+/// What the owner allows their coding agent's session to do beyond writing notes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfig {
+    /// Whether a few consent steps started inside an agent session may be put to the
+    /// owner in a window of the operating system (ADR-033). Off unless the owner turned
+    /// it on with `watch claude --install --windows`, in their own terminal.
+    #[serde(default)]
+    pub windows: bool,
 }
 
 /// Argon2id parameters for newly written key files.
@@ -258,6 +271,18 @@ mod tests {
         assert!(t.contains("WARNING"));
         assert_eq!(Config::parse(&t).unwrap(), c);
         assert!(c.notifications.policy().unwrap().quiet_hours.is_some());
+    }
+
+    #[test]
+    fn confirmation_windows_are_off_unless_written() {
+        assert!(!Config::default().agent.windows);
+        assert!(!Config::parse("").unwrap().agent.windows);
+        assert!(!Config::parse("[agent]\n").unwrap().agent.windows);
+        let on = Config::parse("[agent]\nwindows = true\n").unwrap();
+        assert!(on.agent.windows);
+        assert_eq!(Config::parse(&on.to_toml().unwrap()).unwrap(), on);
+        assert!(Config::parse("[agent]\nwindows = \"yes\"\n").is_err());
+        assert!(Config::parse("[agent]\nanything_else = true\n").is_err());
     }
 
     #[test]
