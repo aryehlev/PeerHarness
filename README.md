@@ -149,9 +149,12 @@ Each of you runs this once, in your own terminal. It is the step that allows the
 ```sh
 peerharness init
 peerharness watch claude --install --windows
+claude mcp add --scope user peerharness -- peerharness mcp
 ```
 
-From then on you ask your agent, and decide in the window it opens:
+The second line shows you what your agent may start and what it never decides. The
+third gives it those steps as tools. From then on you ask your agent, and decide in
+the window it opens:
 
 | You say | What happens |
 |---|---|
@@ -166,6 +169,9 @@ Tell the fingerprint by phone or in person: it is how the one who joins knows th
 circle is yours. With three or more members, admitting someone takes the others' votes
 too, asked in the same kind of window. The agent keeps your node reachable only while
 its session is open; for a node that stays up, run the daemon yourself (below).
+Without the `claude mcp add` line the agent runs the same commands from a skill, and
+you start the daemon. Other agents that speak MCP can use `peerharness mcp` too; only
+Claude Code was tried.
 
 ### In a terminal
 
@@ -291,7 +297,8 @@ command has `--help`.
 | Exchange across the internet (`--internet`) | works. Tested with separate processes against a private stand-in network, and by hand on the real one from a single machine. Not yet tested between two different routers |
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
-| Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. That an agent runs the right command when you ask in your own words depends on the agent, and no test covers it. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
+| Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
+| The same steps as tools (`peerharness mcp`) | tested end to end with a scripted client, a stand-in window and a stand-in network. Run by hand with Claude Code 2.1.322 on macOS: asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable until the session ended. That is three runs, not a measure of how often an agent gets it right. Other MCP clients were not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
 | The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.1.0 on an Apple Silicon Mac. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet |
 | Windows | not supported yet |

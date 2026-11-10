@@ -77,6 +77,12 @@ stop, leave the feature disabled, and document the blocker.
   windows turned on before ADR-037 were allowed for three steps. A step added to the
   list later needs a setting of its own in the same way, and a new preview in `watch
   claude --install --windows`: never let an older "yes" cover it.
+* `peerharness mcp` (ADR-038) is not a way to consent and must not become one. Every
+  tool runs this binary as a child process with `PEERHARNESS_AGENT_SESSION` set: never
+  run a command in-process from a tool, never pass `--yes` or any flag taken from an
+  argument, and never add a tool for a step that has no window (reviewing, installing
+  for oneself, export, reset, hooks, any change to a charter but an admission). A tool
+  runs only at the level the owner allowed (`config::Asked`), consent step or not.
 * Inside a session no command writes a circle's records to a file: that is `events
   export`, in the person's terminal. A window that asks about a device or a circle
   takes what it shows from the signed content (the amendment, the charter), never from
@@ -247,7 +253,9 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
   (see `apps/peerharness/tests/agent_windows.rs`), and a test that starts `daemon
   --notify` sets `PEERHARNESS_TEST_NOTIFY_BIN`; otherwise a developer's Mac would show
   dialogs and banners during `cargo test`. Both variables are read by debug builds
-  only.
+  only. Tests of the MCP server (`apps/peerharness/tests/mcp_server.rs`) set both, run
+  the server without `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` (it has to set the
+  mark itself), and point its daemon at the hub, never at the public network.
 * Security behaviour needs negative tests: show the forged, expired, revoked,
   out-of-scope, replayed or oversized input being rejected.
 * Use fake provider binaries via `PEERHARNESS_CLAUDE_BIN` / `PEERHARNESS_CODEX_BIN`; never

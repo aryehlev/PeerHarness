@@ -138,8 +138,8 @@ fn circles(program: &str) -> String {
          this node. Inviting, a ballot on admitting someone and joining each open a window \
          like the steps above.\n\
          - When an invitation has passed, pass on to the user what the command printed for \
-         the invitee: the command to join with, and that the root fingerprint is best told \
-         by phone or in person.\n\
+         the invitee: this node's peer id, and the root fingerprint, which is best told by \
+         phone or in person and not in the same message.\n\
          - `sync --internet` exchanges proposals and ballots with the other members. Run it \
          after one of these steps succeeded, and when the user asks what is new.\n\
          - The daemon keeps this node reachable so that others can join it and exchange \

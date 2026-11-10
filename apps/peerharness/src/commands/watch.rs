@@ -401,6 +401,12 @@ fn done(
     if notes == Notes::Edited {
         t.line("  You edited the reporting skill, so it was left as it is.");
     }
+    if action == "install" && asked != Asked::Nothing {
+        t.line(
+            "To give your agent these steps as tools as well: `claude mcp add --scope user \
+             peerharness -- peerharness mcp`.",
+        );
+    }
     if let Some(b) = backup {
         t.kv("backup", b.display());
     }

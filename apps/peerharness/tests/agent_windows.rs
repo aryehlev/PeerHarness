@@ -593,12 +593,15 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     assert_eq!(code, 0, "{read}");
     assert!(read.contains("The admission passed. Charter 2 is now in force."));
     assert!(read.contains(&format!(
-        "Give bob the root fingerprint {root}, by phone or in person."
+        "bob needs two things from you: this node's peer id, {peer}, by any channel, and \
+         the root fingerprint {root}, by phone or in person."
     )));
-    assert!(read.contains("start `peerharness daemon --internet`"));
+    // The line to join with leaves the fingerprint out: it travels apart.
     assert!(read.contains(&format!(
-        "`peerharness circle join {peer} --internet --expect-fingerprint {root}`"
+        "`peerharness circle join {peer} --internet --expect-fingerprint <the fingerprint \
+         you told them>`"
     )));
+    assert!(read.contains("`peerharness daemon --internet` has to run here"));
     assert!(read.contains("No file with the circle's records was written"));
     // The preview went to the window, not into the session.
     assert!(!read.contains("casts your approval"), "{read}");

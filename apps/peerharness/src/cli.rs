@@ -57,6 +57,14 @@ pub enum Command {
     },
     /// Claude Code hook entry point (always exits 0).
     Hook(HookArgs),
+    /// Serve the steps an agent may start as tools of an MCP server, on standard input
+    /// and output. Register it with your agent, for Claude Code:
+    /// `claude mcp add --scope user peerharness -- peerharness mcp`.
+    ///
+    /// Every tool runs as an agent's session: a step that needs your consent is asked
+    /// in a window when you allowed that (`watch claude --install --windows`), and is
+    /// refused otherwise.
+    Mcp,
     /// Install or remove agent hooks.
     Watch {
         #[command(subcommand)]

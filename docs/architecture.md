@@ -1020,6 +1020,14 @@ written down directly.
   The reporting skill then has a third part: `status`, `circle create`, `circle
   invite`, `circle join`, `sync --internet` and the daemon, with keys, peer ids and
   fingerprints taken only from what the user said in the conversation.
+* **The same steps as MCP tools** (ADR-038). `peerharness mcp`
+  (`apps/peerharness/src/mcp.rs`) is a Model Context Protocol server on standard input
+  and output with a fixed list of eleven tools. Each tool is a fixed command line run
+  as a child process of this binary with `PEERHARNESS_AGENT_SESSION` set, so consent
+  is asked or refused by the code above and by nothing in the server. Arguments are
+  checked values, never flags. A tool runs only at the level the owner allowed
+  (`config::Asked`, read at every call). `stay_reachable` runs the daemon as a child
+  for as long as the client keeps the server's input open.
 
 ## 13. Privacy invariants (all crates)
 

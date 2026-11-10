@@ -353,30 +353,40 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             let peer = node.peer_id();
             let daemon = crate::daemon_info::DaemonInfo::running(&node.home);
             if in_session {
+                // The fingerprint is what tells the invitee that the circle is the
+                // inviter's. It is named apart from everything that travels by chat, and
+                // the line to join with leaves it out.
+                let reachable = daemon.as_ref().filter(|d| d.internet.is_some());
+                let address = daemon
+                    .as_ref()
+                    .filter(|d| d.internet.is_none())
+                    .and_then(|d| d.listen_addrs.first().cloned());
+                let (what, how) = match (reachable, &address) {
+                    (Some(d), _) => (
+                        format!("this node's peer id, {}", d.peer_id),
+                        format!("{} --internet", d.peer_id),
+                    ),
+                    (None, Some(addr)) => (format!("this node's address, {addr}"), addr.clone()),
+                    (None, None) => (
+                        format!("this node's peer id, {peer}"),
+                        format!("{peer} --internet"),
+                    ),
+                };
                 t.line(format!(
-                    "Give {} the root fingerprint {fingerprint}, by phone or in person.",
+                    "{} needs two things from you: {what}, by any channel, and the root \
+                     fingerprint {fingerprint}, by phone or in person.",
                     args.member
                 ));
-                if let Some(d) = daemon.as_ref().filter(|d| d.internet.is_some()) {
-                    t.line(format!(
-                        "Your daemon is on the public network. They join with: `peerharness \
-                         circle join {} --internet --expect-fingerprint {fingerprint}`.",
-                        d.peer_id
-                    ));
-                } else if let Some(addr) = daemon.and_then(|d| d.listen_addrs.into_iter().next()) {
-                    t.line(format!(
-                        "If they can reach your daemon, they join with: `peerharness circle \
-                         join {addr} --expect-fingerprint {fingerprint}`."
-                    ));
-                } else {
+                t.line(format!(
+                    "With both they join: by asking their agent to, or in a terminal with \
+                     `peerharness circle join {how} --expect-fingerprint <the fingerprint \
+                     you told them>`."
+                ));
+                if reachable.is_none() && address.is_none() {
                     t.line(
-                        "This node is not reachable yet: start `peerharness daemon --internet` \
-                         and leave it running.",
+                        "This node is not reachable yet, and has to be for them to join: \
+                         `peerharness daemon --internet` has to run here.",
                     );
-                    t.line(format!(
-                        "Then they join with: `peerharness circle join {peer} --internet \
-                         --expect-fingerprint {fingerprint}`."
-                    ));
                 }
                 t.line(
                     "No file with the circle's records was written: inside a coding agent's \

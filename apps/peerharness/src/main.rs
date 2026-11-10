@@ -20,6 +20,7 @@ mod ids;
 mod installs;
 mod internet;
 mod library;
+mod mcp;
 mod node;
 mod notify;
 mod output;
