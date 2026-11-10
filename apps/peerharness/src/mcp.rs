@@ -357,18 +357,39 @@ const TOOLS: &[Tool] = &[
     },
 ];
 
+/// How `join_circle` reaches the member's node.
+#[derive(Debug, PartialEq, Eq)]
+enum Member {
+    /// A peer id, to be found over the public network.
+    PeerId,
+    /// An address, dialled as it is.
+    Address,
+}
+
+/// Reads the `member` argument of `join_circle`: it has to parse as a peer id or as a
+/// multiaddr. `circle join` also takes a file, and reads a path that exists as one; a
+/// tool never does, so everything else is refused here, an absolute path included, and
+/// so is a value that names something on disk. What the agent wrote into a file is not
+/// where a circle comes from.
+fn member_of(value: &str) -> Option<Member> {
+    let member = if crate::internet::peer_id_of(value).is_some() {
+        Member::PeerId
+    } else if value.parse::<ph_network::Multiaddr>().is_ok() {
+        Member::Address
+    } else {
+        return None;
+    };
+    (!std::path::Path::new(value).exists()).then_some(member)
+}
+
 fn join_circle(server: &Server, a: &Args) -> Outcome {
     let member = a["member"].as_str();
-    // An address is dialled as it is. Anything else has to read as a peer id, so that a
-    // word that happens to name a file is never taken for one.
-    let address = member.starts_with('/');
-    let peer_id = member.len() >= 32 && member.chars().all(|c| c.is_ascii_alphanumeric());
-    if !address && !peer_id {
+    let Some(kind) = member_of(member) else {
         return Outcome::failed(
             "`member` is neither a peer id nor an address. Ask the user for the peer id the \
              member's node printed.",
         );
-    }
+    };
     let mut args = vec![
         "circle",
         "join",
@@ -376,7 +397,7 @@ fn join_circle(server: &Server, a: &Args) -> Outcome {
         "--expect-fingerprint",
         &a["fingerprint"],
     ];
-    if !address {
+    if kind == Member::PeerId {
         args.push("--internet");
     }
     if let Some(name) = a.get("name") {
@@ -1010,6 +1031,36 @@ mod tests {
             "review", "export", "reset", "remove", "leave", "amend", "watch",
         ] {
             assert!(!names.iter().any(|n| n.contains(absent)), "{absent}");
+        }
+    }
+
+    #[test]
+    fn joining_takes_a_peer_id_or_an_address_and_never_a_path() {
+        let key = ph_protocol::SigningKey::from_bytes(&[7; 32]);
+        let peer = ph_network::peer_id_from_device_key(&ph_core::DeviceKey::from_signing_key(&key))
+            .to_string();
+        assert_eq!(member_of(&peer), Some(Member::PeerId));
+        assert_eq!(member_of(&format!("/p2p/{peer}")), Some(Member::PeerId));
+        let address = "/ip4/203.0.113.5/udp/4001/quic-v1";
+        assert_eq!(member_of(address), Some(Member::Address));
+        assert_eq!(
+            member_of(&format!("{address}/p2p/{peer}")),
+            Some(Member::Address)
+        );
+        // A path is not an address because it begins with a slash, and a long word is
+        // not a peer id because it is long.
+        let word = "a".repeat(40);
+        for not_one in [
+            "/tmp/xfer/4.jsonl",
+            "/etc/hosts",
+            "/",
+            "/home/alice/project/invite.jsonl",
+            "records.jsonl",
+            "../invite.jsonl",
+            "invite",
+            word.as_str(),
+        ] {
+            assert_eq!(member_of(not_one), None, "{not_one}");
         }
     }
 

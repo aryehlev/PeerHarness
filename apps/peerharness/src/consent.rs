@@ -2,6 +2,8 @@
 //!
 //! `--yes` is the human's explicit scripting flag. Without a terminal and without
 //! `--yes` a command refuses (exit 3). Consent is never inferred from anything else.
+//! That refusal names the flag as the person's own, for a script they wrote: an agent
+//! that no variable marks reads the message too, and is told to stop and ask.
 //!
 //! Consent steps are never answered from inside a coding agent's session
 //! ([`in_agent_session`]). An agent may write a rule down for its user to review
@@ -195,6 +197,19 @@ fn ask_in_window(preview: &str, what: &str, window: Option<&dyn Ask>) -> Result<
     }
 }
 
+/// The refusal when a consent step has no terminal to ask on and no `--yes`.
+///
+/// Whoever reads it may be a coding agent whose shell sets neither variable of
+/// [`AGENT_SESSION_ENV`], so it is not worded as an instruction to pass the flag: it
+/// says whose decision this is, and tells an agent to stop.
+fn no_terminal(what: &str) -> anyhow::Error {
+    refused(format!(
+        "{what} needs your confirmation, and no terminal is attached. It is the owner's \
+         decision: a person runs this command in their own terminal, or passes --yes in a \
+         script they wrote themselves. A coding agent stops here and asks the person."
+    ))
+}
+
 fn confirm_in(out: &Output, preview: &str, yes: bool, what: &str, agent: bool) -> Result<()> {
     if agent {
         return Err(agent_refusal(what));
@@ -206,10 +221,7 @@ fn confirm_in(out: &Output, preview: &str, yes: bool, what: &str, agent: bool) -
         return Ok(());
     }
     if !interactive() {
-        return Err(refused(format!(
-            "{what} needs your confirmation, but no terminal is attached: review the preview \
-             above and re-run with --yes"
-        )));
+        return Err(no_terminal(what));
     }
     let answer = prompt_line("Proceed? [y/N] ")?;
     if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
@@ -259,6 +271,24 @@ mod tests {
         assert!(require_accept_risk(true, true).is_ok());
         let e = require_accept_risk(true, false).unwrap_err();
         assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+    }
+
+    #[test]
+    fn without_a_terminal_the_refusal_tells_nobody_to_pass_yes() {
+        let e = no_terminal("the ballot");
+        assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+        let said = e.to_string();
+        assert!(
+            said.starts_with("the ballot needs your confirmation, and no terminal is attached.")
+        );
+        // Whose decision it is, and what an agent that reads this does.
+        assert!(said.contains("the owner's decision"));
+        assert!(said.contains("a person runs this command in their own terminal"));
+        assert!(said.ends_with("A coding agent stops here and asks the person."));
+        // The flag is named as the person's, in a script of theirs: never as the next
+        // thing to try.
+        assert!(said.contains("passes --yes in a script they wrote themselves"));
+        assert!(!said.contains("re-run") && !said.contains("review the preview"));
     }
 
     #[test]

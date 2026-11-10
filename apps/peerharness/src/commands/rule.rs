@@ -1,5 +1,10 @@
 //! `peerharness rule`: the rules in force, the owner's choices about them, and
 //! proposing a repeal (architecture sections 10.4, 10.7 and 10.9).
+//!
+//! The two choices are not alike. Opting out is immediate and asks nobody: an opt-out
+//! never waits for anyone, in a coding agent's session either. Opting back in puts a
+//! rule's text back into the owner's agent, so it is a consent step in the owner's own
+//! terminal: they are shown that text and where it goes, and a session is refused.
 
 use anyhow::Result;
 use ph_protocol::Stance;
@@ -40,7 +45,7 @@ pub fn run(ctx: &Ctx, command: RuleCommand) -> Result<Report> {
                 // Checked before anything changes, so a typo announces nothing.
                 rule_in_force(&node, &circle, &name)?;
             }
-            let report = opt(&node, &circle, &name, true)?;
+            let report = opt_out(&node, &circle, &name)?;
             if announce {
                 let said = Stance::OptedOut;
                 return put_on_record(
@@ -62,11 +67,15 @@ pub fn run(ctx: &Ctx, command: RuleCommand) -> Result<Report> {
             announce,
             yes,
         } => {
+            // Following a rule again puts its text back into the owner's agent. That is
+            // a consent step like installing it, and it has no window: a session is
+            // refused before anything is read.
+            crate::consent::human_only("following a rule again")?;
             let circle = find_circle(&node, Some(&circle))?;
             if announce {
                 rule_in_force(&node, &circle, &name)?;
             }
-            let report = opt(&node, &circle, &name, false)?;
+            let report = opt_in(ctx, &node, &circle, &name, yes)?;
             if announce {
                 return put_on_record(
                     ctx,
@@ -210,49 +219,150 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
     Ok(Report::new(json!({ "rules": rows }), t.finish()))
 }
 
-/// Opts out of (`out == true`) or back into the rule named `name`, then brings the
-/// agent's skills directory in line. Only this machine changes.
-pub fn opt(node: &Node, circle: &CircleRow, name: &str, out: bool) -> Result<Report> {
+/// Opts out of the rule named `name`, then brings the agent's skills directory in line.
+/// Only this machine changes, and nobody is asked: an opt-out never waits for anyone.
+pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
     if !ph_core::is_valid_skill_name(name) {
         return Err(usage("that is not a rule (skill) name"));
     }
     let id = &circle.circle_id;
-    if out {
-        node.store.set_rule_opt_out(id, name, node.now())?;
-    } else {
-        node.store.clear_rule_opt_out(id, name)?;
-    }
+    node.store.set_rule_opt_out(id, name, node.now())?;
     let settled = governance::settle(node, circle, &governance::user_installer()?, &[])?;
     let mut t = Text::new();
-    if out {
-        t.line(format!(
-            "Opted out of {name} in {}. Only this machine changes; the rule stays in force for the circle.",
-            safe(&circle.name)
-        ));
-        if settled.applied.removed.iter().any(|s| s == name) {
-            t.line("  removed it from your agent's skills");
-        }
-        t.line(format!(
-            "  Nobody else is told. To put it on the circle's record: \
-             `peerharness rule opt-out {name} --circle {} --announce`.",
-            circle.name
-        ));
-    } else {
-        t.line(format!("Following {name} again."));
-        if settled.applied.installed.iter().any(|s| s == name) {
-            t.line("  installed it for your agent");
-        }
-        for (skill, why) in &settled.applied.asking {
-            if skill == name {
-                t.line(format!("  it waits for your confirmation ({why})"));
+    t.line(format!(
+        "Opted out of {name} in {}. Only this machine changes; the rule stays in force for the circle.",
+        safe(&circle.name)
+    ));
+    if settled.applied.removed.iter().any(|s| s == name) {
+        t.line("  removed it from your agent's skills");
+    }
+    t.line(format!(
+        "  Nobody else is told. To put it on the circle's record: \
+         `peerharness rule opt-out {name} --circle {} --announce`.",
+        circle.name
+    ));
+    Ok(Report::new(
+        json!({
+            "circle": circle.name,
+            "skill_name": name,
+            "opted_out": true,
+            "installed": settled.applied.installed,
+            "removed": settled.applied.removed,
+        }),
+        t.finish(),
+    ))
+}
+
+/// Follows the rule named `name` again after an opt-out: the owner is shown the rule's
+/// exact text and where it goes, and it is installed only if they confirm. The step is
+/// the owner's and is taken in their terminal (`run` refuses it inside an agent's
+/// session before this is reached, and `confirm` would again).
+///
+/// The confirmation is the one installing the rule needs (`proposal adopt` asks the
+/// same), so the rule is installed in either mode. When no rule of that name binds the
+/// owner now there is no text to show: the preview says that only the opt-out goes, and
+/// nothing is installed.
+fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> Result<Report> {
+    if !ph_core::is_valid_skill_name(name) {
+        return Err(usage("that is not a rule (skill) name"));
+    }
+    let id = &circle.circle_id;
+    let (charter, rules, _) = governance::rule_set(&node.store, id)?;
+    let left = node.store.circle_left_at(id)?.is_some();
+    let rule = rules.get(name).filter(|r| {
+        !left
+            && charter
+                .content
+                .voter(
+                    &node.device_key(),
+                    &ph_protocol::Electorate::Scope(r.scope()),
+                )
+                .is_some()
+    });
+    let installer = governance::user_installer()?;
+    let again = format!(
+        "You can opt out again at any time: `peerharness rule opt-out {name} --circle {}`.",
+        circle.name
+    );
+    let preview = match rule {
+        Some(rule) => {
+            // Told before anything is asked: a held rule is not installed by a yes.
+            governance::refuse_held(node, circle, rule)?;
+            let bundle = crate::library::bundle_store(&node.home)
+                .get(&rule.bundle_digest())
+                .map_err(|_| {
+                    refused(
+                        "this node does not have the rule's text yet, so you cannot have read \
+                         what you would follow. Import the circle's events or sync first.",
+                    )
+                })?;
+            let target = governance::rule_target(&node.store, id, &installer, rule.scope())?;
+            let dir = target
+                .installer
+                .skill_dir(name)
+                .map_err(|e| anyhow::anyhow!("cannot locate the skill directory: {e}"))?;
+            let mut preview = format!(
+                "This follows the rule {name} of {circle} again. Your opt-out is removed and \
+                 the rule is installed for your agent at {dir}; your agent reads it from its \
+                 next session. The rule, exactly as the circle passed it:\n\n{md}\n",
+                circle = safe(&circle.name),
+                dir = dir.display(),
+                md = safe(bundle.skill_md()).trim_end(),
+            );
+            crate::commands::proposal::findings_preview(&mut preview, &bundle);
+            if !preview.ends_with('\n') {
+                preview.push('\n');
             }
+            preview.push_str(&again);
+            preview
         }
+        None => format!(
+            "No rule named {name} binds you in {circle} now, so nothing is installed. This \
+             removes your opt-out: a rule of that name that the circle passes later is \
+             treated like its other rules (your mode there is {mode}).\n{again}",
+            circle = safe(&circle.name),
+            mode = circle.adoption_mode,
+        ),
+    };
+    crate::consent::confirm(&ctx.out, &preview, yes, "following the rule again")?;
+
+    node.store.clear_rule_opt_out(id, name)?;
+    // The owner has read the text and said yes: that is the confirmation an install
+    // needs, for this rule and no other.
+    let confirmed: Vec<String> = rule
+        .map(|r| r.skill_name().to_owned())
+        .into_iter()
+        .collect();
+    let settled = governance::settle(node, circle, &installer, &confirmed)?;
+    let mut t = Text::new();
+    t.line(format!("Following {name} again."));
+    if settled.applied.installed.iter().any(|s| s == name) {
+        t.line("  installed it for your agent");
+    }
+    for (skill, why) in &settled.applied.asking {
+        if skill == name {
+            t.line(format!("  it waits for your confirmation ({why})"));
+        }
+    }
+    for (skill, why) in &settled.applied.refused {
+        if skill == name {
+            t.line(format!("  it cannot be installed ({why})"));
+        }
+    }
+    if settled.applied.conflicts.iter().any(|s| s == name) {
+        t.line(
+            "  it was not installed: a skill of that name that PeerHarness does not manage \
+             is in the way",
+        );
+    }
+    for held in settled.applied.held.iter().filter(|h| h.name == name) {
+        t.line(format!("  {}", held.line(&circle.name)));
     }
     Ok(Report::new(
         json!({
             "circle": circle.name,
             "skill_name": name,
-            "opted_out": out,
+            "opted_out": false,
             "installed": settled.applied.installed,
             "removed": settled.applied.removed,
         }),

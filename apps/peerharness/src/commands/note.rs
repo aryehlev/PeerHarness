@@ -5,6 +5,11 @@
 //! (`--from-agent`). Either way the result is a **candidate** in the inbox and nothing
 //! more: nothing is installed, shared or approved here, and no step that needs consent is
 //! reachable from this command. `--from-agent` is a label for the inbox, not a privilege.
+//!
+//! The label does not depend on the flag alone. A note written inside a coding agent's
+//! session (`consent::in_agent_session`) is an agent's note whatever was passed: it is
+//! labelled as reported by the agent and counts against the cap on waiting agent notes.
+//! Otherwise an agent could present its text as the owner's own and bury the inbox.
 
 use anyhow::Result;
 use ph_core::CandidateStatus;
@@ -32,7 +37,9 @@ fn current_repo_key() -> String {
 pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
     let node = ctx.open_node()?;
     let now = node.now();
-    let origin = if a.from_agent {
+    // Who wrote it is decided by where the command runs, not by what it was told.
+    let from_agent = a.from_agent || crate::consent::in_agent_session();
+    let origin = if from_agent {
         NoteOrigin::AgentReported
     } else {
         NoteOrigin::Written
@@ -62,7 +69,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
         .candidate_by_concept(&cand.concept_key, &cand.repo_key)?
     {
         let mut t = Text::new();
-        if a.from_agent {
+        if from_agent {
             t.line("Already noted. Nothing else to do.");
         } else {
             t.line(format!(
@@ -84,7 +91,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
         ));
     }
 
-    if a.from_agent {
+    if from_agent {
         let pending = node
             .store
             .candidates(&[CandidateStatus::Detected, CandidateStatus::LocalReview])?
@@ -104,7 +111,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
 
     let (id, created) = node.store.insert_or_merge_candidate(&cand, now)?;
     let mut t = Text::new();
-    if a.from_agent {
+    if from_agent {
         // Read by the agent: say what happened and where its part ends.
         t.line(match node.config.agent.asked() {
             crate::config::Asked::Nothing => {

@@ -795,8 +795,8 @@ pub enum RuleCommand {
         /// Also tell the circle that you follow the rule again.
         #[arg(long)]
         announce: bool,
-        /// With --announce: skip the confirmation prompt (after reviewing the preview).
-        #[arg(long, requires = "announce")]
+        /// Skip the confirmation prompts (after reviewing the previews).
+        #[arg(long)]
         yes: bool,
     },
     /// Propose repealing a rule in force. The members who adopted it vote on it.

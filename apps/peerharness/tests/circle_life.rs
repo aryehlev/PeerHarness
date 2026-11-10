@@ -660,7 +660,7 @@ fn an_opt_out_can_be_put_on_the_circles_record() {
         alice.run(&["rule", "list"])["rules"][0]["on_record"],
         serde_json::json!([])
     );
-    carol.run(&["rule", "opt-in", &skill, "--circle", "team"]);
+    carol.run(&["rule", "opt-in", &skill, "--circle", "team", "--yes"]);
     assert!(carol.has_skill(&skill));
 
     // An agent can never speak for its user. The opt-out itself still happens: no
@@ -872,7 +872,7 @@ fn the_rules_of_a_scope_can_live_in_one_project() {
     // An opt-out, and opting back in, act on the copy in the project.
     bob.run(&["rule", "opt-out", &web, "--circle", "team"]);
     assert!(!in_project(&web).exists() && !bob.has_skill(&web));
-    bob.run(&["rule", "opt-in", &web, "--circle", "team"]);
+    bob.run(&["rule", "opt-in", &web, "--circle", "team", "--yes"]);
     assert!(in_project(&web).is_file() && !bob.has_skill(&web));
 
     // A repeal by vote removes it from the project too.

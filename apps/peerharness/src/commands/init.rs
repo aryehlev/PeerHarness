@@ -1,5 +1,10 @@
 //! `peerharness init`: device key, database and config. Idempotent: an existing identity
 //! is never regenerated.
+//!
+//! A coding agent may run a plain `init` for its user: the keys go to the OS keychain
+//! or an encrypted file. The plaintext keystore (`insecure-dev`) is refused inside an
+//! agent's session, whether a flag or an existing config file asks for it: its warning
+//! has to reach a person, and there it would reach the agent.
 
 use anyhow::{Context, Result};
 use ph_identity::{DeviceIdentity, KeystoreBackend, OsKeyStore};
@@ -9,10 +14,14 @@ use serde_json::json;
 use super::Ctx;
 use crate::cli::{InitArgs, KdfProfileArg, KeystoreArg};
 use crate::config::{Config, KdfProfile};
+use crate::consent::human_only;
 use crate::error::usage;
 use crate::home::{mode_of, set_mode};
 use crate::node::open_configured_keystore;
 use crate::output::{Report, Text};
+
+/// What a session is refused: named for `consent::human_only`'s message.
+const PLAINTEXT_KEYS: &str = "storing this node's private keys in plaintext (insecure-dev)";
 
 pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     let home = &ctx.home;
@@ -36,6 +45,10 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     let requested = requested.or(a
         .insecure_dev_keystore
         .then_some(KeystoreBackend::InsecureDev));
+    if requested == Some(KeystoreBackend::InsecureDev) {
+        // Before anything is created.
+        human_only(PLAINTEXT_KEYS)?;
+    }
     let kdf = a.kdf_profile.map(|k| match k {
         KdfProfileArg::Default => KdfProfile::Default,
         KdfProfileArg::FastInsecureTest => KdfProfile::FastInsecureTest,
@@ -100,6 +113,8 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
         })?;
     }
     if backend == KeystoreBackend::InsecureDev {
+        // A config file that names the plaintext keystore asks for it as the flag does.
+        human_only(PLAINTEXT_KEYS)?;
         ctx.out
             .warn("insecure-dev keystore: private keys are stored in PLAINTEXT (development only)");
     }

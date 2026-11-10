@@ -156,7 +156,7 @@ pub(crate) fn key_before_window(node: &Node, what: &str, in_window: bool) -> Res
 }
 
 /// The scanner's findings as preview lines, and whether one of them is high-risk.
-fn findings_preview(preview: &mut String, bundle: &ph_skills::Bundle) -> bool {
+pub(crate) fn findings_preview(preview: &mut String, bundle: &ph_skills::Bundle) -> bool {
     let findings = bundle.scan();
     for f in &findings {
         preview.push_str(&format!(
@@ -849,7 +849,7 @@ fn refuse(ctx: &Ctx, arg: &str) -> Result<Report> {
     let name = p
         .skill_name()
         .ok_or_else(|| usage("only an adopt proposal has a rule to opt out of"))?;
-    crate::commands::rule::opt(&node, &circle, name, true)
+    crate::commands::rule::opt_out(&node, &circle, name)
 }
 
 #[cfg(test)]

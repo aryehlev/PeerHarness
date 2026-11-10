@@ -352,7 +352,7 @@ fn three_nodes_admit_by_vote_and_pass_a_rule_two_to_one() {
     }
     assert!(!carol.has_skill(), "an opt-out survives later imports");
     // And she can change her mind.
-    carol.run(&["rule", "opt-in", SKILL, "--circle", "team"]);
+    carol.run(&["rule", "opt-in", SKILL, "--circle", "team", "--yes"]);
     assert!(carol.has_skill());
 
     // --- Removing a member takes a vote too. The founder cannot do it alone.
