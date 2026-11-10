@@ -254,3 +254,70 @@ fn rule_installs_remember_what_a_vote_put_on_this_machine() {
     let export = s.export_owned_json().unwrap();
     assert_eq!(export["rule_installs"][0]["skill_name"], "avoid-pip");
 }
+
+#[test]
+fn earlier_charters_are_stored_as_history_only_through_the_hash_link() {
+    let c1 = charter();
+    let c2 = admit(&c1, "dave", 21);
+    let c3 = admit(&c2, "erin", 22);
+    let s = store_with_circle();
+    // Nothing to link to yet.
+    assert!(matches!(
+        s.insert_charter_history(&c1, now()),
+        Err(StoreError::MissingReference)
+    ));
+    s.insert_charter(&c3, now()).unwrap();
+    assert_eq!(s.oldest_charter(&circle()).unwrap().unwrap().seq, 3);
+
+    // Charter 1 is not the predecessor charter 3 names: it has to wait for charter 2.
+    assert!(matches!(
+        s.insert_charter_history(&c1, now()),
+        Err(StoreError::Mismatch { .. })
+    ));
+    // A different charter with the right number is not the one charter 3 names either.
+    let other2 = admit(&c1, "mallory", 66);
+    assert_eq!(other2.seq, 2);
+    assert!(matches!(
+        s.insert_charter_history(&other2, now()),
+        Err(StoreError::Mismatch { .. })
+    ));
+    // Nor is a later charter history.
+    assert!(matches!(
+        s.insert_charter_history(&admit(&c3, "frank", 23), now()),
+        Err(StoreError::Mismatch { .. })
+    ));
+
+    assert_eq!(
+        s.insert_charter_history(&c2, now()).unwrap(),
+        InsertOutcome::Inserted
+    );
+    assert_eq!(
+        s.insert_charter_history(&c2, now()).unwrap(),
+        InsertOutcome::Duplicate
+    );
+    assert_eq!(
+        s.insert_charter_history(&c1, now()).unwrap(),
+        InsertOutcome::Inserted
+    );
+    // History never becomes the current charter, and the chain still grows forward.
+    assert_eq!(s.current_charter(&circle()).unwrap().unwrap().seq, 3);
+    assert_eq!(s.oldest_charter(&circle()).unwrap().unwrap().seq, 1);
+    let seqs: Vec<u64> = s
+        .charters(&circle())
+        .unwrap()
+        .iter()
+        .map(|c| c.seq)
+        .collect();
+    assert_eq!(seqs, [1, 2, 3]);
+    for c in [&c1, &c2] {
+        assert_eq!(
+            s.charter_by_digest(&circle(), &c.digest().unwrap())
+                .unwrap()
+                .unwrap()
+                .seq,
+            c.seq
+        );
+    }
+    s.insert_charter(&admit(&c3, "frank", 23), now()).unwrap();
+    assert_eq!(s.current_charter(&circle()).unwrap().unwrap().seq, 4);
+}

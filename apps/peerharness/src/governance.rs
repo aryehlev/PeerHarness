@@ -267,7 +267,25 @@ fn ingest_charter(
         // A charter this node already accepted: keep the event for peers that sync.
         return Ok(stored(store.insert_event(verified, origin_peer, now)?));
     }
-    if next.seq <= current.seq {
+    if next.seq < current.seq {
+        // An older charter can only be history. It is accepted when the chain this node
+        // already holds names it by hash (`Store::insert_charter_history`); until the
+        // charters in between have arrived it waits.
+        let linked = store.oldest_charter(&circle)?.is_some_and(|oldest| {
+            next.digest().ok() == oldest.previous && next.seq.checked_add(1) == Some(oldest.seq)
+        });
+        if !linked {
+            return Ok(Ingest::Deferred("charter_history_not_linked"));
+        }
+        let outcome = store.transaction(|s| {
+            s.insert_charter_history(next, now)?;
+            s.insert_event(verified, origin_peer, now)
+        })?;
+        tracing::info!(circle = %circle, seq = next.seq, "charter stored as history");
+        return Ok(stored(outcome));
+    }
+    if next.seq == current.seq {
+        // A different charter with the current number: not a successor of anything.
         return Ok(Ingest::Rejected("charter_not_newer"));
     }
     let Some(justification) = next.justification else {
@@ -359,6 +377,19 @@ pub fn found_circle(
         s.insert_charter(&charter, now)?;
         Ok(())
     })?;
+    // Publish it as an event too. Members who join later start from a later charter;
+    // this lets them hold the founding one as history and with it the votes cast under
+    // it (`Store::insert_charter_history`).
+    submit(
+        store,
+        authority.signing_key(),
+        &authority.circle_id(),
+        &Scope::all(),
+        EventBody::Charter(CharterBody {
+            charter: charter.clone(),
+        }),
+        now,
+    )?;
     Ok(charter)
 }
 

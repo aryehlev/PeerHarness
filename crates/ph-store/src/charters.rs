@@ -102,6 +102,82 @@ impl Store {
         Ok(InsertOutcome::Inserted)
     }
 
+    /// Stores a charter that is **older** than every charter this node holds for the
+    /// circle, as history.
+    ///
+    /// A node that joined late starts at the charter in its invitation and cannot check
+    /// the votes that came before it. It can still hold the earlier charters, because
+    /// every charter names its predecessor by hash: `charter` is accepted here only if
+    /// the oldest charter already stored has `previous` equal to its digest and a `seq`
+    /// one greater. The hash link authenticates it, and the root signature and issuer are
+    /// checked as for any charter. History never becomes the current charter and gives
+    /// nobody a vote; it lets the node verify and keep the proposals, ballots and results
+    /// that name it, which is how a rule carried from before the node joined arrives.
+    pub fn insert_charter_history(
+        &self,
+        charter: &Charter,
+        accepted_at: Timestamp,
+    ) -> Result<InsertOutcome> {
+        verify_charter_signature(charter)?;
+        let digest = charter.digest()?;
+        let json = charter.to_canonical_json()?;
+        let tx = self.tx()?;
+        let circle = self
+            .circle(&charter.circle_id)?
+            .ok_or(StoreError::MissingReference)?;
+        if circle.root_key != charter.issuer_key {
+            return Err(StoreError::Mismatch {
+                what: "charter issuer and circle root key",
+            });
+        }
+        if self
+            .charter_by_digest(&charter.circle_id, &digest)?
+            .is_some()
+        {
+            return Ok(InsertOutcome::Duplicate);
+        }
+        let oldest = self
+            .oldest_charter(&charter.circle_id)?
+            .ok_or(StoreError::MissingReference)?;
+        let precedes =
+            oldest.previous == Some(digest) && charter.seq.checked_add(1) == Some(oldest.seq);
+        if !precedes {
+            return Err(StoreError::Mismatch {
+                what: "charter and the oldest accepted charter",
+            });
+        }
+        self.conn.execute(
+            "INSERT INTO charters (circle_id, seq, digest, charter_json, accepted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                charter.circle_id.to_string(),
+                i64::try_from(charter.seq)
+                    .map_err(|_| StoreError::invalid("charter seq", "out of range"))?,
+                digest.to_string(),
+                json,
+                accepted_at.unix_seconds()
+            ],
+        )?;
+        tx.commit()?;
+        tracing::debug!(circle = %charter.circle_id, seq = charter.seq, "charter history stored");
+        Ok(InsertOutcome::Inserted)
+    }
+
+    /// The oldest charter this node holds for `circle` (its trust anchor, or history
+    /// stored behind it).
+    pub fn oldest_charter(&self, circle: &CircleId) -> Result<Option<Charter>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT charter_json FROM charters WHERE circle_id = ?1
+                 ORDER BY seq ASC LIMIT 1",
+                [circle.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        json.map(parse_charter).transpose()
+    }
+
     /// The circle's current charter: the accepted one with the greatest `seq`.
     pub fn current_charter(&self, circle: &CircleId) -> Result<Option<Charter>> {
         let json: Option<String> = self

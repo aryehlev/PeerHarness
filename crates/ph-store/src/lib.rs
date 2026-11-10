@@ -36,7 +36,7 @@
 //! |---|---|
 //! | `identity_metadata` | [`Store::identity`], [`Store::set_identity`] |
 //! | `circles` | [`Store::insert_circle`], [`Store::circle`], [`Store::circle_by_name`], [`Store::circles`], [`Store::set_circle_adoption`] |
-//! | `charters` | [`Store::insert_charter`], [`Store::current_charter`], [`Store::charter_by_digest`], [`Store::charters`] |
+//! | `charters` | [`Store::insert_charter`], [`Store::insert_charter_history`], [`Store::current_charter`], [`Store::oldest_charter`], [`Store::charter_by_digest`], [`Store::charters`] |
 //! | `rule_optouts` | [`Store::set_rule_opt_out`], [`Store::clear_rule_opt_out`], [`Store::is_rule_opted_out`], [`Store::rule_opt_outs`] |
 //! | `rule_installs` | [`Store::record_rule_install`], [`Store::clear_rule_install`], [`Store::rule_installs`] |
 //! | `memberships` | [`Store::upsert_membership_proof`], [`Store::upsert_membership`], [`Store::membership`], [`Store::memberships_for_circle`], [`Store::memberships_for_subject`], [`Store::self_membership`], [`Store::self_membership_proofs`], [`Store::all_membership_proofs`] |

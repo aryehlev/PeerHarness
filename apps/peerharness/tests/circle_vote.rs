@@ -405,3 +405,73 @@ fn an_outsider_gets_nothing_from_a_circles_events() {
         serde_json::json!([])
     );
 }
+
+#[test]
+fn a_member_who_joins_later_gets_the_rules_passed_before_they_joined() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    let bob = Node::new(root, "bob");
+
+    // Alice founds the circle and passes a rule on her own, under charter 1.
+    let created = alice.run(&["circle", "create", "team"]);
+    let fingerprint = created["root_fingerprint"].as_str().unwrap().to_owned();
+    alice.run(&["observe", "demo"]);
+    let candidate = alice.run(&["inbox"])["candidates"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rule = alice.run(&[
+        "proposal", "create", &candidate, "--circle", "team", "--yes",
+    ])["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        alice.run(&["proposal", "vote", &rule, "approve", "--yes"])["passed"],
+        true
+    );
+
+    // Bob is admitted afterwards. Charter 2 carries the rule; it is his trust anchor.
+    let invite = root.join("bob-invite.jsonl");
+    let invite_path = invite.to_str().unwrap();
+    alice.run(&[
+        "circle",
+        "invite",
+        &bob.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+        "--out",
+        invite_path,
+    ]);
+    let joined = bob.run(&[
+        "circle",
+        "join",
+        invite_path,
+        "--expect-fingerprint",
+        &fingerprint,
+        "--yes",
+        "--name",
+        "team",
+    ]);
+    assert_eq!(joined["charter_seq"], 2);
+
+    // He holds charter 1 as history (it is the one his anchor names by hash), so the
+    // proposal and the ballot from before his time verify, and the carried rule is in
+    // force and installed on his machine too.
+    let again = bob.run(&["events", "import", invite_path]);
+    assert_eq!(again["deferred"], 0, "nothing is left unplaced: {again}");
+    assert_eq!(again["rejected"], 0);
+    let rules = bob.run(&["rule", "list"]);
+    assert_eq!(rules["rules"][0]["skill_name"], SKILL);
+    assert_eq!(rules["rules"][0]["binds_you"], true);
+    assert!(bob.has_skill());
+    let shown = bob.run(&["proposal", "show", &rule]);
+    assert_eq!(shown["standing"], "carried");
+    assert_eq!(names(&shown["approvals"]), ["alice"]);
+    // History gives nobody a vote: the current charter is still the one he joined at.
+    assert_eq!(bob.run(&["circle", "members"])["charter"]["seq"], 2);
+}
