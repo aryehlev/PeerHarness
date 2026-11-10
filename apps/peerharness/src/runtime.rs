@@ -990,3 +990,63 @@ pub async fn sync_known(run: &Running) -> Result<Vec<(String, Result<SyncReport>
     }
     Ok(out)
 }
+
+/// How long after the first member was heard a LAN sync keeps listening for more.
+const LAN_SETTLE: Duration = Duration::from_millis(700);
+
+/// Syncs with the members of this node's circles that announced themselves on the local
+/// network (the transport must have been started with `lan_discovery`). Listens for at
+/// most `wait`, then syncs with each member found, skipping the peer ids in `skip`.
+///
+/// An announcement is an unauthenticated hint. This node dials only device keys that
+/// are on a roll it holds, at the announced address with that key's peer id, so the
+/// handshake must prove the key; whoever answers is then judged by the roll like any
+/// other peer. Devices on no roll of this node are never dialed, so nothing is sent to
+/// them, not even a greeting.
+pub async fn sync_lan(
+    run: &Running,
+    wait: Duration,
+    skip: &HashSet<String>,
+) -> Result<Vec<(String, Result<SyncReport>)>> {
+    let deadline = tokio::time::Instant::now() + wait;
+    let mut members: Vec<(String, Vec<Multiaddr>)> = Vec::new();
+    let mut first_seen: Option<tokio::time::Instant> = None;
+    loop {
+        let heard = run
+            .net
+            .discovered()
+            .await
+            .map_err(|e| anyhow!("cannot read the discovered peers: {e}"))?;
+        for (peer, addrs) in heard {
+            let id = peer.to_string();
+            if skip.contains(&id) || members.iter().any(|(m, _)| *m == id) {
+                continue;
+            }
+            let Some(key) = ph_network::device_key_from_peer_id(&peer) else {
+                continue;
+            };
+            if key == run.device_key || circles_with(run, key).await?.is_empty() {
+                continue;
+            }
+            members.push((id, addrs));
+            first_seen.get_or_insert_with(tokio::time::Instant::now);
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline || first_seen.is_some_and(|t| now >= t + LAN_SETTLE) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let mut out = Vec::with_capacity(members.len());
+    for (id, addrs) in members {
+        let mut outcome = Err(anyhow!("it announced no usable address"));
+        for addr in &addrs {
+            outcome = sync(run, addr).await;
+            if outcome.is_ok() {
+                break;
+            }
+        }
+        out.push((id, outcome));
+    }
+    Ok(out)
+}

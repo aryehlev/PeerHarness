@@ -161,8 +161,19 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
     // Held until this function returns; the operating system releases it if we crash.
     let _lock = DaemonLock::acquire(&home)?
         .ok_or_else(|| usage("a daemon is already running for this home"))?;
+    let lan = args.lan;
+    if lan && listen.iter().all(is_loopback) {
+        out.warn(
+            "--lan: this daemon only listens on loopback, so it has no address to announce. \
+             Listen on a network address, for example --listen /ip4/0.0.0.0/udp/4001/quic-v1.",
+        );
+    }
     tokio_runtime()?.block_on(async move {
-        let run = Running::start(home.clone(), NetworkConfig::listening_on(listen))?;
+        let config = NetworkConfig {
+            lan_discovery: lan,
+            ..NetworkConfig::listening_on(listen)
+        };
+        let run = Running::start(home.clone(), config)?;
         let addrs = run.dialable_addrs().await?;
         DaemonInfo {
             pid: std::process::id(),
@@ -177,9 +188,20 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
         out.note(
             "Only devices on the roll of a circle this node holds are answered. Ctrl-C stops it.",
         );
+        if lan {
+            out.note(
+                "Announcing this device's public key and port on the local network (mDNS). \
+                 Members find it with `peerharness sync --lan`.",
+            );
+        }
         if let Some(secs) = args.sync_every {
             out.note(format!(
-                "Syncing with the peers this node knows every {secs} seconds."
+                "Syncing with the peers this node knows{} every {secs} seconds.",
+                if lan {
+                    ", and members heard on the local network,"
+                } else {
+                    ""
+                }
             ));
         }
         let stop = stop_signal();
@@ -201,7 +223,21 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
                 _ = &mut stop => break,
                 _ = tick => {
                     // Failures are expected (a peer that is off) and only counted.
-                    if let Ok(results) = runtime::sync_known(&run).await {
+                    let mut results = runtime::sync_known(&run).await.unwrap_or_default();
+                    if lan {
+                        // Members heard on the local network that were not just synced.
+                        let done = results
+                            .iter()
+                            .filter(|(_, r)| r.is_ok())
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        results.extend(
+                            runtime::sync_lan(&run, Duration::ZERO, &done)
+                                .await
+                                .unwrap_or_default(),
+                        );
+                    }
+                    {
                         for (_, r) in results.iter().filter_map(|(id, r)| Some((id, r.as_ref().ok()?))) {
                             if r.received > 0 || r.sent > 0 || !r.changes.is_empty() || !r.removed_from.is_empty() {
                                 let mut t = Text::new();
@@ -249,8 +285,11 @@ pub fn connect(ctx: &Ctx, args: ConnectArgs) -> Result<Report> {
 }
 
 pub fn sync(ctx: &Ctx, args: SyncArgs) -> Result<Report> {
+    if args.lan {
+        return sync_many(ctx, Some(Duration::from_secs(u64::from(args.wait))));
+    }
     let Some(target) = args.peer_id else {
-        return sync_all(ctx);
+        return sync_many(ctx, None);
     };
     let addr = resolve_target(ctx, &target)?;
     let home = ctx.home.clone();
@@ -268,18 +307,43 @@ pub fn sync(ctx: &Ctx, args: SyncArgs) -> Result<Report> {
     })
 }
 
-/// `sync` without an argument: every peer whose address this node has stored.
-fn sync_all(ctx: &Ctx) -> Result<Report> {
+fn is_loopback(addr: &Multiaddr) -> bool {
+    addr.iter().any(|p| match p {
+        ph_network::libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_loopback(),
+        ph_network::libp2p::multiaddr::Protocol::Ip6(ip) => ip.is_loopback(),
+        _ => false,
+    })
+}
+
+/// `sync` without an address. With `lan`, the members of this node's circles that
+/// announce themselves on the local network within that time; without, every peer
+/// whose address this node has stored.
+fn sync_many(ctx: &Ctx, lan: Option<Duration>) -> Result<Report> {
     let home = ctx.home.clone();
     tokio_runtime()?.block_on(async move {
-        let run = Running::start(home, dial_only())?;
-        let results = runtime::sync_known(&run).await;
+        let config = NetworkConfig {
+            lan_discovery: lan.is_some(),
+            ..dial_only()
+        };
+        let run = Running::start(home, config)?;
+        let results = match lan {
+            Some(wait) => runtime::sync_lan(&run, wait, &Default::default()).await,
+            None => runtime::sync_known(&run).await,
+        };
         run.stop().await;
         let results = results?;
         if results.is_empty() {
-            return Err(usage(
-                "this node knows no peer yet: sync once with an address, `peerharness sync <multiaddr>`",
-            ));
+            return Err(usage(match lan {
+                Some(_) => {
+                    "no member of your circles announced itself on this network. A member's \
+                     node must run `peerharness daemon --lan` on a network address, and this \
+                     node must already hold a circle with it."
+                }
+                None => {
+                    "this node knows no peer yet: sync once with an address, \
+                     `peerharness sync <multiaddr>`, or on a shared network `peerharness sync --lan`"
+                }
+            }));
         }
         let mut t = Text::new();
         let mut synced = Vec::new();
@@ -300,7 +364,7 @@ fn sync_all(ctx: &Ctx) -> Result<Report> {
         }
         if synced.is_empty() {
             return Err(anyhow!(
-                "none of the {} known peer(s) could be synced with:\n{}",
+                "none of the {} peer(s) could be synced with:\n{}",
                 results.len(),
                 t.finish().trim_end()
             ));

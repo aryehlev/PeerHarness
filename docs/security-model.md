@@ -23,15 +23,15 @@ it can read them, so it must be given only to members.
 | asset | where it lives | why it matters |
 |---|---|---|
 | device private key | keystore: OS keychain (`os`), Argon2id + XChaCha20-Poly1305 encrypted file (`file`), or plaintext file (`insecure-dev`, explicit opt-in only) | whoever holds it *is* that member of every circle the device joined |
-| circle root private key | the founder's keystore only; never transmitted | whoever holds it issues access credentials and revocations and notarizes charter changes. It cannot change the roll or the voting rules without a passed vote (4.16) |
+| circle root private key | the founder's keystore only; never transmitted | whoever holds it can revoke any device and notarizes charter changes. It cannot change the roll or the voting rules without a passed vote, and a credential it signs gives nobody access or a voice (4.16) |
 | charter (voting rules and roll) | every member's `peerharness.db`, CHARTER events | decides who may vote and how many approvals pass a rule |
 | keystore passphrase | the user's head, a prompt, or `PEERHARNESS_PASSPHRASE` | unlocks the `file` keystore |
 | local observations | `peerharness.db` (SQLite, 0600) and the hook spool, local only, 14-day retention by default | redacted copies of the user's prompts to their coding agent |
 | candidates and skill drafts | `peerharness.db` | derived from observations; may reveal working habits |
-| circle metadata | `peerharness.db`, invite files | circle names, member handles and device keys, scopes, question text, skill titles, who voted how |
+| circle metadata | `peerharness.db`, exported event files and directories | circle names, member handles and device keys, scopes, question and answer text, skill titles, who voted how, who put an opt-out on record |
 | received and shared content | event log, bundle store | questions, answers, proposals, votes, skills |
 | installed skills and agent settings | `~/.claude/skills/`, `./.claude/skills/`, `~/.claude/settings.json` | they change what the coding agent does |
-| daemon control token | `daemon.json` (0600) while the daemon runs | lets a local process drive the daemon |
+| known peers and sync cursors | `peerharness.db` | which devices this node exchanges with, at which addresses, and how far each exchange got. A daemon with a sync interval dials these addresses unattended (4.26) |
 | export file | wherever `peerharness export --local --out` writes it | contains observation text and drafts |
 
 PeerHarness never stores private key bytes in SQLite. The SQLite database itself is
@@ -42,14 +42,17 @@ operating system's disk encryption.
 
 1. **Coding agent hook to PeerHarness.** Claude Code runs `peerharness hook <event>` and
    passes a JSON payload on stdin. The payload is untrusted input.
-2. **Local CLI to the local daemon.** The CLI talks to its own daemon over loopback TCP
-   (`127.0.0.1`), authenticated by a 256-bit token stored in `daemon.json` (0600).
-3. **Network to node.** Anyone who can reach the QUIC port can connect. Before proving
-   membership they are untrusted.
-4. **Circle member to node.** An authenticated member is trusted only within the roles
-   and scopes of its root-signed credential, re-checked on every request. For voting, a
-   device is trusted only as the member the charter's roll says it signs for, and only
-   in the electorates that member belongs to.
+2. **Local CLI and the local daemon.** They do not talk to each other: the daemon has
+   no control endpoint (4.18). Both open the same home directory, and a file lock allows
+   one daemon per home.
+3. **Network to node.** Anyone who can reach the QUIC port can connect. A peer whose
+   transport-authenticated device key is on no roll the node holds is untrusted and is
+   told nothing.
+4. **Circle member to node.** A peer whose device key is on the roll of the current
+   charter is trusted only within the scopes of its roll entry, re-checked on every
+   request. For voting, a device is trusted only as the member the charter's roll says
+   it signs for, and only in the electorates that member belongs to. A device that was
+   on an earlier roll is trusted with one thing: the record of its own removal (4.22).
 5. **Received content to human and agent.** Received questions, rationales and skills are
    untrusted text shown to a human and, once installed, read by an AI agent.
 6. **PeerHarness to an advisory provider.** Optional `claude -p`, `codex exec` or an
@@ -91,9 +94,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   on every request (`apps/peerharness/src/peer.rs`, `ph_governance::RollOracle`). Every
   other request gets `error{unauthorized}`, identical whether the circle exists or not.
   A syncing node sends nothing that names a circle to a peer it does not share that
-  circle with. Pushed events are taken only for circles the pusher is a member of and
-  must then pass signature, schema, time and authorship checks (`ph-protocol`,
-  `ph-governance::authorize_incoming`); who pushed an event gives it no standing.
+  circle with. The answer to `authenticate` names circles only to a device that is on
+  their roll, so a device on no roll that asks to join (4.21) gets the same
+  `unauthorized` and learns no circle id. Pushed events are taken only for circles the
+  pusher is a member of and must then pass signature, schema, time and authorship checks
+  (`ph-protocol`, `ph-governance::authorize_incoming`); who pushed an event gives it no
+  standing.
   Requests are strictly parsed with size and depth limits before any handler runs
   (`ph-network`). There is no discovery: no mDNS, DHT or gossip, so a node is not
   advertised.
@@ -108,16 +114,18 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   join a circle or impersonate a member.
 * **Mitigation.** The circle id is a hash of the root public key, and every credential
   must be signed by exactly that root key (`circle_id == derive(issuer_key)`). A
-  credential is active only with an acceptance signed by the subject device key. Proofs
-  presented on the wire are accepted only when the subject equals the device key bound to
-  the TLS-authenticated libp2p connection. Possessing an invite file or a credential is
-  useless without the subject's private device key. Joining shows the root fingerprint
-  and requires confirmation; scripted joins need `--expect-fingerprint`.
-  For access over the transport and for voting, the membership statement is the roll of
-  the charter, which changes only by a passed amendment. A credential, even a genuine
-  one signed by the root key, gives no transport access by itself (ADR-026).
+  credential is active only with an acceptance signed by the subject device key.
+  Possessing an invite file or a credential is useless without the subject's private
+  device key. The reference node goes further and decides nothing by credential: it
+  neither sends nor accepts proofs on the wire. For access over the transport, for
+  asking and answering questions, and for voting, the membership statement is the roll
+  of the charter, which changes only by a passed amendment. A credential, even a genuine
+  one signed by the root key, gives none of these (ADR-026, ADR-027). Joining, from a
+  file or from a member's node, shows the root fingerprint and requires confirmation;
+  scripted joins need `--expect-fingerprint`.
 * **Residual risk.** The human fingerprint check is the only link between a root key and
-  the real organization. A user who joins a circle from a forged invite without checking
+  the real organization. A user who joins a circle from a forged file, or from a hostile
+  node (4.21), without checking
   the fingerprint out of band joins the attacker's circle (this does not compromise the
   real circle, but the user may then share content with the attacker). Fingerprints are
   80 bits, enough for human comparison but not a cryptographic commitment.
@@ -154,18 +162,21 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   other wildcard). `fetch_events` returns a QUESTION, ANSWER or scoped decision event
   only when the requester has `read` on its scope; `fetch_bundle` serves a bundle only if
   a stored `adopt` PROPOSAL with that digest is readable by the requester; outgoing
-  pushes and the outbox are filtered the same way at send time. A member whose roll
-  entry does not cover a scope is not in that scope's electorate and cannot propose or
-  vote there. No vote, result or charter widens read access: the read rules never look
+  pushes are filtered the same way at send time. A sync cursor only selects where a
+  responder starts; it is not an authorization. A member whose roll entry does not cover
+  a scope is not in that scope's electorate and cannot propose, vote, ask, answer or
+  record a stance there. No vote, result or charter widens read access: the read rules never look
   at a ballot (`ph-governance::read`).
 * **Residual risk.** Control-plane events (MEMBERSHIP, REVOCATION, CHARTER) are readable
   by every active member regardless of scope, so every member learns every other
-  member's handle, device keys, roles, scopes and credential expiry, and who was revoked
-  and why (the revocation `reason`). Decision events with scope `*` (every amendment to
+  member's handle, device keys and scopes, and who was revoked and why (the revocation
+  `reason`). Decision events with scope `*` (every amendment to
   the charter, and every circle-wide rule) and their ballots are readable by every
   active member too, since everyone votes on them. Scopes partition content, not the
-  member list, and not circle-wide decisions. Read access itself is granted by
-  root-issued credentials, not by vote (4.16).
+  member list, and not circle-wide decisions. Read access follows the roll, which
+  changes only by vote; the root key cannot grant it (4.16). A file or directory of
+  exported events is not filtered by scope: it holds everything the exporting node has
+  for the circle.
 
 ### 4.5 Peer impersonation
 
@@ -183,9 +194,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Threat.** Malware on a member's machine, or a stolen laptop.
 * **Mitigation.** Private keys are stored in the OS keychain or in an Argon2id
   (64 MiB, 3 passes) plus XChaCha20-Poly1305 encrypted file with 0600 permissions; the
-  plaintext keystore requires an explicit flag and warns on every unlock. Short member
-  credentials (30 days by default) and revocation by the root limit how long a stolen key
-  stays useful.
+  plaintext keystore requires an explicit flag and warns on every unlock. The founder
+  can revoke a lost or stolen device at once (`circle revoke`, 4.16), which stops it
+  from syncing and from being counted on every node that learns of it, and the members
+  can vote to replace the device or remove the member.
 * **Residual risk.** **A compromised endpoint cannot be defended against.** Malware
   running as the user can read the database, the spool, the daemon token, an unlocked
   key in memory, `PEERHARNESS_PASSPHRASE` from the environment, and anything the agent
@@ -193,10 +205,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   or a weak passphrase gives the thief that member's identity, **including their vote**,
   until revocation reaches every peer: approvals signed with the stolen key count on
   each node until that node learns of the revocation. If the **founder's** device is
-  compromised, the attacker holds the root key. They cannot change the roll or pass
-  rules with it (4.16), but they can issue access credentials, revoke devices and stall
-  charter changes, and there is no root key rotation or recovery in v0, so the circle
-  must be abandoned and recreated. The SQLite database is not encrypted at rest.
+  compromised, the attacker holds the root key. They cannot change the roll, pass rules
+  or give anyone access with it (4.16), but they can revoke any device and stall charter
+  changes, and there is no root key rotation or recovery in v0, so the circle must be
+  abandoned and recreated. The SQLite database is not encrypted at rest.
 
 ### 4.7 Spam and denial of service
 
@@ -205,9 +217,13 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   reading the body, with body buffers that grow only as bytes arrive. Per-peer token
   buckets (20 requests/s, burst 40, 512 KiB/s) and at most 8 concurrent inbound requests;
   connection caps (4 per peer, 256 total, 64 handshaking); a shared 32 MiB budget for
-  inbound request bodies. Questions from members are limited to 20 per author and 100 per
-  circle per day by default, deduplicated, with local mute and block. Unsolicited
-  notifications are limited to 2 per day with a per-topic cooldown.
+  inbound request bodies. Only a device on the roll, within its scopes, can author a
+  question at all (4.23). Questions are then limited to 20 per author and 100 per circle
+  per day by default: one over a quota, or from an author the owner muted, is kept and
+  not shown; the same text asked again gets no second entry; a blocked author's question
+  is not stored. A sync is paged by a cursor and keeps at most 8192 events aside in
+  memory while it waits for records they depend on. Unsolicited notifications are
+  limited to 2 per day with a per-topic cooldown.
 * **Residual risk.** Device keys cost nothing to create, so per-peer limits do not stop an
   attacker who uses many keys; the global caps then protect the node's memory but can
   starve legitimate peers of connection slots. There is no IP-level limiting. A member
@@ -237,17 +253,18 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   not heard of the revocation.
 * **Mitigation.** Revocations are signed by the root, sent as REVOCATION events to all
   active members, returned by `fetch_events` to every active member regardless of scope,
-  and take effect immediately on each node that learns of them (the revoked peer is
-  disconnected, nothing more is pushed to it, new decision events from it are refused
-  and its ballots stop being counted). A revocation is a permanent record: it never
+  and take effect immediately on each node that learns of them (the revoked device is
+  refused from its next request on, nothing more is pushed to it, new decision events,
+  questions, answers and stances from it are refused, its ballots stop being counted and
+  it gets no removal notice, 4.22). A revocation is a permanent record: it never
   expires and is served by sync indefinitely. It is also never refused for its date: a
   revocation only ever denies, so one from an issuer whose clock runs ahead is accepted
   at once, and stored revocations are not dropped when the local clock steps back
-  (ADR-017). Member credentials are short-lived (30 days by default), which bounds the
-  access a revocation that never arrives leaves open.
+  (ADR-017).
 * **Residual risk.** **Offline partitions limit revocation freshness.** A node that has
   not synced with a node that knows the revocation keeps serving the revoked key until it
-  does, or until the credential expires, and keeps counting that device's ballots. Nodes
+  does, and keeps counting that device's ballots. Nothing else bounds that window: an
+  entry on the roll does not expire. Nodes
   that learn of a revocation at different times can therefore disagree about whether an
   open proposal has passed; they converge at the next charter change, when the carried
   rule list becomes the rule set everywhere. Revoking a device does not remove its
@@ -365,13 +382,24 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   (`ph-governance::check_successor`). A root-signed charter that adds a key, drops a
   member or changes a threshold on its own is rejected by every node. The founder is one
   member with one vote, whatever the number of their devices. Every node computes every
-  outcome itself, and an owner can always opt out of a rule or choose to be asked.
+  outcome itself, and an owner can always opt out of a rule or choose to be asked. A
+  credential signed by the root key lets nobody read, ask, answer or vote (ADR-026,
+  ADR-027).
 * **Residual risk.** The root-key holder still has real power in v0:
-  * **It cannot grant access, but it can take it away.** Who a node answers on the
-    transport is the roll, so the root cannot let anyone read the circle by signing a
-    credential (ADR-026). It can still revoke any device: peers that hold the revocation
-    stop answering that device, and its ballots stop counting (the member stays in the
-    electorate, so this makes proposals harder to pass, never easier).
+  * **It can cut off any device, alone.** This is the one thing the founder decides
+    without a vote. `circle revoke` signs a revocation of a device key with the root
+    key. There is no vote, no appeal and no undo: that key can never be used in the
+    circle again. Peers that hold the revocation stop answering the device, refuse what
+    it signs from then on, and stop counting its ballots, including ones it cast before.
+    The limits are these. A revocation can block and never pass: the member stays on
+    the roll and in every electorate, so removing an approval makes a proposal harder
+    to pass, never easier, and a rule that was in force only with that approval may stop
+    being in force on nodes that learn of it. It does not change the roll: removing the
+    member, or giving them a new device, takes a vote. It cannot grant anything. The
+    command refuses to revoke the device it runs on, which guards against an accident,
+    not against the holder. A founder can use it against any member's device at any
+    time, and the members' only answers are to vote (the founder has one vote) or to
+    found another circle.
   * **It can block.** It can refuse to notarize a passed amendment, which freezes the
     roll and the voting rules. Rules can still be proposed, passed and repealed.
   * **It can split.** If two conflicting amendments both pass, it chooses one; if it
@@ -380,6 +408,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     the third. The early roll is whatever the founder made it.
   * **Trust anchor.** A node that joins later takes its first charter, and the list of
     rules that charter carries, on the root's signature.
+  * **It stays indispensable after leaving.** A founder who leaves the roll (4.24)
+    still holds the root key. Members' nodes no longer sync with the founder's node, so
+    every later charter change needs the passed amendment carried to that node as a
+    file and the new charter carried back.
 
   There is no root key rotation, recovery or leaderless ratification yet.
 
@@ -393,7 +425,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   `ph-core::transition`. An agent may write a note (`peerharness note --from-agent`),
   which is a candidate in the inbox and nothing more, and at most 20 unreviewed agent
   notes are kept. Every consent step refuses inside an agent session, with or without
-  `--yes` (architecture 12.1). A cancelled or refused command saves nothing.
+  `--yes` (architecture 12.1): among them asking and answering a question, announcing a
+  stance, leaving a circle, proposing an amendment, revoking a device and switching to
+  `follow`. A cancelled or refused command saves nothing. Two things are deliberately
+  not consent steps: switching to `ask`, and opting out of a rule on one's own machine,
+  which is never refused.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,
@@ -457,8 +493,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     roll call. There is no secret ballot.
   * **Identity.** The roll counts handles. Whether two handles are two people is judged
     by the members who vote to admit them.
-  * **Growth.** Decision events are permanent and v0 never prunes them; sync describes
-    at most 4096 known events per request.
+  * **Growth.** Decision events and recorded stances are permanent and v0 never prunes
+    them. Sync is paged by a cursor and no longer stalls on a large log, but every node
+    keeps all of it.
 
 ## 5. Privacy limitations
 

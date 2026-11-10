@@ -396,3 +396,40 @@ because it decides where files are written. Rejected: binding a rule to a reposi
 identity inside the proposal (a remote URL or a hash of one). It would put repository
 names or their hashes on the wire and in the vote, and it would still need each member
 to say where their checkout is.
+
+## ADR-031: Opt-in LAN discovery announces a device key and nothing about circles
+A node could only dial addresses a person gave it. `ph-network` can now find nodes on
+the local network with libp2p's mDNS, off unless `NetworkConfig::lan_discovery` is set
+(`daemon --lan`, `sync --lan`); with it off no multicast socket exists and nothing is
+sent. With it on, a node asks for the generic libp2p service `_p2p._udp.local` on each
+non-loopback IPv4 interface and answers every such query with
+`dnsaddr=<listen address>/p2p/<peer id>` for its listen addresses on that interface.
+That is all it says: the device public key and where it listens. A node with no listen
+address there (a `sync` client, or a daemon on the default loopback address) answers
+with an empty record, so it finds others without being found.
+
+Accepted costs. The device key is stable, so an announcing device can be recognized on
+every network it joins and matched to a roll by whoever holds that roll. Other libp2p
+software sees the node and may connect; it gets `hello` and nothing else. mDNS is
+unauthenticated, so an announcement is a hint: `ph-network` only reports
+(`PeerDiscovered`, `PeerExpired`, `discovered()`), never dials, and keeps discovered
+addresses out of the swarm's address book. The application dials only device keys that
+are on a roll it holds, at an address ending in `/p2p/<peer id>`, so the handshake must
+prove the key, and the peer is then answered by the roll like any other (ADR-026). A
+device on no roll of this node is never dialed and is sent nothing. Any host on the
+segment can fill the list or keep a member out of it, which costs discovery and nothing
+else. Bounds: 256 peers with 8 addresses each; discovery turns itself off when
+libp2p-mdns's own unbounded table passes 16,384 records. IPv4 only, with libp2p's
+defaults of a six minute record lifetime and a query every five minutes.
+
+Three deviations from plain use of libp2p-mdns 0.49, each found by experiment: its
+tasks run on a runtime of their own because it never stops them (a stopped node would go
+on answering); its log output is discarded because it logs addresses; its address
+reports to the swarm are not passed on.
+
+Not done, deliberately. Relays and hole punching (spec section 15) are not needed for a
+circle to converge across networks: every member's node holds what the roll lets it
+read, so one reachable member, or the shared directory of ADR-025, already carries
+everyone's records to everyone else, with the roll deciding who gets what. A libp2p
+circuit relay would add a party that the roll says nothing about. Hole punching and
+router port mapping were left out because they cannot be tested from one machine.

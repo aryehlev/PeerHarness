@@ -2105,8 +2105,8 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   built before these additions rejects a STANCE as an unknown event type, without
   effect on anything else it holds or on the other events of the same batch; answers a
   `fetch_events` that carries `after` with `bad_request`; and fails to read an
-  `authenticated` that carries `circles`. Such a node and a current one therefore cannot
-  complete the session of section 13.2 with each other.
+  `authenticated` that carries `circles`. A session between such a node and a current one
+  therefore fails as soon as one of these members is sent.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.

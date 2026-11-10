@@ -132,11 +132,16 @@ impl Node {
     /// Starts `daemon` on an ephemeral loopback port and waits until it has written
     /// where it listens.
     fn daemon(&self) -> Daemon {
+        self.daemon_with(&["--listen", LISTEN])
+    }
+
+    fn daemon_with(&self, args: &[&str]) -> Daemon {
         let bin = assert_cmd::cargo::cargo_bin("peerharness");
         let child = std::process::Command::new(bin)
             .envs(self.envs())
             .env_remove("CLAUDECODE")
-            .args(["daemon", "--listen", LISTEN])
+            .arg("daemon")
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -455,4 +460,56 @@ fn members_vote_over_quic_and_strangers_are_turned_away() {
         "--yes",
     ]);
     assert_eq!(code, 3, "{msg}");
+}
+
+/// Needs working multicast between processes on this machine and a non-loopback IPv4
+/// interface, which CI containers often lack. Run it with `-- --ignored`.
+#[test]
+#[ignore = "needs multicast on the local network"]
+fn members_find_each_other_on_the_local_network() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    let bob = Node::new(root, "bob");
+    let nobody = Node::new(root, "nobody");
+    let created = alice.run(&["circle", "create", "team"]);
+    let fingerprint = created["root_fingerprint"].as_str().unwrap().to_owned();
+    alice.run(&[
+        "circle",
+        "invite",
+        &bob.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+        "--out",
+        root.join("unused.jsonl").to_str().unwrap(),
+    ]);
+    bob.join(&alice, root, &fingerprint);
+    let cand = alice.run(&["note", RULE])["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice.run(&["proposal", "create", &cand, "--circle", "team", "--yes"]);
+
+    // Without --lan nothing is announced, so nobody is found.
+    let quiet = alice.daemon_with(&["--listen", "/ip4/0.0.0.0/udp/0/quic-v1"]);
+    assert_eq!(bob.fail(&["sync", "--lan", "--wait", "2"]).0, 2);
+    drop(quiet);
+
+    let daemon = alice.daemon_with(&["--listen", "/ip4/0.0.0.0/udp/0/quic-v1", "--lan"]);
+    // Bob was given no address. He finds Alice's node because her device is on a roll
+    // he holds, and gets the proposal.
+    let synced = bob.run(&["sync", "--lan", "--wait", "10"]);
+    assert_eq!(synced["failed"], serde_json::json!([]));
+    assert_eq!(synced["synced"][0]["peer_id"], daemon.peer_id.as_str());
+    assert_eq!(synced["synced"][0]["received"], 1);
+    // The address he found her at is stored like any other.
+    let again = bob.run(&["sync"]);
+    assert_eq!(again["synced"][0]["peer_id"], daemon.peer_id.as_str());
+    // A node in no circle hears the announcement too and contacts nobody.
+    let (code, msg) = nobody.fail(&["sync", "--lan", "--wait", "2"]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("no member of your circles"), "{msg}");
 }

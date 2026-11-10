@@ -149,6 +149,11 @@ pub struct DaemonArgs {
     /// Also sync with the peers this node already knows, every this many seconds.
     #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u32).range(30..=86_400))]
     pub sync_every: Option<u32>,
+    /// Announce this node on the local network (mDNS), so members can find it with
+    /// `sync --lan`. Everyone on that network can then see this device's public key and
+    /// the port it listens on. It needs a listen address that is not loopback.
+    #[arg(long)]
+    pub lan: bool,
 }
 
 #[derive(Debug, Args)]
@@ -738,8 +743,15 @@ pub enum RuleCommand {
 pub struct SyncArgs {
     /// The peer's multiaddr (as its daemon prints it), or its peer id after a first sync.
     /// Omit it to sync with every peer this node knows.
-    #[arg(value_name = "ADDRESS_OR_PEER_ID")]
+    #[arg(value_name = "ADDRESS_OR_PEER_ID", conflicts_with = "lan")]
     pub peer_id: Option<String>,
+    /// Find members of your circles on the local network (mDNS) and sync with them.
+    /// Only devices on a roll this node holds are contacted.
+    #[arg(long)]
+    pub lan: bool,
+    /// With --lan: how many seconds to listen for members.
+    #[arg(long, value_name = "SECONDS", requires = "lan", default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=60))]
+    pub wait: u32,
 }
 
 #[derive(Debug, Args)]
@@ -969,6 +981,8 @@ mod tests {
                 "/ip4/192.0.2.7/udp/4001/quic-v1/p2p/12D3KooWx",
             ],
             vec!["peerharness", "daemon", "--sync-every", "60"],
+            vec!["peerharness", "daemon", "--lan"],
+            vec!["peerharness", "sync", "--lan", "--wait", "5"],
             vec![
                 "peerharness",
                 "circle",
@@ -996,6 +1010,8 @@ mod tests {
             Cli::try_parse_from(["peerharness", "watch", "claude", "--no-agent-notes"]).is_err()
         );
         assert!(Cli::try_parse_from(["peerharness", "daemon", "--sync-every", "5"]).is_err());
+        assert!(Cli::try_parse_from(["peerharness", "sync", "--wait", "5"]).is_err());
+        assert!(Cli::try_parse_from(["peerharness", "sync", "/ip4/1.2.3.4", "--lan"]).is_err());
         assert!(
             Cli::try_parse_from(["peerharness", "circle", "place", "x", "--circle", "team"])
                 .is_err()
