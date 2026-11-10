@@ -137,6 +137,9 @@ fn sync_lines(t: &mut Text, r: &SyncReport) {
             "  rule {skill} is in force and waits for your confirmation: `peerharness proposal adopt <id>`"
         ));
     }
+    for (rule, circle) in &r.changes.held {
+        t.line(format!("  {}", rule.line(circle)));
+    }
 }
 
 fn sync_json(r: &SyncReport) -> Value {
@@ -153,6 +156,7 @@ fn sync_json(r: &SyncReport) -> Value {
         "installed": r.changes.installed,
         "removed": r.changes.removed,
         "asking": r.changes.asking,
+        "held": r.changes.held.iter().map(|(rule, _)| rule.json()).collect::<Vec<_>>(),
         "charters_issued": r.changes.charters_issued,
     })
 }

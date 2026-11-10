@@ -116,9 +116,17 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
             // Where this machine puts rules of that scope (`circle place`).
             let target =
                 governance::Target::of(&installer, governance::place_for(&places, rule.scope()));
-            let here = match target.installer.status(rule.skill_name()) {
+            // A rule this node holds back, whatever its owner's mode (a skill of their
+            // own has the name, or PeerHarness's own skill does).
+            let held = if binds_me && !opted_out {
+                governance::held(&node.store, &c.circle_id, &target, rule)?
+            } else {
+                None
+            };
+            let here = match (held, target.installer.status(rule.skill_name())) {
                 _ if !binds_me => "does not bind you: you are not in its electorate",
-                Ok(InstallState::Managed { digest, modified })
+                (Some(why), _) => why.state(),
+                (None, Ok(InstallState::Managed { digest, modified }))
                     if digest == rule.bundle_digest() =>
                 {
                     if modified {
@@ -127,8 +135,8 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                         "installed"
                     }
                 }
-                Ok(InstallState::Managed { .. }) => "another version installed",
-                Ok(InstallState::Unmanaged) => {
+                (None, Ok(InstallState::Managed { .. })) => "another version installed",
+                (None, Ok(InstallState::Unmanaged)) => {
                     "a skill of that name you manage yourself is in the way"
                 }
                 _ if opted_out => "opted out",
@@ -142,6 +150,14 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
             ));
             if let Some(dir) = &target.dir {
                 t.line(format!("      in the project {dir}"));
+            }
+            if let Some(why) = held {
+                let held = governance::HeldRule {
+                    name: rule.skill_name().to_owned(),
+                    proposal_id: rule.proposal_id(),
+                    why,
+                };
+                t.line(format!("      {}", held.explain(&c.name)));
             }
             let recorded = governance::stances(
                 &node.store,
@@ -172,6 +188,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 "opted_out": opted_out,
                 "binds_you": binds_me,
                 "state": here,
+                "held": held.map(governance::Held::code),
                 "project": target.dir,
                 "on_record": recorded.iter().map(|s| json!({
                     "member": s.member,

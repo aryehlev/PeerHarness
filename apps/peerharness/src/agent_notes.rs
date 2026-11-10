@@ -31,7 +31,24 @@ use ph_skills::Bundle;
 use crate::config::Asked;
 
 /// The directory name of the skill under the agent's skills directory.
+///
+/// The name is reserved. No note, no rule kept for oneself and no proposal made here
+/// can have it ([`refuse_reserved_name`]), and a rule of that name that a circle passed
+/// is never installed (`governance::Held::ReservedName`): otherwise a vote, or an agent
+/// that names its own note, could replace the text that tells every agent where its
+/// part ends.
 pub const SKILL_NAME: &str = "peerharness-notes";
+
+/// Refuses [`SKILL_NAME`] as the name of a rule.
+pub fn refuse_reserved_name(name: &str) -> Result<()> {
+    if name == SKILL_NAME {
+        return Err(crate::error::usage(format!(
+            "no rule can be named {SKILL_NAME}: that is the name of PeerHarness's own skill. \
+             Note the rule under another name: `peerharness note \"<the rule>\" --name <name>`"
+        )));
+    }
+    Ok(())
+}
 
 const DESCRIPTION: &str = "Use when the user corrects how you work or states a standing rule \
     for this project (a tool to use or avoid, a convention, a step to always or never do). \
@@ -205,6 +222,22 @@ mod tests {
     use super::*;
 
     const PROGRAM: &str = "PEERHARNESS_HOME='/x y' '/opt/ph/peerharness'";
+
+    #[test]
+    fn the_name_of_the_skill_is_reserved() {
+        let e = refuse_reserved_name(SKILL_NAME).unwrap_err();
+        assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Usage);
+        assert!(e.to_string().contains("PeerHarness's own skill"));
+        // Only that name: a name that merely looks like it is an ordinary one.
+        for other in [
+            "peerharness",
+            "peerharness-notes-2",
+            "notes",
+            "my-peerharness-notes",
+        ] {
+            assert!(refuse_reserved_name(other).is_ok(), "{other}");
+        }
+    }
 
     #[test]
     fn the_skill_is_valid_instruction_only_and_names_the_command() {

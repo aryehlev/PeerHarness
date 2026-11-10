@@ -148,6 +148,9 @@ pub struct Changes {
     pub installed: Vec<String>,
     pub removed: Vec<String>,
     pub asking: Vec<String>,
+    /// Rules in force that this node holds back (`governance::Held`), each with the
+    /// name of its circle on this machine.
+    pub held: Vec<(governance::HeldRule, String)>,
     pub charters_issued: Vec<u64>,
     /// Events this node signed while settling (results and charters).
     pub signed: usize,
@@ -158,6 +161,7 @@ impl Changes {
         self.installed.extend(other.installed);
         self.removed.extend(other.removed);
         self.asking.extend(other.asking);
+        self.held.extend(other.held);
         self.charters_issued.extend(other.charters_issued);
         self.signed += other.signed;
     }
@@ -167,6 +171,7 @@ impl Changes {
         self.installed.is_empty()
             && self.removed.is_empty()
             && self.asking.is_empty()
+            && self.held.is_empty()
             && self.charters_issued.is_empty()
     }
 }
@@ -192,6 +197,13 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                 changes
                     .asking
                     .extend(settled.applied.asking.into_iter().map(|(name, _)| name));
+                changes.held.extend(
+                    settled
+                        .applied
+                        .held
+                        .into_iter()
+                        .map(|rule| (rule, circle.name.clone())),
+                );
             }
             Err(e) => tracing::warn!(error = %e, "could not settle a circle after a sync"),
         }

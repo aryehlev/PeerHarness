@@ -51,6 +51,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
 
     // Refuse now what could never become a skill, instead of at review time.
     let draft = draft_note_skill(&cand);
+    crate::agent_notes::refuse_reserved_name(&draft.name)?;
     ph_skills::render_skill_md(&draft.name, &draft.description, &draft.body, None)
         .map_err(|e| e.to_string())
         .and_then(|md| ph_skills::build_bundle(&md, Some(&draft.name)).map_err(|e| e.to_string()))

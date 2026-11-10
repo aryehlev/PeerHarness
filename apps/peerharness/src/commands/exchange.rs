@@ -108,6 +108,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
     let installer = governance::user_installer()?;
     let mut installed = Vec::new();
     let mut removed = Vec::new();
+    let mut held = Vec::new();
     let mut charters = Vec::new();
     for circle in node.store.circles()? {
         let settled = governance::settle(node, &circle, &installer, &[])?;
@@ -146,6 +147,14 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
                 safe(&circle.name)
             ));
         }
+        for rule in &settled.applied.held {
+            t.line(format!(
+                "  {}: {}",
+                safe(&circle.name),
+                rule.line(&circle.name)
+            ));
+            held.push(rule.json());
+        }
         installed.extend(settled.applied.installed);
         removed.extend(settled.applied.removed);
     }
@@ -171,6 +180,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             "ignored": source.ignored,
             "installed": installed,
             "removed": removed,
+            "held": held,
             "charters_issued": charters,
         }),
         t,

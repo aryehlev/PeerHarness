@@ -35,6 +35,7 @@ pub fn run(ctx: &Ctx, a: &KeepArgs) -> Result<Report> {
     }
     // Draft the skill for the preview. Nothing is saved until the owner has confirmed.
     let (name, md) = library::render_candidate_skill(&cand)?;
+    crate::agent_notes::refuse_reserved_name(&name)?;
     let draft = ph_skills::build_bundle(&md, Some(&name))
         .map_err(|e| usage(format!("this text cannot become a rule: {e}")))?;
     let terminal = format!(

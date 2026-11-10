@@ -99,7 +99,7 @@ fn proposal_json(p: &ProposalView, tally: &Tally, standing: &str) -> Value {
     })
 }
 
-fn settled_lines(t: &mut Text, s: &Settled) {
+fn settled_lines(t: &mut Text, s: &Settled, circle: &CircleRow) {
     if let Some(seq) = s.charter_notarized {
         t.line(format!(
             "  The amendment passed. Charter {seq} is now in force."
@@ -123,6 +123,9 @@ fn settled_lines(t: &mut Text, s: &Settled) {
         t.line(format!(
             "  rule {skill} was not installed: a skill of that name that PeerHarness does not manage is in the way"
         ));
+    }
+    for held in &s.applied.held {
+        t.line(format!("  {}", held.line(&circle.name)));
     }
     for skill in &s.applied.not_bound {
         t.line(format!(
@@ -294,6 +297,8 @@ fn create(
     let now = node.now();
     // Draft the skill for the preview. Nothing is saved until the owner has confirmed.
     let (name, md) = crate::library::render_candidate_skill(&cand)?;
+    // A rule named like PeerHarness's own skill is never put to a vote from here.
+    crate::agent_notes::refuse_reserved_name(&name)?;
     let draft = ph_skills::build_bundle(&md, Some(&name))
         .map_err(|e| usage(format!("this candidate cannot become a rule: {e}")))?;
     let title = crate::library::clean_statement(&cand.statement)?;
@@ -754,7 +759,7 @@ fn vote(
     let (_, tally) = governance::count(&node.store, &p)?;
     let mut t = Text::new();
     t.line(format!("Ballot recorded. {tally}"));
-    settled_lines(&mut t, &settled);
+    settled_lines(&mut t, &settled, &circle);
     if !tally.passed() {
         if crate::consent::in_agent_session() {
             t.line("The other members get it with the next sync: `peerharness sync --internet`.");
@@ -799,6 +804,8 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
         .get(&name)
         .filter(|r| r.proposal_id() == p.event_id())
         .ok_or_else(|| refused("that rule is not in force here, so there is nothing to install"))?;
+    // A rule that is held is not installed whatever is confirmed: say so before asking.
+    governance::refuse_held(&node, &circle, rule)?;
     let bundles = crate::library::bundle_store(&node.home);
     let bundle = bundles
         .get(&rule.bundle_digest())
@@ -829,7 +836,7 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
             "Rule {name} was already in place or could not be installed."
         ));
     }
-    settled_lines(&mut t, &settled);
+    settled_lines(&mut t, &settled, &circle);
     Ok(Report::new(
         json!({ "skill_name": name, "installed": settled.applied.installed.contains(&name) }),
         t.finish(),

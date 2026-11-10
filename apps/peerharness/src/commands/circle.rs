@@ -649,6 +649,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         for skill in &settled.applied.installed {
             t.line(format!("  installed rule {skill} for your agent"));
         }
+        for held in &settled.applied.held {
+            t.line(format!("  {}", held.line(&circle.name)));
+        }
         return Ok(Report::new(
             json!({ "circle": circle.name, "left": false, "installed": settled.applied.installed }),
             t.finish(),
@@ -906,6 +909,9 @@ fn mode(ctx: &Ctx, args: CircleModeArgs) -> Result<Report> {
             "  rule {skill} waits for your confirmation ({why}): `peerharness proposal adopt <id>`"
         ));
     }
+    for held in &settled.applied.held {
+        t.line(format!("  {}", held.line(&circle.name)));
+    }
     Ok(Report::new(
         json!({
             "circle": circle.name,
@@ -975,6 +981,9 @@ fn place(ctx: &Ctx, args: CirclePlaceArgs) -> Result<Report> {
     });
     for skill in &settled.applied.installed {
         t.line(format!("  moved rule {skill}"));
+    }
+    for held in &settled.applied.held {
+        t.line(format!("  {}", held.line(&circle.name)));
     }
     let places: Vec<Value> = node
         .store
@@ -1242,6 +1251,9 @@ fn finish_join(node: &Node, plan: &JoinPlan, lines: &[&str]) -> Result<(Value, T
             "  rule {skill} waits for your confirmation ({why})"
         ));
     }
+    for held in &settled.applied.held {
+        t.line(format!("  {}", held.line(&circle.name)));
+    }
     Ok((
         json!({
             "circle": plan.name,
@@ -1407,6 +1419,9 @@ fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, from: JoinFrom) -> Result<Rep
                     }
                     for skill in &r.changes.asking {
                         t.line(format!("  rule {skill} waits for your confirmation"));
+                    }
+                    for (rule, circle) in &r.changes.held {
+                        t.line(format!("  {}", rule.line(circle)));
                     }
                     let mut installed: Vec<Value> =
                         json["installed"].as_array().cloned().unwrap_or_default();
