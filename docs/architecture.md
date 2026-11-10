@@ -1028,6 +1028,12 @@ written down directly.
   checked values, never flags. A tool runs only at the level the owner allowed
   (`config::Asked`, read at every call). `stay_reachable` runs the daemon as a child
   for as long as the client keeps the server's input open.
+* **Keeping a rule for oneself** (ADR-040). `keep <candidate>` is `review --approve`
+  and `skills install` in one consent step, through `consent::confirm_own_or_window`
+  and its own setting (`[agent] own_windows`). It refuses a rule with a high-risk
+  finding and a name that is taken by another text. With it allowed, `note
+  --from-agent` answers with the candidate's id and asks the agent to tell its user
+  that there is a rule to keep or to propose.
 * **One command for the owner's part** (ADR-039). `peerharness setup`
   (`apps/peerharness/src/commands/setup.rs`) runs `init` when there is no node, `watch
   claude --install` with the windows where one can be shown, and Claude Code's `claude

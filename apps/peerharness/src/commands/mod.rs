@@ -7,6 +7,7 @@ pub mod exchange;
 pub mod export;
 pub mod inbox;
 pub mod init;
+pub mod keep;
 pub mod net;
 pub mod note;
 pub mod observe;
@@ -68,6 +69,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         Command::Note(a) => note::run(ctx, a),
         Command::Inbox(a) => inbox::run(ctx, a),
         Command::Review(a) => review::run(ctx, a),
+        Command::Keep(a) => keep::run(ctx, &a),
         Command::Skills { command } => skills::run(ctx, command),
         Command::Circle { command } => circle::run(ctx, command),
         Command::Question { command } => question::run(ctx, command),

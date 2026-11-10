@@ -61,21 +61,26 @@ stop, leave the feature disabled, and document the blocker.
   inside an agent session (architecture 12.1, ADR-022). Do not add a flag, a variable
   or a path that lets a session answer one, and do not let `note` approve, install or
   share anything.
-* One exception, and do not widen it: confirmation windows (ADR-033, ADR-037). Only
-  when the owner turned them on in their own terminal (`peerharness setup`, or `watch
-  claude --install --dialogs`), a session may make a window of the operating system
-  appear for six steps: proposing a rule, a ballot on a proposed rule, installing a
-  rule that passed, proposing to admit a member (`circle invite`), a ballot on an
-  amendment that admits one member and changes nothing else, and joining a circle.
-  Only a click on "Proceed" in it counts; `--yes`, arguments, standard input and the
-  environment never do. The window shows the exact preview in full or the step is
-  refused, the preview is not printed into the session, and a rule with a high-risk
-  finding is never decided there. Turning windows on is never asked in a window. The
-  stand-in window program (`PEERHARNESS_TEST_WINDOW_BIN`) exists in debug builds only:
-  do not make a release build read it.
+* One exception, and do not widen it: confirmation windows (ADR-033, ADR-037,
+  ADR-040). Only when the owner turned them on in their own terminal (`peerharness
+  setup`, or `watch claude --install --dialogs`), a session may make a window of the
+  operating system appear for seven steps: proposing a rule, a ballot on a proposed
+  rule, installing a rule that passed, proposing to admit a member (`circle invite`), a
+  ballot on an amendment that admits one member and changes nothing else, joining a
+  circle, and keeping a noted rule for oneself (`keep`). Only a click on "Proceed" in
+  it counts; `--yes`, arguments, standard input and the environment never do. The
+  window shows the exact preview in full or the step is refused, the preview is not
+  printed into the session, and a rule with a high-risk finding is never decided
+  there. Turning windows on is never asked in a window. The stand-in window program
+  (`PEERHARNESS_TEST_WINDOW_BIN`) exists in debug builds only: do not make a release
+  build read it.
+* A noted rule is never installed without its owner's yes. A note comes from an agent,
+  and an agent repeats what it read. Do not add a setting, a mode or a default that
+  keeps a rule by itself, and do not let `note` or a hook install anything.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
-  windows turned on before ADR-037 were allowed for three steps. A step added to the
+  windows turned on before ADR-037 were allowed for three steps, and keeping a rule has
+  `own_windows` for the same reason. A step added to the
   list later needs a setting of its own in the same way, and a new preview in `watch
   claude --install --dialogs`: never let an older "yes" cover it.
 * `peerharness mcp` (ADR-038) is not a way to consent and must not become one. Every

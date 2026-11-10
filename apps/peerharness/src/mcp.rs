@@ -15,7 +15,8 @@
 //!   begins with `-` is refused.
 //! * What the agent may do is what the owner allowed in their own terminal
 //!   ([`Asked`]): without windows only `note`; with them the steps about rules; with the
-//!   circle steps also founding, inviting, joining, the exchange and staying reachable.
+//!   circle steps also founding, inviting, joining, the exchange and staying reachable;
+//!   and keeping a rule for oneself once that was allowed too.
 //!   A tool above that answers with what the owner has to run, and runs nothing.
 //! * Standard output carries protocol messages and nothing else. One tool runs at a
 //!   time, so two windows never open at once; `ping` is answered meanwhile.
@@ -177,6 +178,20 @@ const TOOLS: &[Tool] = &[
         needs: Asked::Rules,
         reads_only: true,
         run: |s, _| s.run(&["inbox"]),
+    },
+    Tool {
+        name: "keep_rule",
+        title: "Keep a noted rule for the user's own agent",
+        description: "Keep a rule you noted for the user alone: it is saved and installed for \
+            their agent, and nothing is shared. Opens a window that shows the exact rule; only \
+            their click installs it. Use it when the user asks you to keep a rule.",
+        params: &[word(
+            "candidate_id",
+            "The id of the noted rule, from `note` or from `inbox`.",
+        )],
+        needs: Asked::All,
+        reads_only: false,
+        run: |s, a| s.run(&["keep", &a["candidate_id"]]),
     },
     Tool {
         name: "propose_rule",
@@ -531,9 +546,9 @@ fn not_allowed(initialized: bool, asked: Asked) -> String {
              own terminal with `{how}`. Tell them so and stop."
         ),
         _ => format!(
-            "The user has allowed the steps about rules, not the ones about circles. They \
-             allow those in their own terminal by running `{how}` once more. Tell them so and \
-             stop."
+            "The user has not allowed this step yet: it was added after they last set \
+             PeerHarness up. They allow it in their own terminal by running `{how}` once \
+             more. Tell them so and stop."
         ),
     }
 }
@@ -964,6 +979,7 @@ mod tests {
                 "note",
                 "status",
                 "inbox",
+                "keep_rule",
                 "propose_rule",
                 "vote",
                 "install_rule",
@@ -1057,11 +1073,13 @@ mod tests {
         ] {
             assert_eq!(tool(name).needs, Asked::RulesAndCircle, "{name}");
         }
+        assert_eq!(tool("keep_rule").needs, Asked::All);
         // The answer names the one command, and tells the agent to stop.
         for (initialized, asked) in [
             (false, Asked::Nothing),
             (true, Asked::Nothing),
             (true, Asked::Rules),
+            (true, Asked::RulesAndCircle),
         ] {
             let said = not_allowed(initialized, asked);
             assert!(said.contains("`peerharness setup`"));

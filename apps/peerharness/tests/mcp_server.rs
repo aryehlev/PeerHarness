@@ -332,6 +332,34 @@ fn a_tool_does_what_the_command_does_and_consent_stays_with_the_person() {
         "the ids the tools take are in it: {inbox}"
     );
 
+    // --- Keeping a rule for oneself: the same click, and nothing is shared.
+    let own = client.ok(
+        "note",
+        json!({ "rule": "Never edit generated files by hand." }),
+    );
+    assert!(own.contains("they can ask you to keep it"), "{own}");
+    let own_id = own
+        .split_whitespace()
+        .find(|w| w.starts_with("cand_"))
+        .unwrap()
+        .trim_end_matches('.')
+        .to_owned();
+    node.answers("declined");
+    let said = client.fails("keep_rule", json!({ "candidate_id": own_id }));
+    assert!(said.contains("declined in the window"), "{said}");
+    assert!(!node.skills.join("never-edit-generated-files-hand").exists());
+    node.answers("proceed");
+    let said = client.ok("keep_rule", json!({ "candidate_id": own_id }));
+    assert!(
+        said.contains("Kept rule never-edit-generated-files-hand"),
+        "{said}"
+    );
+    assert!(node
+        .skills
+        .join("never-edit-generated-files-hand")
+        .join("SKILL.md")
+        .is_file());
+
     // --- Proposing. The server was started without the mark of an agent's session, and
     // the step is still the person's: declined in the window, nothing is shared.
     node.answers("declined");

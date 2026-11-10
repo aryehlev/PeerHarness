@@ -9,8 +9,9 @@
 //! Inside a session every step refuses, with one exception the owner has to turn on:
 //! a few steps may be put to the person in a window of the operating system. They are
 //! proposing a rule, a ballot on a proposed rule and installing a rule that passed
-//! (ADR-033, [`confirm_or_window`]), and admitting a member, a ballot on an admission
-//! and joining a circle (ADR-037, [`confirm_circle_or_window`]). The session can make
+//! (ADR-033, [`confirm_or_window`]), admitting a member, a ballot on an admission and
+//! joining a circle (ADR-037, [`confirm_circle_or_window`]), and keeping a noted rule
+//! for oneself (ADR-040, [`confirm_own_or_window`]). The session can make
 //! that window appear and cannot answer it: nothing it writes, passes or sets counts,
 //! `--yes` included.
 //!
@@ -111,6 +112,18 @@ pub fn confirm_circle_or_window(
     config: &Config,
 ) -> Result<()> {
     confirm_or_window_for(out, preview, yes, what, config, Asked::RulesAndCircle)
+}
+
+/// [`confirm_or_window`] for keeping a noted rule for oneself (ADR-040), which the
+/// owner allowed apart from the steps before it.
+pub fn confirm_own_or_window(
+    out: &Output,
+    preview: &str,
+    yes: bool,
+    what: &str,
+    config: &Config,
+) -> Result<()> {
+    confirm_or_window_for(out, preview, yes, what, config, Asked::All)
 }
 
 fn confirm_or_window_for(

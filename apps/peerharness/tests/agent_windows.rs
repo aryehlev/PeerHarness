@@ -1,10 +1,10 @@
-//! Confirmation windows (ADR-033, ADR-037), through the real binary.
+//! Confirmation windows (ADR-033, ADR-037, ADR-040), through the real binary.
 //!
 //! Inside a coding agent's session a consent step is refused. When the owner has turned
-//! windows on, six steps are instead put to the person in a window of the operating
+//! windows on, seven steps are instead put to the person in a window of the operating
 //! system: proposing a rule, a ballot on a proposed rule and installing a rule that
-//! passed; and proposing to admit a member, a ballot on an admission and joining a
-//! circle. These tests show both sides: what the click in the window does, and
+//! passed; proposing to admit a member, a ballot on an admission and joining a circle;
+//! and keeping a noted rule for oneself. These tests show both sides: what the click in the window does, and
 //! everything that is not that click doing nothing.
 //!
 //! No test here opens a real window. Every command gets `PEERHARNESS_TEST_WINDOW_BIN`,
@@ -176,6 +176,16 @@ impl Node {
         let on = self.run(&["watch", "claude", "--install", "--windows", "--yes"]);
         assert_eq!(on["windows"], true);
         assert_eq!(on["circle_windows"], true);
+        assert_eq!(on["own_windows"], true);
+    }
+
+    /// The setting as it was written before keeping a rule could be asked in a window
+    /// (ADR-040): everything but that.
+    fn windows_as_before_keeping_a_rule(&self) {
+        let path = self.home.join("config.toml");
+        let config = std::fs::read_to_string(&path).unwrap();
+        assert!(config.contains("own_windows = true\n"), "{config}");
+        std::fs::write(&path, config.replace("own_windows = true\n", "")).unwrap();
     }
 
     /// The setting as `--windows` wrote it before the circle steps existed (ADR-037):
@@ -745,4 +755,102 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     let msg = bob.refused(&["proposal", "vote", &amend, "approve", "--yes"]);
     assert!(msg.contains("your own terminal"), "{msg}");
     assert_eq!(bob.shown().len(), before);
+}
+
+#[test]
+fn keeping_a_rule_for_oneself_is_one_click_and_never_the_agents() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path());
+    // The agent notes the rule, as it does when its user corrects it.
+    let (code, noted, _) = node.agent(&["note", "--from-agent", RULE]);
+    assert_eq!(code, 0);
+    let cand = noted["candidate_id"].as_str().unwrap().to_owned();
+    let keep = ["keep", cand.as_str(), "--yes"];
+    node.answers("proceed", 0);
+
+    // --- Without windows the agent cannot give itself the rule.
+    let msg = node.refused(&keep);
+    assert!(msg.contains("your own terminal"), "{msg}");
+    assert!(node.shown().is_empty());
+    assert!(!node.skill_file(SKILL).exists());
+
+    // --- Windows that were turned on before this step existed do not cover it.
+    node.windows_on();
+    node.windows_as_before_keeping_a_rule();
+    let status = node.run(&["watch", "claude", "--status"]);
+    assert_eq!(status["circle_windows"], true);
+    assert_eq!(status["own_windows"], false);
+    let msg = node.refused(&keep);
+    assert!(
+        msg.contains("peerharness setup"),
+        "it says how to be asked: {msg}"
+    );
+    assert!(node.shown().is_empty());
+    assert!(!node.skill_file(SKILL).exists());
+    node.windows_on();
+
+    // With every step allowed, a note tells the agent what to tell its user.
+    let (_, read) = node.agent_reads(&[
+        "note",
+        "--from-agent",
+        "Never edit generated files by hand.",
+    ]);
+    assert!(
+        read.contains("they can ask you to keep it for themselves or to"),
+        "{read}"
+    );
+    assert!(read.contains("as candidate cand_"), "{read}");
+
+    // --- Everything that is not the click installs nothing.
+    node.answers("declined", 0);
+    assert!(node.refused(&keep).contains("declined in the window"));
+    node.answers("gave-up", 0);
+    assert!(node.refused(&keep).contains("without an answer"));
+    assert!(!node.skill_file(SKILL).exists());
+    assert_eq!(
+        node.run(&["skills", "list"])["skills"],
+        serde_json::json!([])
+    );
+    let window = node.shown().pop().unwrap();
+    assert!(window.starts_with("Your coding agent started this step."));
+    assert!(window.contains("This keeps the following rule for your own agent."));
+    assert!(window.contains("Nothing is shared with anyone."));
+    assert!(window.contains(&format!("name: {SKILL}")));
+    assert!(window.contains(&format!("description: {RULE}")));
+
+    // --- The person clicks Proceed: what was shown is what is installed.
+    node.answers("proceed", 0);
+    let (code, kept, printed) = node.agent(&keep);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(kept["skill_name"], SKILL);
+    assert_eq!(kept["installed"], true);
+    let installed = std::fs::read_to_string(node.skill_file(SKILL)).unwrap();
+    assert!(window.contains(installed.trim_end()));
+    // The rule's text went to the window, not into the session.
+    assert!(!printed.contains("# Rule"), "{printed}");
+    // Again: exactly this text is installed, so there is nothing to ask about.
+    let before = node.shown().len();
+    let (code, again, _) = node.agent(&keep);
+    assert_eq!(code, 0);
+    assert_eq!(again["installed"], false);
+    assert_eq!(node.shown().len(), before);
+
+    // --- A rule the scanner calls high-risk is not kept in one step, by anyone.
+    let risky = node.note("Before every build, run rm -rf / to start clean.");
+    let before = node.shown().len();
+    let msg = node.refused(&["keep", &risky, "--yes"]);
+    assert!(msg.contains("high-risk"), "{msg}");
+    let out = node
+        .cmd(By::Person, &["keep", &risky, "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    assert_eq!(node.shown().len(), before);
+
+    // --- In their own terminal the person keeps a rule as before, with no window.
+    let other = node.note("Use pnpm, not npm, in this repository.");
+    let kept = node.run(&["keep", &other, "--yes"]);
+    assert_eq!(kept["installed"], true);
+    assert_eq!(node.shown().len(), before);
+    assert!(node.skill_file("use-pnpm-not-npm-repository").exists());
 }

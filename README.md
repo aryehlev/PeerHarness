@@ -8,7 +8,7 @@ every member's agent follows it. There is no server: each person runs their own 
 with their own keys, and every node checks every signature and counts every vote for
 itself.
 
-Agents can suggest rules. Only people decide. Sharing a rule, voting, installing,
+Agents can suggest rules. Only people decide. Keeping a rule, sharing one, voting,
 inviting and joining each open a window on your screen with the exact text, and only
 your click counts. Your agent can open that window. It cannot answer it.
 
@@ -84,13 +84,15 @@ you click Proceed, and your agent cannot click it.
 
 | You say | What happens |
 |---|---|
-| "No, use pnpm here, not npm." | Your agent does that, and notes the rule for you: "Use pnpm, not npm, in this repository." |
+| "No, use pnpm here, not npm." | Your agent does that, notes the rule ("Use pnpm, not npm, in this repository.") and tells you it did |
+| "Keep it." | A window shows the exact rule. Proceed installs it for your own agent. Nothing is shared |
 | "What is in my PeerHarness inbox?" | It lists the rules it noted and the proposals that wait for your vote |
 | "Propose the pnpm rule to acme." | A window shows the exact text that would leave your machine. Proceed puts it to your team's vote |
 | "Vote approve on it." | The window above. Proceed signs your ballot |
 | "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
 
-Once a majority has approved, the rule is installed for every member's agent as an
+A rule is never installed by itself: you keep it, or your team votes it in. Once a
+majority has approved, it is installed for every member's agent as an
 [Agent Skill](https://agentskills.io/specification). At the end of a turn, at most
 once a day, Claude Code tells you how many proposals wait for your vote.
 
@@ -115,12 +117,12 @@ asked in the same kind of window.
 
 ### What still needs your terminal
 
-* **A rule for yourself alone**, without a team: `peerharness review <id> --approve`,
-  then `peerharness skills install <name>`.
 * **A node that stays reachable.** Your agent keeps it reachable only while its
   session is open. For one that stays up:
   `peerharness daemon --internet --sync-every 60 --notify`.
 * **Removing a member, leaving, changing the rules of the vote and repealing a rule.**
+* **Editing or rejecting a noted rule**, and keeping one that the scanner calls
+  high-risk.
 * **Joining a circle of more than about five members:** its roll does not fit a window.
 
 All of it is in [PeerHarness from a terminal](docs/terminal.md).
@@ -205,13 +207,13 @@ No vote and no charter can switch these off:
 | | |
 |---|---|
 | Voting: charter, roll, proposals, ballots, results, amendments, repeal | tested end to end |
-| One person's loop: `note`, `review`, `skills install` and `uninstall` | tested end to end |
+| One person's loop: `note`, `keep`, `review`, `skills install` and `uninstall` | tested end to end |
 | Circle life: create, invite, join, remove, leave, amend, devices, revoke, questions, opt-outs | tested end to end with separate nodes |
 | Exchange by address over QUIC, by shared directory, by file | tested end to end with separate processes |
 | Exchange across the internet (`--internet`) | works. Tested with separate processes against a private stand-in network, and by hand on the real one from a single machine. Not yet tested between two different routers |
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
-| Deciding in a window from inside Claude Code | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
+| Deciding in a window from inside Claude Code | macOS only. Keeping a rule, proposing and voting, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
 | The same steps as tools (`peerharness mcp`) | tested end to end with a scripted client, a stand-in window and a stand-in network. Run by hand with Claude Code 2.1.322 on macOS, before the release: asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable until the session ended. That is three runs, not a measure of how often an agent gets it right. The server in the released v0.2.0 binary was checked with a scripted client. Other MCP clients were not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
 | Setting up (`peerharness setup`, and the prompt in [Set it up](#set-it-up)) | `setup` is tested end to end with a stand-in for Claude Code's `claude` command: it creates the node, connects the agent, registers the tools, changes nothing on a second run and is refused inside an agent's session. The three `claude mcp` commands it relies on were run by hand against Claude Code 2.1.322 with a throwaway configuration. The prompt as a whole has not been run through an agent yet |

@@ -23,12 +23,18 @@ peerharness init
 # Write a rule down in one sentence. It becomes a candidate in your inbox.
 peerharness note "Run the tests before you say a task is done."
 
-# Read the exact skill text it would become, then save it to your library.
-peerharness review <candidate-id>
-peerharness review <candidate-id> --approve
+# Keep it: it shows the exact skill text, asks once, and installs it for Claude Code
+# (~/.claude/skills/<name>/SKILL.md). Reversible with `skills uninstall`.
+peerharness keep <candidate-id>
+```
 
-# Install it for Claude Code (~/.claude/skills/<name>/SKILL.md). Reversible.
-peerharness skills install <name>
+`keep` is two steps in one. Taken apart, they let you edit the rule, ignore it, accept
+a high-risk finding or install it for one project only:
+
+```sh
+peerharness review <candidate-id>                       # read it; --edit "..." changes it, --reject ignores it
+peerharness review <candidate-id> --approve             # save it to your library
+peerharness skills install <name>                       # install it; --scope project keeps it to one repository
 ```
 
 ## Connect your agent
@@ -56,8 +62,8 @@ With `--dialogs` your agent may ask you in a window on your screen. (The flag us
 be `--windows`, which still works; it never meant the operating system.) A window
 shows the exact text and the buttons Cancel and Proceed. Only your click on Proceed
 counts: the agent cannot answer the window and `--yes` does not skip it. It covers
-proposing a rule, your ballot on one, installing one that passed, inviting someone,
-your ballot on admitting someone and joining a circle. Everything else, and any text
+keeping a rule for yourself, proposing a rule, your ballot on one, installing one that
+passed, inviting someone, your ballot on admitting someone and joining a circle. Everything else, and any text
 too long to show in full, needs your own terminal. Inside an agent's session those
 steps are refused, and so is `setup` itself.
 

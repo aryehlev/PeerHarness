@@ -132,7 +132,7 @@ fn one_command_sets_everything_up_and_a_second_run_changes_nothing() {
     let said = text(&out);
     assert!(out.status.success(), "{said}");
     // Each change was shown before it was made.
-    assert!(said.contains("This lets your agent put six decisions in front of you"));
+    assert!(said.contains("This lets your agent put seven decisions in front of you"));
     assert!(said.contains("This will install the skill peerharness-notes"));
     assert!(said.contains("This gives Claude Code the PeerHarness steps as tools"));
     // What it reports.
@@ -155,6 +155,7 @@ fn one_command_sets_everything_up_and_a_second_run_changes_nothing() {
     assert_eq!(status["agent_notes"], "installed");
     assert_eq!(status["windows"], true);
     assert_eq!(status["circle_windows"], true);
+    assert_eq!(status["own_windows"], true);
 
     // Claude Code was asked whether it has the server, then told to add this binary
     // for this home, and nothing else.
