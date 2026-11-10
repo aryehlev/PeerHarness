@@ -35,6 +35,12 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Set PeerHarness up for Claude Code, once, in your own terminal.
+    ///
+    /// Creates your node if there is none, connects it to Claude Code after showing you
+    /// what your agent may start and what it never decides, and gives Claude Code those
+    /// steps as tools. Each change is shown first and asks for your confirmation.
+    Setup(SetupArgs),
     /// Generate the device key, database and config (idempotent).
     Init(InitArgs),
     /// Show mode, peer id, circles and hook status.
@@ -62,8 +68,8 @@ pub enum Command {
     /// `claude mcp add --scope user peerharness -- peerharness mcp`.
     ///
     /// Every tool runs as an agent's session: a step that needs your consent is asked
-    /// in a window when you allowed that (`watch claude --install --windows`), and is
-    /// refused otherwise.
+    /// in a window when you allowed that (`peerharness setup`), and is refused
+    /// otherwise.
     Mcp,
     /// Install or remove agent hooks.
     Watch {
@@ -150,6 +156,20 @@ pub struct InitArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// Do not let your agent ask you in a window on your screen: every decision then
+    /// needs your own terminal. Also turns the windows off if they were on.
+    #[arg(long)]
+    pub no_dialogs: bool,
+    /// Skip the confirmation prompts (after reviewing what they show).
+    #[arg(long)]
+    pub yes: bool,
+    /// Where a new node keeps its private key, as for `init`.
+    #[command(flatten)]
+    pub init: InitArgs,
+}
+
+#[derive(Debug, Args)]
 pub struct DaemonArgs {
     /// QUIC listen multiaddr (repeatable; default from config).
     #[arg(long, value_name = "MULTIADDR")]
@@ -220,10 +240,17 @@ pub struct WatchClaudeArgs {
     /// your screen (proposing a rule, your ballot on one, installing one that passed,
     /// inviting someone to a circle, your ballot on admitting someone, joining a circle).
     /// Only your click in that window decides. macOS only.
-    #[arg(long, requires = "install", conflicts_with = "no_windows")]
+    /// The flag is about confirmation dialogs, not the operating system; `--windows`
+    /// is its older name and still works.
+    #[arg(
+        long = "dialogs",
+        alias = "windows",
+        requires = "install",
+        conflicts_with = "no_windows"
+    )]
     pub windows: bool,
-    /// With --install: turn those windows off again.
-    #[arg(long, requires = "install")]
+    /// With --install: turn those windows off again (`--no-windows` still works).
+    #[arg(long = "no-dialogs", alias = "no-windows", requires = "install")]
     pub no_windows: bool,
     /// Show whether the hooks are installed (default).
     #[arg(long)]

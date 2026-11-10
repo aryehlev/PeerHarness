@@ -153,14 +153,8 @@ main() {
             ;;
     esac
     say ""
-    say "Next, to use it from Claude Code (once, in this terminal):"
-    say "  peerharness init"
-    # Confirmation windows exist on macOS only.
-    case "$target" in
-        *-apple-darwin) say "  peerharness watch claude --install --windows" ;;
-        *) say "  peerharness watch claude --install" ;;
-    esac
-    say "  claude mcp add --scope user peerharness -- peerharness mcp"
+    say "Next, once, in this terminal: set it up for Claude Code."
+    say "  peerharness setup"
     say ""
     say "To see three members vote on a rule first, in temporary folders:"
     say "  peerharness demo"

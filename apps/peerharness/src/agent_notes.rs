@@ -11,7 +11,7 @@
 //!   and approves nothing.
 //! * Every step that needs consent refuses to run inside an agent session
 //!   (`consent::human_only`), and the skill tells the agent not to try.
-//! * When the owner turned confirmation windows on (`watch claude --install --windows`,
+//! * When the owner turned confirmation windows on (`peerharness setup`,
 //!   ADR-033) the skill has a second part: the three steps about rules that the agent
 //!   may start when its user asks, each of which is answered by the person in a window
 //!   and by nobody else.

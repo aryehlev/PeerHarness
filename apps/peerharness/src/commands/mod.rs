@@ -15,6 +15,7 @@ pub mod question;
 pub mod reset;
 pub mod review;
 pub mod rule;
+pub mod setup;
 pub mod skills;
 pub mod status;
 pub mod watch;
@@ -44,6 +45,7 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
     use crate::cli::{ObserveCommand, WatchAgent};
     match command {
         Command::Init(a) => init::run(ctx, a),
+        Command::Setup(a) => setup::run(ctx, a),
         Command::Status => status::run(ctx),
         Command::Demo => demo::run(ctx),
         Command::Doctor => doctor::run(ctx),

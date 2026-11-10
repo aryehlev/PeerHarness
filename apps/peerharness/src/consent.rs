@@ -138,7 +138,7 @@ fn windows_off(what: &str, has_window: bool) -> anyhow::Error {
     refused(format!(
         "{what} is your decision, and this command is running inside a coding agent's \
          session. Run it yourself in your own terminal. (To be asked in a window instead, \
-         run `peerharness watch claude --install --windows` there once.)"
+         run `peerharness setup` there once.)"
     ))
 }
 
@@ -329,6 +329,6 @@ mod tests {
             .to_string()
             .ends_with("Run it yourself in your own terminal."));
         let hint = windows_off("the ballot", true).to_string();
-        assert!(hint.contains("your own terminal") && hint.contains("--windows"));
+        assert!(hint.contains("your own terminal") && hint.contains("peerharness setup"));
     }
 }

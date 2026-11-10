@@ -518,11 +518,11 @@ impl Server {
 
 /// What the agent is told when the owner has not allowed a tool.
 fn not_allowed(initialized: bool, asked: Asked) -> String {
-    let how = "peerharness watch claude --install --windows";
+    let how = "peerharness setup";
     if !initialized {
         return format!(
             "PeerHarness is not set up on this machine. The user sets it up in their own \
-             terminal with `peerharness init` and then `{how}`. Tell them so and stop."
+             terminal with `{how}`. Tell them so and stop."
         );
     }
     match asked {
@@ -1064,10 +1064,10 @@ mod tests {
             (true, Asked::Rules),
         ] {
             let said = not_allowed(initialized, asked);
-            assert!(said.contains("peerharness watch claude --install --windows"));
+            assert!(said.contains("`peerharness setup`"));
             assert!(said.contains("their own terminal") && said.ends_with("and stop."));
         }
-        assert!(not_allowed(false, Asked::Nothing).contains("peerharness init"));
+        assert!(not_allowed(false, Asked::Nothing).contains("is not set up"));
     }
 
     #[test]

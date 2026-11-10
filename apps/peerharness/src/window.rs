@@ -2,7 +2,7 @@
 //!
 //! A consent step that was started inside a coding agent's session cannot be answered
 //! there: the session's input, its arguments and `--yes` all belong to the agent. When
-//! the owner has allowed it (`watch claude --install --windows`), a few such steps are
+//! the owner has allowed it (`peerharness setup`), a few such steps are
 //! put to the person in a window instead. This module shows that window and reports
 //! what was clicked. It knows nothing about consent: [`crate::consent`] decides when a
 //! window may be used and what its answer means.

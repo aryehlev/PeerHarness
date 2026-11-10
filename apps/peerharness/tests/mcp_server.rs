@@ -267,7 +267,7 @@ fn a_client_shakes_hands_lists_the_tools_and_is_answered_while_nothing_is_set_up
     // No node yet: every tool says so, or says what the owner has to run, and nothing
     // was created by asking.
     let said = client.fails("status", json!({}));
-    assert!(said.contains("peerharness init"), "{said}");
+    assert!(said.contains("peerharness setup"), "{said}");
     assert!(said.contains("their own terminal"), "{said}");
     client.fails("note", json!({ "rule": RULE }));
     assert!(!node.home.join("peerharness.db").exists());
@@ -310,10 +310,7 @@ fn a_tool_does_what_the_command_does_and_consent_stays_with_the_person() {
     ] {
         let said = client.fails(tool, arguments);
         assert!(said.contains("has not allowed this"), "{tool}: {said}");
-        assert!(
-            said.contains("watch claude --install --windows"),
-            "{tool}: {said}"
-        );
+        assert!(said.contains("peerharness setup"), "{tool}: {said}");
     }
     assert_eq!(node.run(&["status"])["circles"], json!([]));
     assert!(node.shown().is_empty());

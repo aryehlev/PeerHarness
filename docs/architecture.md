@@ -996,7 +996,7 @@ written down directly.
   but empty or `0`. This stops an agent that is trying to help. It is not a security
   boundary: a process that clears the variable is not stopped by it (ADR-022).
 * **Three steps can be asked in a window** (ADR-033). When the owner has turned it on
-  (`watch claude --install --windows`, stored as `[agent] windows` in `config.toml`,
+  (`peerharness setup`, or `watch claude --install --dialogs`; stored as `[agent] windows` in `config.toml`,
   off by default, never settable from a session), `proposal create`, `proposal vote` on
   an `adopt` proposal and `proposal adopt` go through `consent::confirm_or_window`.
   Inside a session that shows the exact preview in a window of the operating system
@@ -1028,6 +1028,12 @@ written down directly.
   checked values, never flags. A tool runs only at the level the owner allowed
   (`config::Asked`, read at every call). `stay_reachable` runs the daemon as a child
   for as long as the client keeps the server's input open.
+* **One command for the owner's part** (ADR-039). `peerharness setup`
+  (`apps/peerharness/src/commands/setup.rs`) runs `init` when there is no node, `watch
+  claude --install` with the windows where one can be shown, and Claude Code's `claude
+  mcp add` for this binary, each with its preview and confirmation. It is refused
+  inside a session before it does anything. The flag of `watch claude` is `--dialogs`
+  (`--windows` still works).
 
 ## 13. Privacy invariants (all crates)
 

@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -23,15 +23,15 @@ authors = ["PeerHarness contributors"]
 
 [workspace.dependencies]
 # internal
-ph-core = { path = "crates/ph-core", version = "0.2.0" }
-ph-protocol = { path = "crates/ph-protocol", version = "0.2.0" }
-ph-identity = { path = "crates/ph-identity", version = "0.2.0" }
-ph-store = { path = "crates/ph-store", version = "0.2.0" }
-ph-network = { path = "crates/ph-network", version = "0.2.0" }
-ph-observer = { path = "crates/ph-observer", version = "0.2.0" }
-ph-learning = { path = "crates/ph-learning", version = "0.2.0" }
-ph-governance = { path = "crates/ph-governance", version = "0.2.0" }
-ph-skills = { path = "crates/ph-skills", version = "0.2.0" }
+ph-core = { path = "crates/ph-core", version = "0.3.0" }
+ph-protocol = { path = "crates/ph-protocol", version = "0.3.0" }
+ph-identity = { path = "crates/ph-identity", version = "0.3.0" }
+ph-store = { path = "crates/ph-store", version = "0.3.0" }
+ph-network = { path = "crates/ph-network", version = "0.3.0" }
+ph-observer = { path = "crates/ph-observer", version = "0.3.0" }
+ph-learning = { path = "crates/ph-learning", version = "0.3.0" }
+ph-governance = { path = "crates/ph-governance", version = "0.3.0" }
+ph-skills = { path = "crates/ph-skills", version = "0.3.0" }
 
 # external (versions aligned with libp2p 0.57's own crypto stack)
 libp2p = { version = "0.57.1", default-features = false, features = ["quic", "request-response", "mdns", "tokio", "ed25519", "macros", "kad", "identify", "autonat", "relay", "dcutr", "tls", "yamux", "rsa"] }
