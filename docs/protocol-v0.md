@@ -865,8 +865,9 @@ Semantics:
 * For voting (section 14), a revoked device's ballots are not counted in any count made
   after the node learns of the revocation, and new decision events from it are
   rejected. The member it voted for stays on the roll, and the electorate keeps its
-  size, until an amendment changes the roll: a revocation can block but never pass
-  anything.
+  size, until an amendment changes the roll: a revocation adds no approval to
+  anything. The reference implementation makes every count again, so the ballots that
+  stop counting include ballots on proposals that had passed (section 14.9).
 
 ### 9.6 Charter
 
@@ -1502,7 +1503,9 @@ and 14.5), where a ballot that is not held yet is again a retryable condition.
   effect on each node that learns of it, needs no vote, and cannot be undone. It can
   only deny: the revoked device is no longer answered and its ballots are no longer
   counted, while its member stays on the roll and in every electorate (section 14.2), so
-  a revocation can keep a proposal from passing and can never make one pass.
+  a revocation can keep a proposal from passing and adds no approval to any. Denying
+  ballots that were already counted has an effect of its own: a proposal that had
+  passed with them is open again, a repeal included (section 14.9).
 * MEMBERSHIP events: authored by the credential subject.
 * QUESTION and ANSWER events: authored by a device on the roll of the circle's current
   charter whose roll entry covers the event scope (section 12.3). The root key cannot
@@ -1961,9 +1964,11 @@ one voter.
   approving.
 
 The proposal **reaches its threshold** iff the number of members who have approved is at
-least `need`. Because approvals only accumulate, this never reverts, and it does not
-depend on the order in which ballots arrive. Envelope `created_at` and `expires_at` of
-ballots and proposals play no part.
+least `need`. No ballot makes this revert, since an approval cannot be withdrawn, and it
+does not depend on the order in which ballots arrive. Envelope `created_at` and
+`expires_at` of ballots and proposals play no part. One thing does make it revert: a
+revocation that the node learns of later fails rule 7 for every ballot of that device,
+so a count made afterwards can fall below `need` (section 14.9).
 
 ### 14.3 Verifying a RESULT
 
@@ -2170,7 +2175,23 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
 * **Revocation is unilateral.** The root key holder can revoke any device without a vote
   (section 12.6). A revocation can only deny: the device is no longer answered and its
   approvals stop counting, the electorate keeps its size, so it can keep something from
-  passing and can never pass anything.
+  passing and adds no approval to anything.
+* **A revocation reaches back.** The reference implementation counts the proposals of
+  the current charter again whenever it settles a circle, and rule 7 of section 14.2
+  ignores a revoked device's ballots whenever they were cast. A proposal that had
+  passed only with such a ballot is open again on every node that learns of the
+  revocation: an adopted rule leaves the rule set, and a repeal lapses, which puts its
+  target back in force. Proposals a charter lists in `carried` are not counted again
+  (section 14.4). The root key holder can therefore undo, alone, a result that passed
+  by a margin of one. Whether a revocation should reach back is under review; a second
+  implementation should not rely on either answer yet.
+* **A revocation can keep a node from following the charter chain.** A decision event
+  whose author is revoked locally is rejected, not deferred (section 12.4), and a
+  RESULT that lists a revoked device's ballot does not verify (section 14.3). A node
+  that learns of a revocation before it has accepted a charter justified by such a
+  RESULT cannot accept that charter or any later one. In the reference implementation
+  this was reproduced when importing a file or a shared directory, whose records are
+  not in the order they were made. It is a defect, to be fixed.
 * **Questions follow the current roll at arrival.** A QUESTION or ANSWER is judged
   against the charter the receiving node holds when it arrives (section 12.4), so nodes
   that hold different charters at that moment can differ on whether they keep it.
@@ -2198,17 +2219,18 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   is therefore not understood by any node that predates it. Between released versions
   such a change needs a new schema version (and, for the wire, a new protocol id and
   `hello` version), and the golden vectors are regenerated.
-* `0.1` is a draft that has not been released, and three additions were made to it in
-  place, without a new version: the `STANCE` event type (section 8.9), the optional
-  `after` member of `fetch_events` (section 11.7) and the optional `circles` member of
-  `authenticated` (section 11.5). Every object that existed before is byte for byte what
-  it was: the golden vectors gained one entry and none changed, and a `fetch_events`
-  without a cursor and an `authenticated` without circles are encoded as before. A node
-  built before these additions rejects a STANCE as an unknown event type, without
+* `0.1` is a draft. Three additions were made to it in place, without a new version,
+  before the first release of the binary (v0.1.0), which already has all three: the
+  `STANCE` event type (section 8.9), the optional `after` member of `fetch_events`
+  (section 11.7) and the optional `circles` member of `authenticated` (section 11.5).
+  Every object that existed before is byte for byte what it was: the golden vectors
+  gained one entry and none changed, and a `fetch_events` without a cursor and an
+  `authenticated` without circles are encoded as before. A node built before these
+  additions, which no release is, rejects a STANCE as an unknown event type, without
   effect on anything else it holds or on the other events of the same batch; answers a
   `fetch_events` that carries `after` with `bad_request`; and fails to read an
-  `authenticated` that carries `circles`. A session between such a node and a current one
-  therefore fails as soon as one of these members is sent.
+  `authenticated` that carries `circles`. A session between such a node and a current
+  one therefore fails as soon as one of these members is sent.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.

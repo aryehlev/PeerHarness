@@ -1,17 +1,17 @@
-# PeerHarness security model (v0.1)
+# PeerHarness security model
 
 This document describes what PeerHarness protects, against whom, how, and what it does
 not protect. It is meant to be read before trusting PeerHarness with anything.
 
-**No security audit has been done.** PeerHarness v0.1 is a demo-grade release written to
-a specification, with automated tests but no independent review. It is not ready for
-production or enterprise use. Arrange a separate security review before deploying it in
-an organization.
+**No security audit has been done.** PeerHarness is a demo-grade, pre-1.0 project
+written to a specification, with automated tests but no independent review. It is not
+ready for production or enterprise use. Arrange a separate security review before
+deploying it in an organization.
 
 Scope: the `peerharness` binary and its crates, protocol v0 (`docs/protocol-v0.md`), on
 macOS and Linux. Windows is not supported. Mitigations at the library level are
 implemented in the crates named in each entry. Statements about CLI and daemon behaviour
-describe the v0.1 command and daemon contract for `apps/peerharness`. At this revision
+describe the command and daemon contract of `apps/peerharness`. At this revision
 the local commands, the governance commands and the transport (`daemon`, `connect`,
 `sync`) are wired and exercised end to end: signed events travel as a file, as a
 directory of record files, or between separate processes over QUIC. A file or directory
@@ -24,7 +24,7 @@ it must be given only to members.
 | asset | where it lives | why it matters |
 |---|---|---|
 | device private key | keystore: OS keychain (`os`), Argon2id + XChaCha20-Poly1305 encrypted file (`file`), or plaintext file (`insecure-dev`, explicit opt-in only) | whoever holds it *is* that member of every circle the device joined |
-| circle root private key | the founder's keystore only; never transmitted | whoever holds it can revoke any device and notarizes charter changes. It cannot change the roll or the voting rules without a passed vote, and a credential it signs gives nobody access or a voice (4.16) |
+| circle root private key | the founder's keystore only; never transmitted | whoever holds it can revoke any device, which also stops that device's earlier ballots from counting (4.16), and notarizes charter changes. It cannot change the roll or the voting rules without a passed vote, and a credential it signs gives nobody access or a voice (4.16) |
 | charter (voting rules and roll) | every member's `peerharness.db`, CHARTER events | decides who may vote and how many approvals pass a rule |
 | keystore passphrase | the user's head, a prompt, or `PEERHARNESS_PASSPHRASE` | unlocks the `file` keystore |
 | local observations | `peerharness.db` (SQLite, 0600) and the hook spool, local only, 14-day retention by default | redacted copies of the user's prompts to their coding agent |
@@ -201,16 +201,17 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   from syncing and from being counted on every node that learns of it, and the members
   can vote to replace the device or remove the member.
 * **Residual risk.** **A compromised endpoint cannot be defended against.** Malware
-  running as the user can read the database, the spool, the daemon token, an unlocked
-  key in memory, `PEERHARNESS_PASSPHRASE` from the environment, and anything the agent
-  sees. A stolen device with an unlocked session, a keychain that opens without a prompt,
-  or a weak passphrase gives the thief that member's identity, **including their vote**,
+  running as the user can read the database, the spool, an unlocked key in memory,
+  `PEERHARNESS_PASSPHRASE` from the environment, and anything the agent sees. A stolen
+  device with an unlocked session, a keychain that opens without a prompt, or a weak
+  passphrase gives the thief that member's identity, **including their vote**,
   until revocation reaches every peer: approvals signed with the stolen key count on
   each node until that node learns of the revocation. If the **founder's** device is
-  compromised, the attacker holds the root key. They cannot change the roll, pass rules
-  or give anyone access with it (4.16), but they can revoke any device and stall charter
-  changes, and there is no root key rotation or recovery in v0, so the circle must be
-  abandoned and recreated. The SQLite database is not encrypted at rest.
+  compromised, the attacker holds the root key. They cannot change the roll, add an
+  approval to anything or give anyone access with it (4.16), but they can revoke any
+  device, which also reopens results that needed that device's ballot, and stall
+  charter changes, and there is no root key rotation or recovery in v0, so the circle
+  must be abandoned and recreated. The SQLite database is not encrypted at rest.
 
 ### 4.7 Spam and denial of service
 
@@ -272,7 +273,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   does, and keeps counting that device's ballots. Nothing else bounds that window: an
   entry on the roll does not expire. Nodes
   that learn of a revocation at different times can therefore disagree about whether an
-  open proposal has passed; they converge at the next charter change, when the carried
+  open proposal has passed, or whether one that had passed with that device's ballot
+  still stands (4.16); they converge at the next charter change, when the carried
   rule list becomes the rule set everywhere. Revoking a device does not remove its
   member from the roll: that takes a vote. Revocation does not claw back anything already
   delivered (section 5).
@@ -402,15 +404,37 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     key. There is no vote, no appeal and no undo: that key can never be used in the
     circle again. Peers that hold the revocation stop answering the device, refuse what
     it signs from then on, and stop counting its ballots, including ones it cast before.
-    The limits are these. A revocation can block and never pass: the member stays on
-    the roll and in every electorate, so removing an approval makes a proposal harder
-    to pass, never easier, and a rule that was in force only with that approval may stop
-    being in force on nodes that learn of it. It does not change the roll: removing the
-    member, or giving them a new device, takes a vote. It cannot grant anything. The
-    command refuses to revoke the device it runs on, which guards against an accident,
-    not against the holder. A founder can use it against any member's device at any
-    time, and the members' only answers are to vote (the founder has one vote) or to
-    found another circle.
+    The limits are these. A revocation adds no approval to anything: the member stays
+    on the roll and in every electorate, so removing an approval makes a proposal
+    harder to pass, never easier. It does not change the roll: removing the member, or
+    giving them a new device, takes a vote. It cannot grant anything. The command
+    refuses to revoke the device it runs on, which guards against an accident, not
+    against the holder. A founder can use it against any member's device at any time,
+    and the members' only answers are to vote (the founder has one vote) or to found
+    another circle.
+  * **A revocation reaches back to results that had passed.** Nothing latches a
+    result: every count is made again from the ballots that still count. On each node
+    that learns of the revocation, a proposal that had passed only with the revoked
+    device's approval is open again. If it adopted a rule, the rule is no longer in
+    force and is removed from the members' agents. If it was a repeal, the repeal
+    lapses and the repealed rule is in force and installed again, also for members
+    who voted to repeal it. So the founder, alone, can undo any result that passed by
+    a margin of one, and this happens in the honest case of a lost laptop as well.
+    Only proposals that passed under the current charter are counted again: a rule
+    the current charter carries over stays (architecture 10.7).
+    `crates/ph-governance/tests/adversarial.rs`
+    (`founder_device_can_be_revoked_and_its_ballots_stop_counting`) shows the count
+    changing, and the preview of `circle revoke` says "including ballots it already
+    cast". Whether a revocation should reach back like this is under review.
+  * **After a revocation, an import can leave a member on the old charter.** A
+    decision event signed by a revoked device is refused for good by a node that
+    already knows the revocation, old ballots and results included. If such a result
+    is what justifies a later charter, a node that learns of the revocation before it
+    has accepted that charter cannot accept it. This was reproduced with an exported
+    file and with a shared directory, where the order of the records is not the order
+    in which they were made; importing again does not help, and the way out today is
+    `peerharness reset` and joining again. It contradicts "does not depend on arrival
+    order" below and is to be fixed.
   * **It can block.** It can refuse to notarize a passed amendment, which freezes the
     roll and the voting rules. Rules can still be proposed, passed and repealed.
   * **It can split.** If two conflicting amendments both pass, it chooses one; if it
@@ -452,7 +476,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   turns windows on.
 * **Windows for inviting and joining (ADR-037).** Three steps about who is in a circle
   can be asked the same way, under a setting of their own that the same command turns
-  on after previewing all six steps: proposing to admit a member, a ballot on an
+  on after previewing every step it allows: proposing to admit a member, a ballot on an
   amendment that admits one member and changes nothing else, and joining a circle.
   Windows that were turned on before these steps existed do not cover them. The window
   shows the device fingerprint or the root fingerprint and the whole charter, taken
@@ -460,7 +484,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   person. Inside a session `circle invite` writes no file with the circle's records.
   Removing a member, leaving, changing the rules of the vote, devices, revoking and
   every other ballot on the charter still refuse inside a session.
-* **The MCP server (ADR-038).** `peerharness mcp` offers an agent eleven fixed tools.
+* **The MCP server (ADR-038).** `peerharness mcp` offers an agent a fixed list of tools.
   It adds no way to consent: each tool runs the command as a child process marked as
   an agent's session, whatever environment the server was started in, so every
   consent step is asked in a window or refused as above. Arguments are checked values
@@ -541,10 +565,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   charter that every node holds (`ph_protocol::Charter`). A proposal names the charter
   it is voted under and passes only with approvals from more than that charter's
   threshold of the members entitled to vote on it, counted per person. No member has a
-  veto: `reject` and `revise` are recorded dissent. Approvals cannot be withdrawn, so
-  "passed" never reverts, and counting reads no clock and does not depend on arrival
-  order: two nodes holding the same ballots compute the same result
-  (`ph-governance::tally`). The charter changes only through a passed amendment that
+  veto: `reject` and `revise` are recorded dissent. A member cannot withdraw an
+  approval, and counting reads no clock and does not depend on arrival order: two nodes
+  holding the same ballots and the same revocations compute the same result
+  (`ph-governance::tally`). One thing takes a counted approval away, which is the
+  founder's revocation of the device that cast it (4.16). The charter changes only
+  through a passed amendment that
   carries the complete next roll, rules and list of carried rules, and a node's rule set
   after a change is exactly that list, so nodes converge. A proposal counts only under
   the **current** charter: members who have left cannot pass anything by signing under
@@ -558,6 +584,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
     both must approve everything.
   * **Compromised device window** (4.6, 4.9): its approvals count until each node
     learns of the revocation.
+  * **"Passed" can turn back after a revocation** (4.16): a result that needed the
+    revoked device's ballot is open again, and a repeal that needed it lapses. After
+    a revocation an import can also leave a node on the old charter (4.16).
   * **A majority decides.** Members outvoted on a rule still get it in a binding circle
     unless they opt out (4.10). A majority can also remove a member.
   * **Votes are public to the circle.** Ballots are signed and attributable, like a
@@ -801,7 +830,8 @@ intended.
   handles. A key can be shared, and a device can be re-enrolled with a new key.
 * **The root-key holder is still a single point of authority in v0.** It alone can cut
   a device off, without a vote, and it can stall charter changes. It cannot give anyone
-  access, change the roll or the voting rules, or pass a rule, alone (4.16).
+  access, change the roll or the voting rules, or add an approval to anything, alone.
+  Cutting a device off does undo results that needed that device's ballot (4.16).
 * **Votes are visible to the circle.** Every member who may read a proposal sees who
   approved it and who dissented, with their rationale. Circle-wide (`*`) decisions and
   all charter amendments are visible to every member. A member who was voted off is

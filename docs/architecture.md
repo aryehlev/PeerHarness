@@ -1,4 +1,4 @@
-# PeerHarness architecture and implementation contract (v0.1)
+# PeerHarness architecture and implementation contract
 
 This file is the internal contract shared by every crate. It fixes the decisions the
 specification leaves open so that crates written in parallel fit together. If you change
@@ -38,10 +38,11 @@ governance (section 10, ADR-012 onwards).
   ```
 
 * `peerharness daemon` runs the libp2p transport in the foreground and answers peers.
-  It never dials on its own and has no control endpoint. `daemon.json` records where it
-  listens, and it holds an exclusive lock on `daemon.lock` for as long as it runs: that
-  lock, which the operating system drops with the process, is how `status` knows a
-  daemon is running and why a home has at most one.
+  It dials on its own only when its owner started it with `--sync-every`, `--lan` or
+  `--internet` (section 7), and it has no control endpoint. `daemon.json` records
+  where it listens, and it holds an exclusive lock on `daemon.lock` for as long as it
+  runs: that lock, which the operating system drops with the process, is how `status`
+  knows a daemon is running and why a home has at most one.
 * `peerharness sync <address or peer id>` starts the transport for one exchange, without
   listening: it fetches what the peer has, sends what the peer lacks, and exits. It
   needs no daemon of its own and may run while this home's daemon is serving (SQLite
@@ -92,7 +93,7 @@ through types and traits defined in `ph-core` and `ph-protocol`.
 | ph-network | libp2p QUIC swarm with request/response, length-prefixed bounded codec, per-peer rate limits, async `NetworkHandle` API plus an inbound `RequestHandler` trait; it knows wire types but nothing about circles |
 | ph-observer | Claude Code hook payload parsing and normalization, idempotent settings.json install/remove with backups, spool, notification throttle |
 | ph-learning | `CandidateDetector` trait, deterministic correction detector, free-text notes (section 12.1), candidate dedup keys, skill-draft text, optional advisory agent providers (Claude Code CLI, Codex CLI, Ollama-compatible local endpoint) |
-| ph-governance | incoming-event authorization (by credential, by roll, by root key), read rules, counting a vote (`tally`), result certificates, the rules in force, charter succession and amendment drafting, the local adoption gate and `LocalPolicy`, conflict and supersede handling, question anti-spam (quotas, dedup, mute, block) |
+| ph-governance | incoming-event authorization (by the membership oracle, by roll, by embedded proof, by root key), read rules, counting a vote (`tally`), result certificates, the rules in force, charter succession and amendment drafting, the local adoption gate and `LocalPolicy`, conflict and supersede handling, question anti-spam (quotas, dedup, mute, block) |
 | ph-skills | strict SKILL.md frontmatter parser and validator (Agent Skills spec), the instruction-only rule for bundles, content risk scanner, bundle build and hostile-bundle validation, diff, atomic install, uninstall and rollback |
 
 ## 3. Encodings (ph-core)
@@ -118,12 +119,15 @@ All string encodings carry a self-describing prefix:
 * Roles: `owner`, `member`. Capabilities: `ask`, `answer`, `propose`, `vote`, `publish`,
   `invite`, `revoke`, `read`. `member` gets `read, ask, answer, propose, vote, publish`.
   `owner` gets all of them. Unknown roles grant nothing (reject at parse time).
-* Credential capabilities matter in one place in v0: `ask` and `answer` are checked for
-  QUESTION and ANSWER events. Who may propose, vote and publish a result is decided by
-  the roll of the charter (section 10), and so is who the transport answers and what
-  they may read (section 7, ADR-026), never by a credential capability. `owner`,
-  `invite` and `revoke` confer nothing either: the root key signs credentials and
-  revocations, and the roll changes only by vote.
+* Capabilities matter in one place in v0: `ask` and `answer` are what
+  `authorize_incoming` asks the membership oracle for when a QUESTION or ANSWER
+  arrives. The application backs that oracle with the roll of the circle's current
+  charter (`ph_governance::RollOracle`, ADR-027), in which every member has the
+  capabilities of the role `member`; no credential is consulted. Who may propose, vote
+  and publish a result is decided by the roll of the charter (section 10), and so is
+  who the transport answers and what they may read (section 7, ADR-026), never by a
+  credential capability. `owner`, `invite` and `revoke` confer nothing either: the
+  root key signs credentials and revocations, and the roll changes only by vote.
 
 ## 4. Signing (ph-protocol)
 
@@ -208,9 +212,13 @@ Validation (stateless part in ph-protocol, stateful part in ph-governance):
    and an `amend` PROPOSAL have scope `*`. The embedded credential and acceptance,
    revocation or charter is verified.
 5. Authorization (`ph_governance::authorize_incoming`):
-   * `QUESTION`, `ANSWER`: the author holds a valid, unexpired, unrevoked credential for
-     `circle_id` whose scopes cover `scope` and whose roles grant the capability (the
-     `MembershipOracle`), at local `now`.
+   * `QUESTION`, `ANSWER`: the membership oracle grants the author the capability
+     (`ask` or `answer`) for `circle_id` and `scope`, at local `now`
+     (`MembershipOracle::authorize`). The application passes `RollOracle`: the
+     author's device is on the roll of the circle's **current** charter, its roll
+     entry covers `scope`, and the device has no locally known revocation (ADR-027).
+     The oracle backed by credentials (`MembershipRegistry` in ph-identity) is
+     implemented and tested in the library and is not used by the application.
    * `PROPOSAL`: the charter it names is in this node's accepted chain for the circle
      (section 8, `charters`); the author is a device of a member in the proposal's
      electorate (section 10.3); the device has no locally known revocation.
@@ -272,9 +280,12 @@ Invite {
   membership statement in use. It decides who may propose, vote and publish a result,
   and it decides who the transport answers and what they may read (section 7, ADR-026).
   **Credentials** (per device, root-issued, expiring) stay in the protocol and the
-  library. In v0 they authorize only QUESTION and ANSWER events, which no CLI command
-  produces yet, and the founder's own is the only one the CLI issues. They are not
-  consulted for transport access, because the root key issues them without a vote.
+  library, and the application decides nothing by them. QUESTION and ANSWER events,
+  which `question send` and `question answer` produce, are authorized by the roll of
+  the current charter (ADR-027), and so is transport access (ADR-026), because the
+  root key issues credentials without a vote. The founder's own credential is the only
+  one the CLI issues. A MEMBERSHIP event is still verified by the proof it embeds, and
+  stored.
 * The root key also signs charters (`CircleAuthority::issue_founding_charter` and
   `issue_next_charter`). For every charter after the first it is a notary: nodes accept
   the charter only if a passed amendment justifies it (section 10.8).
@@ -287,7 +298,8 @@ Invite {
   them by hash (section 8, ADR-024), so the proposals and ballots from before the node
   joined verify and the rules the anchor carries arrive. The file may also be a
   directory of record files (ADR-025). The credential-based `Invite` object above is
-  for the network transport and is not used by the CLI yet.
+  implemented and tested in the library and is not used by the application: joining
+  from a member's node (ADR-028) does not use it either.
 
 ## 7. Wire protocol (ph-protocol `wire`, transported by ph-network)
 
@@ -363,7 +375,8 @@ any                                   ->  Error { code: "unauthorized"|"rate_lim
   (`sync_cursors`). Events it cannot place yet stay in a pool that is offered again
   with every later batch, and the fetch cursor moves only when that pool is empty; the
   push cursor moves up to the first event the peer refused. So a sync transfers what
-  is new, and no event is skipped for good because of the order it arrived in.
+  is new, and no event is skipped for good because of the order it arrived in. (One
+  known exception, after a revocation, is in 10.12.)
 * A node that accepts pushed `adopt` proposals whose bundle it lacks fetches those
   bundles back from the pusher over the same connection, then settles. The pusher's
   next request (other than `Hello` and `FetchBundle`) waits for that to finish, at most
@@ -516,9 +529,12 @@ ADR-023, ADR-024 and ADR-026.
 3. **Everyone runs the same rules.** The thresholds and the list of members are one
    signed object, the charter, that every node holds. Two nodes holding the same
    ballots reach the same outcome.
-4. **Outcomes are final and need no clock.** Approvals only accumulate. Once enough
-   exist the proposal has passed, on every node, for good. No deadline, no coordinator
-   and no agreed ordering of events is involved.
+4. **Outcomes need no clock, and no member can take one back.** An approval is never
+   withdrawn by the member who gave it. Once enough exist the proposal has passed on
+   every node that holds them. No deadline, no coordinator and no agreed ordering of
+   events is involved. One thing takes counted approvals away: the root's revocation
+   of the device that cast them (10.8, "Emergency"). A result that needed one of them
+   is then open again (10.12).
 5. **A passed rule takes effect.** In a binding circle a passed rule is installed for
    every member's agent. A member may opt out of a single rule.
 6. **Some things are not up for a vote.** Section 10.10 lists rights that no majority
@@ -655,8 +671,10 @@ already binds every byte of it.
   is shown with its rationale. They do not affect the count. Nobody holds a veto.
 * A member may go from `reject` or `revise` to `approve` by casting another ballot.
 
-Because the set of approvals only grows, "passed" never turns back into "not passed",
-and the result does not depend on the order in which ballots arrive.
+No member can shrink the set of approvals, and the result does not depend on the order
+in which ballots arrive. Only a revocation takes approvals out of the count, all of the
+revoked device's at once (10.8). In that one case "passed" can turn back into "not
+passed" (10.12).
 
 ### 10.6 Passing, and the result certificate
 
@@ -681,7 +699,8 @@ accepts it only if:
 
 A node that already holds those ballots reaches the same conclusion without the
 certificate. Verification uses no clock, so a certificate that verifies today verifies
-forever. Several `RESULT`s for one proposal may exist and all are equivalent.
+at any later time, unless a device whose ballot it lists has been revoked since.
+Several `RESULT`s for one proposal may exist and all are equivalent.
 
 ### 10.7 Rules in force
 
@@ -751,8 +770,10 @@ votes keep working meanwhile.
 * **Devices.** Adding or replacing a member's device is an amendment to the roll.
 * **Emergency.** A `REVOCATION` from the root still cuts a device off at once
   (section 6). New ballots from it are refused and its ballots are not counted in
-  tallies and certificates verified after the revocation is known. It can therefore
-  block but never pass anything, and it does not change the size of the electorate.
+  tallies and certificates verified after the revocation is known. That includes
+  ballots on proposals that had already passed under the current charter: nothing
+  latches a result, so such a proposal is open again (10.12). A revocation adds no
+  approval to anything, and it does not change the size of the electorate.
   This is the one thing the founder's node does alone (`circle revoke`, ADR-027): it
   refuses to revoke the device it runs on, and removing the member from the roll is
   still a vote.
@@ -843,8 +864,8 @@ switch them off.
    installed without the owner's explicit confirmation, in any mode.
 5. **You can refuse.** Opt-out always works and only changes your machine. A node that
    is no longer on the roll removes what the circle's votes installed (section 10.9).
-   Leaving on your own is not written yet: today a member leaves the roll by a vote
-   (`circle remove`), like any other change to it.
+   Leaving acts on your own machine at once (`circle leave`). The roll changes only
+   by the vote it starts, like any other change to it (ADR-027).
 6. **Verify before acting.** A node acts on a result or a charter only after verifying
    it itself. A `RESULT` and a root-signed `CHARTER` have no authority of their own.
 
@@ -878,9 +899,30 @@ Outcomes depend on signatures and on the charter, never on a clock.
   is then no member's peer: it can notarize later amendments only from records carried
   to it as a file or directory.
 * **The founder's revocation is unilateral.** The root key can cut off any device key
-  without a vote. It cannot pass anything with that power, and every member sees the
-  revocation and its reason, but nothing stops a founder from using it against a
-  member they disagree with. The remedy is a new circle.
+  without a vote. It adds no approval to anything with that power, and every member
+  sees the revocation and its reason, but nothing stops a founder from using it against
+  a member they disagree with. The remedy is a new circle.
+* **A revocation reaches back to results that had passed.** `rule_set` counts every
+  proposal of the current charter again on each call, and `tally` ignores every ballot
+  of a device with a locally known revocation, whenever it was cast. A proposal that
+  had passed only with such a ballot is therefore open again on each node that learns
+  of the revocation. If it adopted a rule, the rule leaves the rule set and is
+  uninstalled. If it was a repeal, the repeal lapses and its target is in force and
+  installed again. Rules listed in `carried` are not counted again (10.7), so they
+  stay. The holder of the root key can in this way undo any result of the current
+  charter that passed by a margin of one, alone, and the honest revocation of a lost
+  device does the same. `crates/ph-governance/tests/adversarial.rs`
+  (`founder_device_can_be_revoked_and_its_ballots_stop_counting`) shows the count
+  changing. Whether a revocation should reach back is under review.
+* **A revocation can strand a node on an old charter.** `authorize_by_roll` refuses a
+  decision event from a locally revoked author, and that refusal is not retryable.
+  `verify_result` and `check_successor` are given the same revocations. A node that
+  stores a revocation before it has accepted a charter whose justifying result the
+  revoked device signed, or whose listed ballots it cast, can then not accept that
+  charter, and refuses every later one as not following its own. This was reproduced
+  with `events import` and with a shared directory, where records are not read in the
+  order they were made. The node's owner has to `reset` and join again. It is a
+  defect: the outcome depends on the order of arrival, against 10.7 and 10.11.
 * **Founder equivocation.** If two different amendments both pass under one charter,
   which needs some member to approve both, the root chooses which to notarize. A root
   that signs two successors can split the circle: a node keeps the first valid one it
@@ -1009,9 +1051,9 @@ written down directly.
   as before. The reporting skill then also names these three commands and `inbox`, and
   says that only the user's click decides.
 * **So can three steps about who is in a circle** (ADR-037), under a setting of their
-  own (`[agent] circle_windows`, turned on by the same command, which then previews all
-  six): `circle invite`, `proposal vote` on an amendment that admits one member and
-  changes nothing else, and `circle join`. They go through
+  own (`[agent] circle_windows`, turned on by the same command, which then previews
+  every step it allows): `circle invite`, `proposal vote` on an amendment that admits
+  one member and changes nothing else, and `circle join`. They go through
   `consent::confirm_circle_or_window`. The admission windows name the device
   fingerprint from the amendment and tell the owner to check it with the invitee; the
   join window is the terminal's preview, with the root fingerprint and the whole
@@ -1022,7 +1064,7 @@ written down directly.
   fingerprints taken only from what the user said in the conversation.
 * **The same steps as MCP tools** (ADR-038). `peerharness mcp`
   (`apps/peerharness/src/mcp.rs`) is a Model Context Protocol server on standard input
-  and output with a fixed list of eleven tools. Each tool is a fixed command line run
+  and output with a fixed list of tools. Each tool is a fixed command line run
   as a child process of this binary with `PEERHARNESS_AGENT_SESSION` set, so consent
   is asked or refused by the code above and by nothing in the server. Arguments are
   checked values, never flags. A tool runs only at the level the owner allowed
