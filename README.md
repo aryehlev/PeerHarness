@@ -10,23 +10,57 @@ itself.
 
 Agents can suggest rules. Only people decide: no step that approves, shares, votes or
 installs can be answered from inside an agent's session. If you allow it, your agent
-can put a proposal or a ballot in front of you in a window, and your click decides.
+can put a proposal, a ballot or an invitation in front of you in a window, and your
+click decides.
 
-> **Status: v0.1.0, early and not audited.** What this page describes works.
+> **Status: v0.2.0, early and not audited.** What this page describes works.
 > [What works today](#what-works-today) says how each part was tested and
 > [Known limits](#known-limits) says what is missing. Read both before relying on it.
 
-## Install and see it run
+## Set it up
+
+On macOS with Claude Code, run these four lines once, in your own terminal:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
-peerharness demo
+peerharness init
+peerharness watch claude --install --windows
+claude mcp add --scope user peerharness -- peerharness mcp
 ```
 
-The script downloads the release binary for your machine (macOS and Linux, Intel and
-ARM), checks it against the release's `SHA256SUMS` and puts it in `~/.local/bin`. It
-uses no `sudo` and changes nothing else. To build from source instead, with Rust 1.89
-or newer: `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
+| Line | What it does |
+|---|---|
+| 1 | Downloads the release binary for your machine, checks it against the release's `SHA256SUMS` and puts it in `~/.local/bin`. No `sudo`, and nothing else is changed |
+| 2 | Creates your key and your database |
+| 3 | Connects PeerHarness to Claude Code. It shows you what your agent may start and what it never decides, and asks you to confirm. `--windows` means the confirmation windows on your screen, not the operating system |
+| 4 | Gives Claude Code those steps as tools |
+
+Then open Claude Code and ask. Each decision opens a window on your screen with the
+exact text, and only your click on Proceed counts:
+
+| You say | What happens |
+|---|---|
+| "No, use pnpm here, not npm" | It does that, and notes the rule for you to review |
+| "What is my PeerHarness device key?" | It reads the key out. Whoever wants to join a team sends theirs to a member |
+| "Create a PeerHarness team called team" | It founds the circle and shows its root fingerprint |
+| "Invite Bob to team, his device key is ed25519:…" | A window names Bob's device. Proceed admits him, and the agent tells you what to send him: a peer id and the fingerprint |
+| "Join that team: peer id 12D3…, fingerprint dd63-…" | A window shows the fingerprint and who is in the circle. Proceed joins |
+| "Propose that rule to the team", "vote approve on it" | A window shows the exact rule. Proceed shares it, or signs your ballot |
+| "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
+
+Tell the fingerprint by phone or in person: it is how the one who joins knows the
+circle is yours.
+
+On Linux, with another agent or with none, everything works from a terminal: see
+[Start alone](#start-alone) and [Use it with your team](#use-it-with-your-team). To
+build from source instead of line 1, with Rust 1.89 or newer:
+`cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
+
+## See it run
+
+```sh
+peerharness demo
+```
 
 The demo creates three members and one outsider in a temporary folder, each with its
 own key and database. Nothing in your home or in `~/.claude` is read or changed. Its
@@ -115,19 +149,18 @@ peerharness review <candidate-id> --approve
 peerharness skills install <name>
 ```
 
-To have your agent report corrections by itself, run `peerharness watch claude
---install`. It shows what it adds before it adds anything: two hooks that store
-redacted observations locally, and a small skill that asks the agent to note a rule
-when you correct it. The note waits in `peerharness inbox`; approving it stays yours.
+`peerharness watch claude --install` is what lets your agent report corrections by
+itself. It shows what it adds before it adds anything: two hooks that store redacted
+observations locally, and a small skill that asks the agent to note a rule when you
+correct it. The note waits in `peerharness inbox`; approving it stays yours.
 `peerharness watch claude --remove` takes it out again.
 
-On macOS, add `--windows` to decide without leaving the agent. When you tell it
-"propose that to the team" or "vote approve on it", a window opens on your screen with
-the exact text and the buttons Cancel and Proceed. Only your click on Proceed counts:
-the agent cannot answer the window and `--yes` does not skip it. It covers proposing a
-rule, your ballot on one, installing one that passed, inviting someone, your ballot on
-admitting someone and joining a circle. Everything else, and any text too long to show
-in full, still needs your own terminal.
+With `--windows` (macOS) you also decide without leaving the agent. A window opens
+with the exact text and the buttons Cancel and Proceed. Only your click on Proceed
+counts: the agent cannot answer the window and `--yes` does not skip it. It covers
+proposing a rule, your ballot on one, installing one that passed, inviting someone,
+your ballot on admitting someone and joining a circle. Everything else, and any text
+too long to show in full, still needs your own terminal.
 
 To experiment without touching your real setup:
 
@@ -142,38 +175,15 @@ peerharness init --keystore insecure-dev --insecure-dev-keystore   # plaintext k
 Each member runs their own node. With `--internet`, nodes find each other from
 anywhere by peer id: no address, no port forwarding, no server of ours.
 
-### From inside Claude Code (macOS)
+From inside Claude Code you ask your agent, as in [Set it up](#set-it-up): one of you
+creates the team and invites, the other joins. With three or more members, admitting
+someone takes the others' votes too, asked in the same kind of window. The agent keeps
+your node reachable only while its session is open; for a node that stays up, run the
+daemon yourself (below). Without the `claude mcp add` line the agent runs the same
+commands from a skill, and you start the daemon. Other agents that speak MCP can use
+`peerharness mcp` too; only Claude Code was tried.
 
-Each of you runs this once, in your own terminal. It is the step that allows the rest:
-
-```sh
-peerharness init
-peerharness watch claude --install --windows
-claude mcp add --scope user peerharness -- peerharness mcp
-```
-
-The second line shows you what your agent may start and what it never decides. The
-third gives it those steps as tools. From then on you ask your agent, and decide in
-the window it opens:
-
-| You say | What happens |
-|---|---|
-| "What is my PeerHarness device key?" | It reads the key out. Whoever wants to join sends theirs to a member |
-| "Create a PeerHarness team called team" | It founds the circle and shows its root fingerprint |
-| "Invite Bob to team, his device key is ed25519:…" | A window names Bob's device. Proceed admits him, and the agent tells you what to send him: a peer id and the fingerprint |
-| "Join that team: peer id 12D3…, fingerprint dd63-…" | A window shows the fingerprint and who is in the circle. Proceed joins |
-| "Propose that rule to the team", "vote approve on it" | A window shows the exact rule. Proceed shares it, or signs your ballot |
-| "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
-
-Tell the fingerprint by phone or in person: it is how the one who joins knows the
-circle is yours. With three or more members, admitting someone takes the others' votes
-too, asked in the same kind of window. The agent keeps your node reachable only while
-its session is open; for a node that stays up, run the daemon yourself (below).
-Without the `claude mcp add` line the agent runs the same commands from a skill, and
-you start the daemon. Other agents that speak MCP can use `peerharness mcp` too; only
-Claude Code was tried.
-
-### In a terminal
+### In a terminal, on any platform
 
 ```sh
 # Both: create a node. `peerharness status` prints its device key and peer id.
@@ -298,9 +308,9 @@ command has `--help`.
 | Finding members on a local network (`--lan`) | works on macOS; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
 | Deciding in a window from inside Claude Code (`watch claude --install --windows`) | macOS only. Rules, inviting and joining are tested end to end with a stand-in window. The real window was tried by hand for opening, closing unanswered and refusing a text that does not fit; clicking its buttons was not. Joining in a window fits a circle of up to about five members on a laptop screen; a larger one is joined from the terminal |
-| The same steps as tools (`peerharness mcp`) | tested end to end with a scripted client, a stand-in window and a stand-in network. Run by hand with Claude Code 2.1.322 on macOS: asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable until the session ended. That is three runs, not a measure of how often an agent gets it right. Other MCP clients were not tried |
+| The same steps as tools (`peerharness mcp`) | tested end to end with a scripted client, a stand-in window and a stand-in network. Run by hand with Claude Code 2.1.322 on macOS, before the release: asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable until the session ended. That is three runs, not a measure of how often an agent gets it right. The server in the released v0.2.0 binary was checked with a scripted client. Other MCP clients were not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | tested end to end with separate processes and a stand-in notification. The real macOS notification was run once by hand: the system accepted it, and whether the banner shows depends on your notification settings for Script Editor |
-| The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.1.0 on an Apple Silicon Mac. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet |
+| The install script and the release binaries | the script is tested against a stand-in release (a matching checksum installs, a changed archive does not) and was run by hand against v0.2.0 on an Apple Silicon Mac: the checksum matched and the installed binary ran the demo. All four archives match `SHA256SUMS`. The Intel Mac binary ran the demo under Rosetta. The two Linux binaries were built by the release workflow and have not been run yet. The README packed inside the v0.2.0 archives still says v0.1.0 in its status line |
 | Windows | not supported yet |
 
 ## Known limits
@@ -321,7 +331,12 @@ command has `--help`.
 * **The agent guard is not a wall.** Consent steps recognize an agent's session by an
   environment variable. That stops an agent that is trying to help, not a process that
   hides the variable on purpose. With `--windows` your agent chooses when a window
-  appears; reading what it shows before you click is your part.
+  appears; reading what it shows before you click is your part. The click that
+  decides most is the one that joins a circle: its rules are then installed for your
+  agent.
+* **A node is reachable only while a daemon runs.** That is one you start yourself, or
+  the one your agent runs while its session is open. There is no background service
+  yet: a sync reaches only the members whose daemon is running at that moment.
 * **Confirmation windows are macOS only**, and need a key in the OS keychain (the
   default there). On Linux every decision still needs your own terminal.
 * **Internet mode identifies your device to strangers.** Servers run by volunteers see

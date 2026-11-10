@@ -119,6 +119,16 @@ fn a_release_that_matches_its_checksum_is_installed_and_runs() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(said.contains("Checksum matches SHA256SUMS"), "{said}");
     assert!(said.contains("is not on your PATH"), "{said}");
+    // It ends with the lines that set PeerHarness up for an agent.
+    assert!(said.contains("  peerharness init\n"), "{said}");
+    assert!(
+        said.contains("  peerharness watch claude --install"),
+        "{said}"
+    );
+    assert!(
+        said.contains("  claude mcp add --scope user peerharness -- peerharness mcp\n"),
+        "{said}"
+    );
 
     // Exactly one file, executable, and it is the binary.
     let entries: Vec<_> = std::fs::read_dir(&release.bin)

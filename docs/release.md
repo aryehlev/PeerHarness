@@ -125,20 +125,28 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
 2. Update the version in the root `Cargo.toml` (`[workspace.package] version` and the
    `version` of the internal path dependencies under `[workspace.dependencies]`), run
    `cargo build` so `Cargo.lock` is updated, and commit both.
-3. Note in the release notes draft: user-visible changes, protocol version, database
+3. Update `README.md` in the same pull request, every time. Its status line names the
+   version being released. Read "What works today" and "Known limits" again against
+   what this release contains, and check each command the README shows against the
+   binary. The README is packed into every archive, so what is tagged is what people
+   read.
+4. Note in the release notes draft: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`.
-4. Tag and push:
+5. Tag and push:
 
    ```sh
    git tag -a v0.1.0 -m "PeerHarness v0.1.0"
    git push origin v0.1.0
    ```
 
-5. Watch the Release workflow. When it finishes, download one archive and verify it as
+6. Watch the Release workflow. When it finishes, download one archive and verify it as
    below before announcing the release. Then run the install script once on a clean
    machine or with `PEERHARNESS_INSTALL_DIR=$(mktemp -d)`: it only works for a
    published release of a public repository.
-6. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
+7. Say in the README what was checked on the published release ("What works today",
+   the row about the install script and the release binaries), and what was not. Open
+   that pull request right away: it is part of the release, not a follow-up.
+8. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
    and tag again. Never replace the assets of a published release; publish a new patch
    version instead.
 
