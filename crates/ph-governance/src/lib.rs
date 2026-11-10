@@ -44,10 +44,12 @@
 //! approved; a RESULT is only a list of ballots to check; a charter is accepted only
 //! when a passed amendment justifies it. None of this consults a clock, so two nodes
 //! holding the same records reach the same outcome and an outcome never changes later.
-//! What a vote cannot do is fixed in code rather than in the charter: it cannot widen
-//! read access ([`read`] never looks at ballots), it cannot make a node install a bundle
-//! that fails its digest or validity checks, and it cannot bypass the owner's opt-out
-//! ([`adoption`]). No accepted action depends on trusting model-generated decisions.
+//! Who may read a circle's records is the roll itself ([`RollOracle`]): it changes only
+//! by a passed amendment, and no vote on a rule changes it ([`read`] never looks at
+//! ballots). What a vote cannot do is fixed in code rather than in the charter: it
+//! cannot make a node install a bundle that fails its digest or validity checks, and it
+//! cannot bypass the owner's opt-out ([`adoption`]). No accepted action depends on
+//! trusting model-generated decisions.
 //!
 //! ## Privacy
 //!
@@ -64,6 +66,7 @@ pub mod policy;
 pub mod questions;
 pub mod read;
 pub mod result;
+pub mod roll_oracle;
 pub mod ruleset;
 pub mod succession;
 pub mod tally;
@@ -91,6 +94,7 @@ pub use read::{
     filter_readable, may_fetch_bundle, may_read, may_read_event, recipients, recipients_for_event,
 };
 pub use result::{verify_result, ResultError};
+pub use roll_oracle::RollOracle;
 pub use ruleset::{
     carried_diff, rules_in_force, Basis, CarriedDiff, NotPassed, Passed, Rule, RuleSet,
 };
