@@ -21,10 +21,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Context, Result};
 use ph_core::{CircleId, DeviceKey, Digest, EventId, Scope, Timestamp};
 use ph_governance::{
-    authorize_incoming, check_answer_reference, check_repeal_reference, check_successor,
-    check_supersedes_reference, normalize_question_text, rules_in_force, tally, verify_result,
-    DecisionRecords, GuardDecision, Passed, ProposalView, QuestionContext, QuestionGuard,
-    Reference, ResultView, RuleSet, Tally, VoteView,
+    authorize_incoming, carried_diff, check_answer_reference, check_repeal_reference,
+    check_successor, check_supersedes_reference, normalize_question_text, rules_in_force, tally,
+    verify_result, DecisionRecords, GuardDecision, Passed, ProposalView, QuestionContext,
+    QuestionGuard, Reference, ResultView, RuleSet, Tally, VoteView,
 };
 use ph_identity::CircleAuthority;
 use ph_protocol::{
@@ -35,6 +35,8 @@ use ph_protocol::{
 use ph_skills::{Bundle, BundleStore};
 use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, QuestionStatus, Store};
 use serde_json::{json, Value};
+
+use crate::amendment::{self, Changes};
 
 /// [`DecisionRecords`] over the local store: accepted charters and stored proposals.
 pub struct StoreRecords<'a>(pub &'a Store);
@@ -192,6 +194,77 @@ pub fn rule_set(
     }
     let rules = rules_in_force(&charter, &passed);
     Ok((charter, rules, tallies))
+}
+
+/// What the amendment `proposal` would change, for showing to the person who is about
+/// to vote on it (see [`crate::amendment`]). Everything comes from signed records this
+/// node holds: the proposal's `next` content against the charter the proposal names,
+/// and its `carried` list against the rules in force here ([`carried_diff`]). A listed
+/// id that is not in force is looked up as an `adopt` proposal of the same circle, and
+/// its rule's text in `bundles`.
+///
+/// `Ok(None)` when `proposal` is not an amendment, or when this node does not hold the
+/// charter it names: then nothing can be said about what it changes.
+///
+/// This shows; it decides nothing. Whether the amendment passes is [`count`]'s.
+pub fn amendment_changes(
+    store: &Store,
+    bundles: &BundleStore,
+    proposal: &ProposalView,
+    me: &DeviceKey,
+) -> Result<Option<Changes>> {
+    let Some(next) = proposal.amend_next() else {
+        return Ok(None);
+    };
+    let circle = proposal.circle_id();
+    let Some(named) = store.charter_by_digest(&circle, &proposal.charter())? else {
+        return Ok(None);
+    };
+    let (current, in_force, _) = rule_set(store, &circle)?;
+    let rules = if proposal.charter() == current.digest()? {
+        let diff = carried_diff(&next.carried, &in_force);
+        let dropped = diff
+            .dropped
+            .iter()
+            .filter_map(|id| in_force.by_proposal(id))
+            .map(|rule| amendment::Dropped {
+                skill_name: rule.skill_name().to_owned(),
+                proposal_id: rule.proposal_id(),
+            })
+            .collect();
+        let added = diff
+            .added
+            .iter()
+            .map(|id| amendment::Added {
+                proposal_id: *id,
+                rule: proposal_view(store, id)
+                    .ok()
+                    .filter(|p| p.circle_id() == circle)
+                    .and_then(|p| {
+                        p.adopt().map(|adopt| amendment::AddedRule {
+                            skill_name: adopt.skill_name.clone(),
+                            text: bundles.get(&adopt.bundle_digest).ok(),
+                        })
+                    }),
+            })
+            .collect();
+        amendment::Rules::Compared {
+            in_force: in_force.len(),
+            dropped,
+            added,
+        }
+    } else {
+        amendment::Rules::Lapsed {
+            current_seq: current.seq,
+        }
+    };
+    Ok(Some(amendment::changes(
+        named.seq,
+        &named.content,
+        next,
+        rules,
+        Some(me),
+    )))
 }
 
 /// Offers one event to this node: validates, authorizes and verifies it, then stores it
@@ -1402,6 +1475,201 @@ mod tests {
         validate_stateless(raw, Timestamp::now())
             .unwrap()
             .event_id()
+    }
+
+    /// A proposal signed by `seed`'s device under the node's current charter, as raw
+    /// bytes: what any member's client can send, a modified one included.
+    fn proposal(
+        store: &Store,
+        seed: u8,
+        circle: &CircleId,
+        title: &str,
+        action: ph_protocol::ProposalAction,
+        now: Timestamp,
+    ) -> Vec<u8> {
+        let charter = current_charter(store, circle).unwrap().digest().unwrap();
+        EnvelopeBuilder::new(
+            *circle,
+            Scope::all(),
+            EventBody::Proposal(ProposalBody {
+                charter,
+                title: title.into(),
+                summary: String::new(),
+                action,
+            }),
+        )
+        .sign(&key(seed), now)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    /// What a voter on device `me` is shown about the amendment `raw`.
+    fn shown(store: &Store, bundles: &BundleStore, raw: &[u8], me: u8) -> Changes {
+        let view = proposal_view(store, &id_of(raw)).unwrap();
+        amendment_changes(store, bundles, &view, &device(me))
+            .unwrap()
+            .expect("the named charter is on this node")
+    }
+
+    /// The first attack of the launch audit (sec-1), as a modified client signs it: an
+    /// amendment titled "Admit dave" that admits dave and also replaces another
+    /// member's device key. What the voter is shown is read from the signed content.
+    #[test]
+    fn a_mislabelled_amendment_is_described_by_what_it_signs() {
+        let (store, circle, now) = node();
+        let dir = tempfile::tempdir().unwrap();
+        let bundles = BundleStore::new(dir.path());
+        let mut next = current_charter(&store, &circle).unwrap().content.clone();
+        next.roll.retain(|e| e.member != "alice");
+        next.roll
+            .push(RollEntry::new("alice", vec![device(9)], vec![Scope::all()]));
+        next.roll
+            .push(RollEntry::new("dave", vec![device(4)], vec![Scope::all()]));
+        next.normalize();
+        let raw = proposal(
+            &store,
+            2,
+            &circle,
+            "Admit dave",
+            ph_protocol::ProposalAction::Amend { next },
+            now,
+        );
+        assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+
+        let changes = shown(&store, &bundles, &raw, 1);
+        let said = changes.describe("");
+        assert!(
+            said.contains(&format!(
+                "admits dave (device {}, scopes *)",
+                device(4).fingerprint()
+            )),
+            "{said}"
+        );
+        assert!(said.contains(&format!(
+            "alice (you) gets device {} as well: whoever holds it can sign and vote as alice",
+            device(9).fingerprint()
+        )));
+        assert!(said.contains(&format!(
+            "alice (you) loses device {}",
+            device(1).fingerprint()
+        )));
+        assert!(said.contains("none of the devices alice has now stays"));
+        // The title is no part of it.
+        assert!(!said.contains("Admit dave"));
+        assert_eq!(changes.unread(), None);
+        // Something that is not an amendment has no such description.
+        let other = proposal(
+            &store,
+            2,
+            &circle,
+            "Repeal nothing",
+            ph_protocol::ProposalAction::Repeal {
+                target: EventId::from_digest(Digest::sha256(b"x")),
+            },
+            now,
+        );
+        let view = ProposalView::from_verified(&validate_stateless(&other, now).unwrap()).unwrap();
+        assert!(amendment_changes(&store, &bundles, &view, &device(1))
+            .unwrap()
+            .is_none());
+    }
+
+    /// The second attack (sec-1): an amendment whose `carried` list names an `adopt`
+    /// proposal nobody voted on. Approving it would put that rule in force, so the
+    /// voter's node names the rule and holds an approval back until it can show the
+    /// text.
+    #[test]
+    fn a_carried_rule_nobody_voted_on_is_named_and_must_be_readable() {
+        use crate::amendment::Unread;
+
+        let (store, circle, now) = node();
+        let dir = tempfile::tempdir().unwrap();
+        let bundles = BundleStore::new(dir.path());
+        let md = "---\nname: team-conventions\ndescription: Conventions.\n---\n\n# Rule\n\n\
+                  this text was never put to a vote\n";
+        let bundle = ph_skills::build_bundle(md, Some("team-conventions")).unwrap();
+        let unvoted = proposal(
+            &store,
+            2,
+            &circle,
+            "Conventions",
+            ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+                skill_name: bundle.name().to_owned(),
+                description: bundle.description().to_owned(),
+                bundle_digest: bundle.digest(),
+                bundle_size: bundle.size(),
+                related_question: None,
+                supersedes: None,
+            }),
+            now,
+        );
+        assert_eq!(ingest(&store, &unvoted, None, now).unwrap(), Ingest::Stored);
+        // No ballot exists on it, and it is not in force.
+        assert!(rule_set(&store, &circle).unwrap().1.is_empty());
+
+        let mut next = current_charter(&store, &circle).unwrap().content.clone();
+        next.roll
+            .push(RollEntry::new("dave", vec![device(4)], vec![Scope::all()]));
+        next.normalize();
+        let amend = |carried: Vec<EventId>| {
+            let mut next = next.clone();
+            next.carried = carried;
+            next.normalize();
+            let raw = proposal(
+                &store,
+                2,
+                &circle,
+                "Admit dave",
+                ph_protocol::ProposalAction::Amend { next },
+                now,
+            );
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+            raw
+        };
+
+        // The rule's text is not on this node: it is named, and an approval is held back.
+        let raw = amend(vec![id_of(&unvoted)]);
+        let changes = shown(&store, &bundles, &raw, 1);
+        assert_eq!(changes.unread(), Some(Unread::Text));
+        let said = changes.describe("");
+        assert!(
+            said.contains("rule team-conventions comes into force without a vote of its own"),
+            "{said}"
+        );
+        assert!(said.contains("its text is not on this node yet"));
+        assert!(!said.contains("never put to a vote"));
+
+        // With the text here, the voter is shown it.
+        bundles.put(&bundle).unwrap();
+        let changes = shown(&store, &bundles, &raw, 1);
+        assert_eq!(changes.unread(), None);
+        assert!(changes
+            .describe("")
+            .contains("| this text was never put to a vote"));
+
+        // A listed id that is no rule proposal here cannot be described at all: one this
+        // node does not hold, and one that is another kind of proposal.
+        let stranger = amend(vec![EventId::from_digest(Digest::sha256(b"nowhere"))]);
+        assert_eq!(
+            shown(&store, &bundles, &stranger, 1).unread(),
+            Some(Unread::Proposal)
+        );
+        let not_a_rule = amend(vec![id_of(&raw)]);
+        let changes = shown(&store, &bundles, &not_a_rule, 1);
+        assert_eq!(changes.unread(), Some(Unread::Proposal));
+        assert!(changes
+            .describe("")
+            .contains("which is not a rule proposal this node holds"));
+
+        // An honest list carries exactly the rules in force (none here): nothing to read.
+        let honest = amend(Vec::new());
+        let changes = shown(&store, &bundles, &honest, 1);
+        assert_eq!(changes.unread(), None);
+        assert!(changes
+            .describe("")
+            .contains("the rules in force stay as they are (0 in force)"));
     }
 
     #[test]

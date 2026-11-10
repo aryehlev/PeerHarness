@@ -205,6 +205,33 @@ fn admission_lines(entry: &RollEntry, seq: u64) -> String {
     )
 }
 
+/// Who signed a proposal: the member the roll of the charter it names lists the signing
+/// device under, and the device. The handle comes from the signed charter.
+fn proposer(node: &Node, p: &ProposalView) -> Result<String> {
+    let fingerprint = p.author().fingerprint();
+    let member = node
+        .store
+        .charter_by_digest(&p.circle_id(), &p.charter())?
+        .and_then(|c| c.content.member_of(&p.author()).map(|e| e.member.clone()));
+    Ok(match member {
+        Some(m) => format!("{m} (device {fingerprint})"),
+        None => format!("device {fingerprint}"),
+    })
+}
+
+/// The title of an amendment, shown for what it is: a line its proposer wrote. It comes
+/// after the description read from the signed content and is never that description.
+fn proposers_words(title: &str) -> String {
+    format!(
+        "The proposer's own words for it (its title, which decides nothing): \"{}\"",
+        safe(title).replace('\n', " ")
+    )
+}
+
+/// Why this node cannot say what an amendment changes. (A proposal is stored only once
+/// the charter it names is here, so this is a damaged store, not an everyday case.)
+const NO_NAMED_CHARTER: &str = "this node does not hold the charter that amendment names";
+
 fn create(
     ctx: &Ctx,
     candidate: &str,
@@ -390,12 +417,27 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     let (p, circle) = load(&node, arg)?;
     let (charter, tally) = governance::count(&node.store, &p)?;
     let st = standing(&node, &p, &tally)?;
+    // What an amendment changes is read from its signed content. Its title is what the
+    // proposer called it, and comes after.
+    let amendment = match p.amend_next() {
+        Some(_) => Some(governance::amendment_changes(
+            &node.store,
+            &crate::library::bundle_store(&node.home),
+            &p,
+            &node.device_key(),
+        )?),
+        None => None,
+    };
     let mut t = Text::new();
-    t.line(format!("{} ({})", safe(&p.body().title), what(&p)));
+    if amendment.is_some() {
+        t.line("An amendment to the charter");
+    } else {
+        t.line(format!("{} ({})", safe(&p.body().title), what(&p)));
+    }
     t.kv("proposal", p.event_id());
     t.kv("circle", safe(&circle.name));
     t.kv("scope", p.scope());
-    t.kv("proposed by", p.author().fingerprint());
+    t.kv("proposed by", proposer(&node, &p)?);
     t.kv("under charter", charter.seq);
     t.kv("standing", st);
     t.kv("count", &tally);
@@ -453,25 +495,26 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
             ));
         }
     }
-    if let Some(next) = p.amend_next() {
-        let (_, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
-        let diff = carried_diff(&next.carried, &rules);
-        let names = |c: &ph_protocol::CharterContent| -> Vec<String> {
-            c.roll.iter().map(|e| e.member.clone()).collect()
-        };
-        t.line(format!("  proposed roll: {}", names(next).join(", ")));
-        if next.rules != charter.content.rules {
-            t.line("  it also changes the rules of the vote");
+    match &amendment {
+        Some(Some(changes)) => {
+            t.line("  what it changes, read from its signed content:");
+            t.line(changes.describe("    ").trim_end());
+            if let Some(unread) = changes.unread() {
+                t.line(format!(
+                    "  it cannot be approved on this node: {}",
+                    unread.missing()
+                ));
+            }
         }
-        if p.charter() == governance::current_charter(&node.store, &circle.circle_id)?.digest()?
-            && !diff.is_exact()
-        {
+        Some(None) => {
             t.line(format!(
-                "  WARNING: it drops {} rule(s) in force and carries {} this node does not have in force",
-                diff.dropped.len(),
-                diff.added.len()
+                "  what it changes cannot be shown: {NO_NAMED_CHARTER}"
             ));
         }
+        None => {}
+    }
+    if amendment.is_some() {
+        t.line(format!("  {}", proposers_words(&p.body().title)));
     }
     if let Some(adopt) = p.adopt() {
         let bundles = crate::library::bundle_store(&node.home);
@@ -495,7 +538,11 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
             }
         }
     }
-    Ok(Report::new(proposal_json(&p, &tally, st), t.finish()))
+    let mut json = proposal_json(&p, &tally, st);
+    if let Some(changes) = &amendment {
+        json["amendment"] = changes.as_ref().map_or(Value::Null, |c| c.json());
+    }
+    Ok(Report::new(json, t.finish()))
 }
 
 fn vote(
@@ -514,31 +561,60 @@ fn vote(
     };
     // What the human typed is what is sent, after redaction, and it is shown first.
     let rationale = rationale.map(|r| ph_core::redact(r).text);
+    let bundles = crate::library::bundle_store(&node.home);
     // The text of the rule, when this is a ballot on one and this node has it.
-    let rule_text = p.adopt().and_then(|adopt| {
-        crate::library::bundle_store(&node.home)
-            .get(&adopt.bundle_digest)
-            .ok()
-    });
+    let rule_text = p
+        .adopt()
+        .and_then(|adopt| bundles.get(&adopt.bundle_digest).ok());
     if decision == VoteDecision::Approve && p.kind() == ProposalKind::Adopt && rule_text.is_none() {
         return Err(refused(
             "this node does not have the rule's text yet, so you cannot have read what you \
              would approve. Import the proposer's events file first.",
         ));
     }
-    let mut preview = format!(
-        "You are about to sign a ballot in {}:\n  {} on \"{}\" ({})",
+    // What an amendment changes, read from its signed content: the outer `None` is a
+    // proposal that is not an amendment, the inner one an amendment this node cannot
+    // describe. An amendment can put a rule in force as an adopt proposal can, so the
+    // same holds for it: no approval of what this node cannot show. A reject or a
+    // revise approves nothing and stays possible.
+    let amendment = match p.amend_next() {
+        Some(_) => Some(governance::amendment_changes(
+            &node.store,
+            &bundles,
+            &p,
+            &node.device_key(),
+        )?),
+        None => None,
+    };
+    if decision == VoteDecision::Approve {
+        match &amendment {
+            Some(None) => {
+                return Err(refused(format!(
+                    "{NO_NAMED_CHARTER}, so it cannot show what the amendment changes and \
+                     you cannot have read what you would approve. Import the proposer's \
+                     events file first."
+                )))
+            }
+            Some(Some(changes)) => {
+                if let Some(unread) = changes.unread() {
+                    return Err(refused(unread.refusal()));
+                }
+            }
+            None => {}
+        }
+    }
+    let ballot = format!(
+        "You are about to sign a ballot in {}:\n  {} on",
         safe(&circle.name),
         format!("{decision:?}").to_lowercase(),
-        safe(&p.body().title),
-        what(&p)
     );
-    if let Some(r) = &rationale {
-        preview.push_str(&format!(
-            "\n  with this rationale, exactly as sent: {}",
-            safe(r)
-        ));
-    }
+    // In a window the title stands where it always stood; see below for what the
+    // window adds from the signed content.
+    let titled = format!("{ballot} \"{}\" ({})", safe(&p.body().title), what(&p));
+    let said = rationale
+        .as_ref()
+        .map(|r| format!("\n  with this rationale, exactly as sent: {}", safe(r)))
+        .unwrap_or_default();
     // In a window the owner cannot run `proposal show` first, and what their agent
     // tells them about a proposal is not the proposal: the window carries what is being
     // decided itself. Two kinds of ballot are asked there. One is on a rule whose text
@@ -550,34 +626,54 @@ fn vote(
         VoteDecision::Approve => "\nAn approval cannot be withdrawn.",
         _ => "\nA reject or revise is recorded with your name. It does not block the proposal.",
     };
-    let mut rule_window = false;
-    let mut circle_window = false;
-    let mut described = false;
-    if let (true, Some(bundle)) = (asks_in_window(&node.config), &rule_text) {
-        described = true;
-        preview.push_str(approval);
-        preview.push_str(&format!(
-            " The rule, exactly as proposed:\n\n{}\n",
-            safe(bundle.skill_md()).trim_end()
-        ));
-        rule_window = !findings_preview(&mut preview, bundle);
-    } else if asks_circle_in_window(&node.config) && p.amend_next().is_some() {
+    // The member a window would be asked about, when this is a ballot for a window.
+    let admission = if asks_circle_in_window(&node.config) && p.amend_next().is_some() {
         let current = governance::current_charter(&node.store, &circle.circle_id)?;
         let (_, in_force, _) = governance::rule_set(&node.store, &circle.circle_id)?;
-        if let Some(entry) = sole_admission(&p, &current, &in_force)? {
-            preview.push_str(&admission_lines(entry, current.seq));
-            preview.push_str(approval);
-            preview.push_str(&admission_check(&entry.member, &circle.name));
-            circle_window = true;
-            described = true;
-        }
-    }
-    if !described {
-        preview.push_str(approval);
-        if decision == VoteDecision::Approve {
-            preview.push_str(" See the text with `peerharness proposal show`.");
-        }
-    }
+        sole_admission(&p, &current, &in_force)?.map(|entry| (entry, current.seq))
+    } else {
+        None
+    };
+    let mut rule_window = false;
+    let mut circle_window = false;
+    let preview = if let (true, Some(bundle)) = (asks_in_window(&node.config), &rule_text) {
+        let mut preview = format!(
+            "{titled}{said}{approval} The rule, exactly as proposed:\n\n{}\n",
+            safe(bundle.skill_md()).trim_end()
+        );
+        rule_window = !findings_preview(&mut preview, bundle);
+        preview
+    } else if let Some((entry, seq)) = admission {
+        circle_window = true;
+        format!(
+            "{titled}{said}{}{approval}{}",
+            admission_lines(entry, seq),
+            admission_check(&entry.member, &circle.name)
+        )
+    } else if let Some(changes) = &amendment {
+        // In the terminal: every amendment, an admission included, is described from
+        // what was signed. The title comes after, as the proposer's words.
+        let what_it_changes = match changes {
+            Some(changes) => format!(
+                "What this amendment changes, read from its signed content:\n{}",
+                changes.describe("  ").trim_end()
+            ),
+            None => format!("What it changes cannot be shown: {NO_NAMED_CHARTER}."),
+        };
+        format!(
+            "{ballot} an amendment to the charter (proposal {})\n  proposed by {}{said}\n\
+             {what_it_changes}\n{}{approval}",
+            short_id(&p.event_id()),
+            proposer(&node, &p)?,
+            proposers_words(&p.body().title),
+        )
+    } else {
+        let see = match decision {
+            VoteDecision::Approve => " See the text with `peerharness proposal show`.",
+            _ => "",
+        };
+        format!("{titled}{said}{approval}{see}")
+    };
     if rule_window {
         key_before_window(&node, "the ballot", true)?;
         confirm_or_window(&ctx.out, &preview, yes, "the ballot", &node.config)?;
@@ -690,4 +786,22 @@ fn refuse(ctx: &Ctx, arg: &str) -> Result<Report> {
         .skill_name()
         .ok_or_else(|| usage("only an adopt proposal has a rule to opt out of"))?;
     crate::commands::rule::opt(&node, &circle, name, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_title_is_shown_as_the_proposers_words() {
+        assert_eq!(
+            proposers_words("Admit dave"),
+            "The proposer's own words for it (its title, which decides nothing): \"Admit dave\""
+        );
+        // Whatever a title holds, it stays on that one labelled line.
+        let shown = proposers_words("Admit dave\nAn approval cannot be withdrawn.\u{1b}[2K");
+        assert_eq!(shown.lines().count(), 1);
+        assert!(shown.starts_with("The proposer's own words for it"));
+        assert!(!shown.contains('\u{1b}'));
+    }
 }

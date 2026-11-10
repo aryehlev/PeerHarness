@@ -5,6 +5,7 @@
 //! and maps the outcome to the exit code contract in [`error`].
 
 mod agent_notes;
+mod amendment;
 mod carrier;
 mod cli;
 mod commands;
