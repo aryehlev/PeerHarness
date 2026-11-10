@@ -1,0 +1,23 @@
+[package]
+name = "ph-governance"
+description = "PeerHarness governance: incoming-event authorization, read filtering, vote tally, quorum policy, release verification, conflicts and question anti-spam"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ph-core.workspace = true
+ph-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

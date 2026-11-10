@@ -1,0 +1,7 @@
+{
+  "session_id": "00893aaf-19fa-41d2-8238-13269b9b3ca0",
+  "transcript_path": "/nonexistent/peerharness-fixture/transcript.jsonl",
+  "cwd": "/Users/alice/src/acme-web",
+  "hook_event_name": "SomeFutureEvent",
+  "prompt": "UNKNOWN-EVENT-TEXT-MUST-NOT-BE-STORED"
+}

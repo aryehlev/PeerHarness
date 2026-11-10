@@ -1,0 +1,192 @@
+name: Release
+
+# Builds release binaries for a version tag and publishes them with SHA256SUMS.
+# The process is documented in docs/release.md.
+#
+# A manual run (workflow_dispatch) builds and uploads the archives as workflow artifacts
+# but publishes nothing, so the build matrix can be tried before tagging.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  # Release builds use a fixed toolchain so a tag can be rebuilt with the same compiler.
+  # This is the workspace MSRV (rust-version in Cargo.toml), which CI also checks.
+  # Bump it deliberately, in its own commit, and note it in the release notes.
+  RELEASE_TOOLCHAIN: "1.89.0"
+
+jobs:
+  check-version:
+    name: Check tag matches Cargo version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare tag and workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "peerharness") | .version')"
+          echo "tag=${tag} cargo=${version}"
+          if [ "${tag}" != "${version}" ]; then
+            echo "::error::tag v${tag} does not match the peerharness package version ${version}"
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check-version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Linux: static musl binaries, built with cross-rs. The crypto stack
+          # (aws-lc-sys, ring) and the bundled SQLite compile C code that needs a musl
+          # toolchain with Linux kernel headers; plain musl-gcc lacks them.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            builder: cross
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04
+            builder: cross
+          # macOS: both architectures on an Apple Silicon runner with Apple clang.
+          - target: aarch64-apple-darwin
+            os: macos-15
+            builder: cargo
+          - target: x86_64-apple-darwin
+            os: macos-15
+            builder: cargo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RELEASE_TOOLCHAIN }}
+          target: ${{ matrix.target }}
+          rustflags: ""
+          cache: false
+
+      - name: Install cross
+        if: matrix.builder == 'cross'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross@0.2.5
+
+      - name: Reproducibility settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Commit time of the tagged commit, used for archive timestamps.
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          # Strip build-machine paths from native (non-container) builds. Inside the
+          # cross container the paths are fixed by the image already.
+          if [ "${{ matrix.builder }}" = "cargo" ]; then
+            echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}=/peerharness --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.builder }}" = "cross" ]; then
+            cross build --locked --release --target "${{ matrix.target }}" -p peerharness
+          else
+            cargo build --locked --release --target "${{ matrix.target }}" -p peerharness
+          fi
+
+      - name: Inspect binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/peerharness"
+          file "$bin"
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
+            "$bin" --help > /dev/null
+          fi
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v gtar >/dev/null 2>&1 && [ "$(uname)" = "Darwin" ]; then
+            brew install gnu-tar
+          fi
+          TAR=tar
+          if command -v gtar >/dev/null 2>&1; then TAR=gtar; fi
+          # Tag builds are named after the tag; manual builds after the commit.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then label="${GITHUB_REF_NAME}"; else label="dev-${GITHUB_SHA::12}"; fi
+          name="peerharness-${label}-${{ matrix.target }}"
+          mkdir -p "dist/${name}"
+          cp "target/${{ matrix.target }}/release/peerharness" "dist/${name}/"
+          cp LICENSE-MIT LICENSE-APACHE "dist/${name}/"
+          for f in README.md docs/security-model.md docs/release.md; do
+            if [ -f "$f" ]; then cp "$f" "dist/${name}/"; fi
+          done
+          cd dist
+          "$TAR" --sort=name --mtime="@${SOURCE_DATE_EPOCH}" \
+            --owner=0 --group=0 --numeric-owner --format=gnu \
+            -cf - "${name}" | gzip -n -9 > "${name}.tar.gz"
+          rm -rf "${name}"
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: peerharness-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: peerharness-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum peerharness-*.tar.gz | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: PeerHarness ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            Binaries for Linux (static musl, x86_64 and aarch64) and macOS (x86_64 and
+            aarch64). Windows is not supported yet.
+
+            The binaries are not code-signed and the macOS binaries are not notarized.
+            Verify the download against SHA256SUMS before running it; see
+            docs/release.md for the exact commands. No security audit has been done.
+          files: |
+            dist/peerharness-*.tar.gz
+            dist/SHA256SUMS

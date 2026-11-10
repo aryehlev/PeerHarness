@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+.omx/
+/demo/out/
+
+# Scratch copies made by coding agents
+.claude/worktrees/

@@ -1,0 +1,203 @@
+{
+  "charter_1": {
+    "canonical": "{\"carried\":[],\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issued_at\":\"2026-11-09T18:00:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}},\"schema\":\"peerharness.charter/0.1\",\"seq\":1}",
+    "context": "peerharness-charter-v0",
+    "digest": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+    "electorates": {
+      "amend": {
+        "members": [
+          "alice"
+        ],
+        "need_amend": 1,
+        "need_pass": 1
+      },
+      "scope team/backend": {
+        "members": [
+          "alice"
+        ],
+        "need_pass": 1
+      }
+    },
+    "name": "charter_1",
+    "schema": "peerharness.charter/0.1",
+    "signature": "base64url:0IOZLZLy4aUFBemhtDDymigjCjZXBRq4XFyTDcZ8n8epzEpIA8Oa_c3OHjMrw8RZmL0MgK3tgzHSVtruImT3Aw",
+    "signed": {
+      "carried": [],
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "issued_at": "2026-11-09T18:00:00Z",
+      "issuer_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "roll": [
+        {
+          "devices": [
+            "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          ],
+          "member": "alice",
+          "scopes": [
+            "*"
+          ]
+        }
+      ],
+      "rules": {
+        "amend": {
+          "den": 3,
+          "num": 2
+        },
+        "binding": true,
+        "pass": {
+          "den": 2,
+          "num": 1
+        }
+      },
+      "schema": "peerharness.charter/0.1",
+      "seq": 1,
+      "signature": "base64url:0IOZLZLy4aUFBemhtDDymigjCjZXBRq4XFyTDcZ8n8epzEpIA8Oa_c3OHjMrw8RZmL0MgK3tgzHSVtruImT3Aw"
+    },
+    "signed_canonical": "{\"carried\":[],\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issued_at\":\"2026-11-09T18:00:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}},\"schema\":\"peerharness.charter/0.1\",\"seq\":1,\"signature\":\"base64url:0IOZLZLy4aUFBemhtDDymigjCjZXBRq4XFyTDcZ8n8epzEpIA8Oa_c3OHjMrw8RZmL0MgK3tgzHSVtruImT3Aw\"}",
+    "signer_public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "signing_input_hex": "706565726861726e6573732d636861727465722d7630007b2263617272696564223a5b5d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c226973737565645f6174223a22323032362d31312d30395431383a30303a30305a222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c22726f6c6c223a5b7b2264657669636573223a5b22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177225d2c226d656d626572223a22616c696365222c2273636f706573223a5b222a225d7d5d2c2272756c6573223a7b22616d656e64223a7b2264656e223a332c226e756d223a327d2c2262696e64696e67223a747275652c2270617373223a7b2264656e223a322c226e756d223a317d7d2c22736368656d61223a22706565726861726e6573732e636861727465722f302e31222c22736571223a317d",
+    "unsigned": {
+      "carried": [],
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "issued_at": "2026-11-09T18:00:00Z",
+      "issuer_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "roll": [
+        {
+          "devices": [
+            "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          ],
+          "member": "alice",
+          "scopes": [
+            "*"
+          ]
+        }
+      ],
+      "rules": {
+        "amend": {
+          "den": 3,
+          "num": 2
+        },
+        "binding": true,
+        "pass": {
+          "den": 2,
+          "num": 1
+        }
+      },
+      "schema": "peerharness.charter/0.1",
+      "seq": 1
+    },
+    "verify_at": "2026-11-10T12:00:00Z"
+  },
+  "charter_2": {
+    "canonical": "{\"carried\":[],\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issued_at\":\"2026-11-09T18:04:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"justification\":\"sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911\",\"previous\":\"sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c\",\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]},{\"devices\":[\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"],\"member\":\"bob\",\"scopes\":[\"team/backend\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}},\"schema\":\"peerharness.charter/0.1\",\"seq\":2}",
+    "context": "peerharness-charter-v0",
+    "digest": "sha256:f3856c2bfebe02b540a961488d0c6aa32b54cbdb755f664a4f29b43b08eeb65e",
+    "electorates": {
+      "amend": {
+        "members": [
+          "alice",
+          "bob"
+        ],
+        "need_amend": 2,
+        "need_pass": 2
+      },
+      "scope team/backend": {
+        "members": [
+          "alice",
+          "bob"
+        ],
+        "need_pass": 2
+      }
+    },
+    "name": "charter_2",
+    "schema": "peerharness.charter/0.1",
+    "signature": "base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA",
+    "signed": {
+      "carried": [],
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "issued_at": "2026-11-09T18:04:00Z",
+      "issuer_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "justification": "sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911",
+      "previous": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+      "roll": [
+        {
+          "devices": [
+            "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          ],
+          "member": "alice",
+          "scopes": [
+            "*"
+          ]
+        },
+        {
+          "devices": [
+            "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+          ],
+          "member": "bob",
+          "scopes": [
+            "team/backend"
+          ]
+        }
+      ],
+      "rules": {
+        "amend": {
+          "den": 3,
+          "num": 2
+        },
+        "binding": true,
+        "pass": {
+          "den": 2,
+          "num": 1
+        }
+      },
+      "schema": "peerharness.charter/0.1",
+      "seq": 2,
+      "signature": "base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA"
+    },
+    "signed_canonical": "{\"carried\":[],\"circle_id\":\"sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9\",\"issued_at\":\"2026-11-09T18:04:00Z\",\"issuer_key\":\"ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q\",\"justification\":\"sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911\",\"previous\":\"sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c\",\"roll\":[{\"devices\":[\"ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w\"],\"member\":\"alice\",\"scopes\":[\"*\"]},{\"devices\":[\"ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E\"],\"member\":\"bob\",\"scopes\":[\"team/backend\"]}],\"rules\":{\"amend\":{\"den\":3,\"num\":2},\"binding\":true,\"pass\":{\"den\":2,\"num\":1}},\"schema\":\"peerharness.charter/0.1\",\"seq\":2,\"signature\":\"base64url:Fg6V2AViwVMIUCiis8kszpdIqQ4RC5Kxt_AIuSfCIlY1duiljhc9lRjW2jvilp651F-5rirEfGHyG7ywXnk6BA\"}",
+    "signer_public_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+    "signing_input_hex": "706565726861726e6573732d636861727465722d7630007b2263617272696564223a5b5d2c22636972636c655f6964223a227368613235363a64653339326633333463366334613661663836303936353064373666376536333561316135303764373334303333653664643966636162323232373330616539222c226973737565645f6174223a22323032362d31312d30395431383a30343a30305a222c226973737565725f6b6579223a22656432353531393a67546c3344716839463139576f31526d7730782d7a4d754e69704730376a65695866595057345f4a733551222c226a757374696669636174696f6e223a227368613235363a63326338316133383839373637326333326161663436613338303836636164656565613232373463636663363963326137353063303834343232666138393131222c2270726576696f7573223a227368613235363a63613433643866653532666465643465396161333634333535383630353538333631666133313762346265636336376662383533633336646231393034633663222c22726f6c6c223a5b7b2264657669636573223a5b22656432353531393a696f6a6a3358514a385a583955747374504c70646373706e436238646c4249623833534941625150623177225d2c226d656d626572223a22616c696365222c2273636f706573223a5b222a225d7d2c7b2264657669636573223a5b22656432353531393a37556b6f78696a527773627136514d346b466d5659536c5a4a7a7063595f6b324e734647464b79484e3945225d2c226d656d626572223a22626f62222c2273636f706573223a5b227465616d2f6261636b656e64225d7d5d2c2272756c6573223a7b22616d656e64223a7b2264656e223a332c226e756d223a327d2c2262696e64696e67223a747275652c2270617373223a7b2264656e223a322c226e756d223a317d7d2c22736368656d61223a22706565726861726e6573732e636861727465722f302e31222c22736571223a327d",
+    "unsigned": {
+      "carried": [],
+      "circle_id": "sha256:de392f334c6c4a6af8609650d76f7e635a1a507d734033e6dd9fcab222730ae9",
+      "issued_at": "2026-11-09T18:04:00Z",
+      "issuer_key": "ed25519:gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "justification": "sha256:c2c81a38897672c32aaf46a38086cadeeea2274ccfc69c2a750c084422fa8911",
+      "previous": "sha256:ca43d8fe52fded4e9aa364355860558361fa317b4becc67fb853c36db1904c6c",
+      "roll": [
+        {
+          "devices": [
+            "ed25519:iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"
+          ],
+          "member": "alice",
+          "scopes": [
+            "*"
+          ]
+        },
+        {
+          "devices": [
+            "ed25519:7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E"
+          ],
+          "member": "bob",
+          "scopes": [
+            "team/backend"
+          ]
+        }
+      ],
+      "rules": {
+        "amend": {
+          "den": 3,
+          "num": 2
+        },
+        "binding": true,
+        "pass": {
+          "den": 2,
+          "num": 1
+        }
+      },
+      "schema": "peerharness.charter/0.1",
+      "seq": 2
+    },
+    "verify_at": "2026-11-10T12:00:00Z"
+  },
+  "description": "The charter chain used by events.json. 'digest' is what a PROPOSAL names in its 'charter' member. charter_2.previous is charter_1.digest and charter_2.justification is the event_id of RESULT/amend. need(n, num/den) = floor(n*num/den) + 1."
+}

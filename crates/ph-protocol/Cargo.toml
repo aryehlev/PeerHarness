@@ -1,0 +1,25 @@
+[package]
+name = "ph-protocol"
+description = "PeerHarness wire protocol: RFC 8785 JCS, domain-separated signing, events, credentials, bundles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ph-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

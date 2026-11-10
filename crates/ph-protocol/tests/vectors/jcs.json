@@ -1,0 +1,138 @@
+{
+  "description": "JCS (RFC 8785, integer-only subset). Parse 'input' strictly (max depth 8), canonicalize, compare to 'canonical' byte-for-byte. Every 'invalid' input must be rejected.",
+  "invalid": [
+    {
+      "error": "duplicate_key",
+      "input": "{\"a\": 1, \"a\": 2}",
+      "name": "duplicate-key"
+    },
+    {
+      "error": "duplicate_key",
+      "input": "{\"a\": 1, \"\\u0061\": 2}",
+      "name": "duplicate-key-escaped"
+    },
+    {
+      "error": "non_integer",
+      "input": "{\"a\": 1.5}",
+      "name": "float"
+    },
+    {
+      "error": "non_integer",
+      "input": "[1.0]",
+      "name": "integral-float"
+    },
+    {
+      "error": "non_integer",
+      "input": "[1e2]",
+      "name": "exponent"
+    },
+    {
+      "error": "non_integer",
+      "input": "[-0]",
+      "name": "negative-zero"
+    },
+    {
+      "error": "integer_out_of_range",
+      "input": "[9007199254740992]",
+      "name": "integer-too-large"
+    },
+    {
+      "error": "integer_out_of_range",
+      "input": "[-9007199254740992]",
+      "name": "integer-too-small"
+    },
+    {
+      "error": "duplicate_key",
+      "input": "{\"x\": [1, {\"y\": {\"k\": 1, \"k\": 2}}]}",
+      "name": "duplicate-key-nested-in-array"
+    },
+    {
+      "error": "too_deep",
+      "input": "[[[[[[[[[1]]]]]]]]]",
+      "name": "too-deep"
+    },
+    {
+      "error": "malformed",
+      "input": "[\"\\ud800\"]",
+      "name": "lone-surrogate"
+    },
+    {
+      "error": "malformed",
+      "input": "{\"a\": 1} {}",
+      "name": "trailing-data"
+    },
+    {
+      "error": "malformed",
+      "input": "[1, 2,]",
+      "name": "trailing-comma"
+    }
+  ],
+  "max_depth": 8,
+  "valid": [
+    {
+      "canonical": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}",
+      "input": "{\"\\u20ac\":\"Euro Sign\",\"\\r\":\"Carriage Return\",\"\\ufb33\":\"Hebrew Letter Dalet With Dagesh\",\"1\":\"One\",\"\\ud83d\\ude00\":\"Emoji: Grinning Face\",\"\\u0080\":\"Control\",\"\\u00f6\":\"Latin Small Letter O With Diaeresis\"}",
+      "name": "rfc8785-3.2.3-key-ordering"
+    },
+    {
+      "canonical": "{\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}",
+      "input": "{\"string\": \"\\u20ac$\\u000F\\u000aA'\\u0042\\u0022\\u005c\\\\\\\"\\/\"}",
+      "name": "rfc8785-3.2.2-string-escaping"
+    },
+    {
+      "canonical": "{\"literals\":[null,true,false],\"numbers\":[333333333,4,0,-7]}",
+      "input": "{\"numbers\": [333333333, 4, 0, -7], \"literals\": [null, true, false]}",
+      "name": "rfc8785-3.2.2-integer-subset"
+    },
+    {
+      "canonical": "{\"\":\"empty\",\"1\":\"one\",\"10\":\"ten\",\"2\":\"two\"}",
+      "input": "{\"10\": \"ten\", \"1\": \"one\", \"2\": \"two\", \"\": \"empty\"}",
+      "name": "numeric-string-keys"
+    },
+    {
+      "canonical": "{\"A\":4,\"B\":2,\"_\":5,\"a\":3,\"b\":1}",
+      "input": "{\"b\": 1, \"B\": 2, \"a\": 3, \"A\": 4, \"_\": 5}",
+      "name": "case-ordering"
+    },
+    {
+      "canonical": "[\"\\u0000\\u0001\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u001f\",\"  \"]",
+      "input": "[\"\\u0000\\u0001\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u001f\\u007f\", \"\\u2028\\u2029\"]",
+      "name": "control-characters"
+    },
+    {
+      "canonical": "[9007199254740991,-9007199254740991,0,1,-1]",
+      "input": "[9007199254740991, -9007199254740991, 0, 1, -1]",
+      "name": "safe-integer-bounds"
+    },
+    {
+      "canonical": "{\"a\":{},\"b\":[],\"c\":[{},[]]}",
+      "input": "{\"a\": {}, \"b\": [], \"c\": [{}, []]}",
+      "name": "empty-containers"
+    },
+    {
+      "canonical": "{\"a\":null,\"z\":{\"x\":[{\"a\":1,\"b\":2}],\"y\":1}}",
+      "input": "{\"z\": {\"y\": 1, \"x\": [{\"b\": 2, \"a\": 1}]}, \"a\": null}",
+      "name": "nested-sorting"
+    },
+    {
+      "canonical": "{\"a\":[1,2],\"b\":\"x y\"}",
+      "input": " \n { \"a\" : [ 1 , 2 ] , \"b\" : \"x y\" } \t ",
+      "name": "whitespace-removed"
+    },
+    {
+      "canonical": "{\"slash\":\"a/b\",\"text\":\"café ☃ 😀\"}",
+      "input": "{\"text\": \"caf\\u00e9 \\u2603 \\ud83d\\ude00\", \"slash\": \"a/b\"}",
+      "name": "non-ascii-literal"
+    },
+    {
+      "canonical": "{\"퟿\":4,\"𐀀\":2,\"\":3,\"￿\":1}",
+      "input": "{\"\\uffff\": 1, \"\\ud800\\udc00\": 2, \"\\ue000\": 3, \"\\ud7ff\": 4}",
+      "name": "utf16-surrogate-ordering"
+    },
+    {
+      "canonical": "{\"a\":3,\"ab\":2,\"abc\":1,\"b\":4}",
+      "input": "{\"abc\": 1, \"ab\": 2, \"a\": 3, \"b\": 4}",
+      "name": "key-prefix-ordering"
+    }
+  ]
+}
