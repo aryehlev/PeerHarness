@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use libp2p::multiaddr::Protocol;
 use libp2p::Multiaddr;
 use ph_protocol::wire::MAX_FRAME_BYTES;
 
@@ -171,6 +172,13 @@ pub struct NetworkConfig {
     /// peer up by its peer id ([`crate::NetworkHandle::find_peer`]), learns whether it
     /// is reachable itself, and while it is not, stays reachable through relays. Read
     /// [`crate::internet`] for what that tells whom.
+    ///
+    /// With the mode, listen on all interfaces (`/ip4/0.0.0.0/udp/<port>/quic-v1` and,
+    /// for IPv6, `/ip6/::/udp/<port>/quic-v1`) or not at all. A loopback listen address
+    /// is refused as an invalid configuration: the QUIC transport sends from the socket
+    /// it listens on, and a socket bound to loopback reaches nobody on the internet. A
+    /// node that does not listen is reached through relays only and cannot have a
+    /// relayed connection to it upgraded.
     pub internet: Option<InternetConfig>,
 }
 
@@ -222,6 +230,14 @@ impl NetworkConfig {
         }
         if let Some(internet) = &self.internet {
             internet.validate()?;
+            let loopback = |addr: &Multiaddr| match addr.iter().next() {
+                Some(Protocol::Ip4(ip)) => ip.is_loopback(),
+                Some(Protocol::Ip6(ip)) => ip.is_loopback(),
+                _ => false,
+            };
+            if !internet.allow_private_addresses && self.listen_addrs.iter().any(loopback) {
+                return Err(NetError::InvalidConfig);
+            }
         }
         Ok(())
     }
@@ -271,6 +287,39 @@ mod tests {
         assert!(!internet.allow_private_addresses);
         // Every default bootstrap address parsed.
         assert_eq!(internet.bootstrap.len(), internet::PUBLIC_BOOTSTRAP.len());
+    }
+
+    #[test]
+    fn internet_mode_refuses_a_loopback_listen_address() {
+        let listening = |addr: &str, internet: Option<InternetConfig>| NetworkConfig {
+            internet,
+            ..NetworkConfig::listening_on([addr.parse::<Multiaddr>().unwrap()])
+        };
+        let public = Some(InternetConfig::default());
+        for loopback in ["/ip4/127.0.0.1/udp/0/quic-v1", "/ip6/::1/udp/4001/quic-v1"] {
+            // Fine without the mode, as it always was.
+            assert_eq!(listening(loopback, None).validate(), Ok(()));
+            assert_eq!(
+                listening(loopback, public.clone()).validate(),
+                Err(NetError::InvalidConfig),
+                "{loopback}"
+            );
+            // A closed network on loopback is what `allow_private_addresses` is for.
+            let closed = Some(InternetConfig {
+                allow_private_addresses: true,
+                ..InternetConfig::default()
+            });
+            assert_eq!(listening(loopback, closed).validate(), Ok(()));
+        }
+        for fine in ["/ip4/0.0.0.0/udp/0/quic-v1", "/ip6/::/udp/0/quic-v1"] {
+            assert_eq!(listening(fine, public.clone()).validate(), Ok(()), "{fine}");
+        }
+        // Not listening at all is fine, too: such a node is reached through relays.
+        let dial_only = NetworkConfig {
+            internet: public,
+            ..NetworkConfig::default()
+        };
+        assert_eq!(dial_only.validate(), Ok(()));
     }
 
     #[test]

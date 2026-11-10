@@ -444,7 +444,7 @@ pub fn start(
         stopping: false,
         internet_on: quiet.is_some(),
         listeners,
-        foreign: HashMap::new(),
+        unlisted: HashMap::new(),
         inbound_open: HashMap::new(),
     };
     tracing::info!(peer = %local_peer_id, "network starting");
@@ -561,6 +561,10 @@ impl NetworkHandle {
     }
 
     /// Every currently connected peer, with the remote address of its oldest connection.
+    ///
+    /// With [`NetworkConfig::internet`] the node also holds connections that it opened on
+    /// its own to servers of the public network. Those are not listed here and not
+    /// reported as [`NetEvent::Connected`].
     pub async fn connected_peers(&self) -> Result<Vec<PeerInfo>, NetError> {
         let (reply, rx) = oneshot::channel();
         self.send(Command::ConnectedPeers { reply }).await?;
@@ -761,9 +765,10 @@ struct EventLoop {
     /// The listeners of the configured listen addresses. With the internet mode there
     /// are also listeners on relays, which are not the application's.
     listeners: HashSet<ListenerId>,
-    /// Internet mode: connections with peers that have no device key (servers of the
-    /// public network). They are not peers of the application.
-    foreign: HashMap<ConnectionId, PeerId>,
+    /// Internet mode: connections that are not the application's: those the node
+    /// opened on its own to servers of the public network, and those with peers that
+    /// have no device key. They are counted so that shutdown closes them.
+    unlisted: HashMap<ConnectionId, PeerId>,
     /// Internet mode: inbound requests that have not been answered on the wire yet.
     inbound_open: HashMap<InboundRequestId, PeerId>,
 }
@@ -908,7 +913,7 @@ impl EventLoop {
         let peers: HashSet<PeerId> = self
             .peers
             .keys()
-            .chain(self.foreign.values())
+            .chain(self.unlisted.values())
             .copied()
             .collect();
         for p in peers {
@@ -916,7 +921,7 @@ impl EventLoop {
         }
         let deadline = tokio::time::sleep(SHUTDOWN_GRACE);
         tokio::pin!(deadline);
-        while !(self.peers.is_empty() && self.foreign.is_empty()) {
+        while !(self.peers.is_empty() && self.unlisted.is_empty()) {
             tokio::select! {
                 event = self.swarm.select_next_some() => self.on_swarm_event(event),
                 _ = &mut deadline => break,
@@ -1013,7 +1018,10 @@ impl EventLoop {
                 let _ = reply.send(self.info_of(&peer, None));
             }
             Command::Disconnect { peer, reply } => {
-                let was = self.swarm.disconnect_peer_id(peer).is_ok();
+                // A connection the internet mode opened on its own is not the
+                // application's to close.
+                let listed = !self.internet_on || self.peers.contains_key(&peer);
+                let was = listed && self.swarm.disconnect_peer_id(peer).is_ok();
                 let _ = reply.send(was);
             }
             Command::Discovered { reply } => {
@@ -1098,17 +1106,28 @@ impl EventLoop {
                 ..
             } => {
                 let relayed = endpoint.is_relayed();
+                if self.internet_on && self.swarm.behaviour().internet.is_own(connection_id) {
+                    // A connection the node opened on its own, to a DHT server or a
+                    // relay: the internet mode's business, not the application's. It is
+                    // not reported or listed, and no request is sent on it.
+                    tracing::trace!(peer = %peer_id, connection = %connection_id, "connection to a server of the public network");
+                    self.unlisted.insert(connection_id, peer_id);
+                    if self.stopping {
+                        self.swarm.close_connection(connection_id);
+                    }
+                    return;
+                }
                 let Some(device_key) = device_key_from_peer_id(&peer_id) else {
                     if self.internet_on
                         && !relayed
                         && !self.pending_dials.contains_key(&connection_id)
                     {
-                        // A server of the public network with another kind of key. It
-                        // is counted so that it is closed on shutdown, and is no peer
-                        // of the application: not listed, never sent a request, and
-                        // answered `unauthorized` whatever it asks.
-                        tracing::debug!(peer = %peer_id, connection = %connection_id, "connection with a server that has no device key");
-                        self.foreign.insert(connection_id, peer_id);
+                        // A server of the public network with another kind of key that
+                        // connected to this node (the dial-back of an AutoNAT server,
+                        // for one). No peer of the application either: it is answered
+                        // `unauthorized` whatever it asks.
+                        tracing::debug!(peer = %peer_id, connection = %connection_id, "connection from a peer that has no device key");
+                        self.unlisted.insert(connection_id, peer_id);
                         if self.stopping {
                             self.swarm.close_connection(connection_id);
                         }
@@ -1168,7 +1187,7 @@ impl EventLoop {
                 connection_id,
                 ..
             } => {
-                if self.foreign.remove(&connection_id).is_some() {
+                if self.unlisted.remove(&connection_id).is_some() {
                     return;
                 }
                 tracing::debug!(peer = %peer_id, connection = %connection_id, "connection closed");

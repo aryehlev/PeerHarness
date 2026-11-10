@@ -224,10 +224,22 @@ pub struct HubState {
     pub circuits: Vec<(PeerId, PeerId)>,
     /// `FIND_NODE` requests: who asked for which key.
     pub asked: Vec<(PeerId, Vec<u8>)>,
-    /// Identify records received: agent string, protocol-family string, addresses.
-    pub identified: HashMap<PeerId, (String, String, Vec<Multiaddr>)>,
+    /// The last identify record of each peer.
+    pub identified: HashMap<PeerId, Identified>,
     /// Addresses the hub gives for a peer instead of what it knows: a lying server.
     pub lies: HashMap<PeerId, Vec<Multiaddr>>,
+}
+
+/// What a peer said about itself over identify.
+#[derive(Clone, Debug)]
+pub struct Identified {
+    pub agent: String,
+    pub protocol_family: String,
+    pub addrs: Vec<Multiaddr>,
+    /// The protocols the peer says it speaks, sorted.
+    pub protocols: Vec<String>,
+    /// Whether the record came with a signed copy of the addresses.
+    pub signed: bool,
 }
 
 pub struct Hub {
@@ -393,9 +405,18 @@ fn hub_event(
             ..
         })) => {
             state.known.insert(peer_id, info.listen_addrs.clone());
+            let mut protocols: Vec<String> =
+                info.protocols.iter().map(ToString::to_string).collect();
+            protocols.sort();
             state.identified.insert(
                 peer_id,
-                (info.agent_version, info.protocol_version, info.listen_addrs),
+                Identified {
+                    agent: info.agent_version,
+                    protocol_family: info.protocol_version,
+                    addrs: info.listen_addrs,
+                    protocols,
+                    signed: info.signed_peer_record.is_some(),
+                },
             );
         }
         SwarmEvent::Behaviour(HubBehaviourEvent::Dht(request_response::Event::Message {

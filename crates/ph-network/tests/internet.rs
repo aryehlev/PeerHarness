@@ -37,8 +37,8 @@ use ph_network::libp2p::swarm::SwarmEvent;
 use ph_network::libp2p::{StreamProtocol, SwarmBuilder};
 use ph_network::{
     device_key_from_peer_id, internet, is_relayed, keypair_from_seed, peer_id_of_addr, start,
-    HelloOnlyHandler, InternetConfig, Multiaddr, NetError, NetEvent, NetworkConfig, PeerId,
-    RateLimits, Reachability,
+    HelloOnlyHandler, InternetConfig, Multiaddr, NetError, NetEvent, NetworkConfig, RateLimits,
+    Reachability,
 };
 use ph_protocol::wire::{ErrorCode, Request, Response};
 use zeroize::Zeroizing;
@@ -228,15 +228,29 @@ async fn with_the_mode_on_the_node_is_a_client_and_serves_nobody() {
     let me = a.net.local_peer_id();
     let relayed = relay_addrs(&a.net).await;
     assert_eq!(relayed, vec![hub.circuit(me)]);
-    let (agent, family, addrs) = eventually("identify with the relayed address", || async {
+    let id = eventually("identify with the relayed address", || async {
         let id = hub.state().identified.get(&me).cloned()?;
-        (!id.2.is_empty()).then_some(id)
+        (!id.addrs.is_empty()).then_some(id)
     })
     .await;
-    assert_eq!(agent, internet::AGENT_VERSION);
-    assert_eq!(agent, "peerharness");
-    assert_eq!(family, "ipfs/0.1.0");
-    assert_eq!(addrs, relayed);
+    assert_eq!(id.agent, internet::AGENT_VERSION);
+    assert_eq!(id.agent, "peerharness");
+    assert_eq!(id.protocol_family, "ipfs/0.1.0");
+    assert_eq!(id.addrs, relayed);
+    // The addresses are sent as they are, not as a signed record that could be shown
+    // to others as proof of where this key was.
+    assert!(!id.signed);
+    // The list of protocols it gives is what it speaks on that connection: its own
+    // protocol, identify, and the receiving end of a relayed connection.
+    assert_eq!(
+        id.protocols,
+        vec![
+            "/ipfs/id/1.0.0",
+            "/ipfs/id/push/1.0.0",
+            "/libp2p/circuit/relay/0.2.0/stop",
+            "/peerharness/req/0.1.0",
+        ]
+    );
     // The listen address of the application is still what it was, and only that.
     assert_eq!(a.net.current_listen_addrs(), vec![addr]);
     let s = status(&a.net).await;
@@ -273,16 +287,11 @@ async fn a_node_behind_a_relay_is_found_by_its_peer_id_and_greeted() {
     assert!(found.iter().all(|addr| peer_id_of_addr(addr) == Some(a_id)));
     assert!(found.iter().all(is_relayed));
     // Looking up dialed nobody but the hub: no connection to A, no circuit asked for.
+    // (The connections to the hub are the mode's own and are not listed.)
     assert_eq!(b.net.is_connected(a_id).await, Ok(false));
-    let b_peers: Vec<PeerId> = b
-        .net
-        .connected_peers()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|p| p.peer_id)
-        .collect();
-    assert_eq!(b_peers, vec![hub.peer_id]);
+    assert_eq!(b.net.connected_peers().await.unwrap(), vec![]);
+    assert_eq!(a.net.connected_peers().await.unwrap(), vec![]);
+    assert!(hub.state().connected.contains(&b_id));
     assert!(hub.state().circuits.is_empty());
     assert!(seen.lock().unwrap().is_empty());
     // The hub learned whom B is looking for; that is the price of asking.
@@ -615,8 +624,9 @@ async fn addresses_from_a_lying_server_are_filtered_bounded_and_never_dialed() {
     }));
     hub.state().lies.insert(victim, lies);
 
+    // One server's answer counts for at most half of what a lookup returns.
     let found = find(&b.net, victim).await;
-    assert_eq!(found.len(), internet::MAX_FOUND_ADDRS);
+    assert_eq!(found.len(), internet::MAX_FOUND_ADDRS / 2);
     for addr in &found {
         assert_eq!(peer_id_of_addr(addr), Some(victim), "{addr}");
         let text = addr.to_string();
@@ -625,24 +635,18 @@ async fn addresses_from_a_lying_server_are_filtered_bounded_and_never_dialed() {
             "{addr}"
         );
     }
-    // Newest first: the last addresses the server named.
+    // Newest first, and what the node cannot dial was dropped before counting: the
+    // decoy's address and the first seven of the hundred.
     assert_eq!(
         found[0],
-        format!("/ip4/127.0.0.1/udp/20100/quic-v1/p2p/{victim}")
+        format!("/ip4/127.0.0.1/udp/20007/quic-v1/p2p/{victim}")
             .parse::<Multiaddr>()
             .unwrap()
     );
-    // Nothing was dialed: B is connected to the hub and to nobody else, and the decoy
-    // was not contacted.
-    let b_peers: Vec<PeerId> = b
-        .net
-        .connected_peers()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|p| p.peer_id)
-        .collect();
-    assert_eq!(b_peers, vec![hub.peer_id]);
+    assert_eq!(found[7], decoy_addr.clone().with(Protocol::P2p(victim)));
+    // Nothing was dialed: the decoy, whose address was among the lies, was not
+    // contacted, and B has no connection the application could use.
+    assert_eq!(b.net.connected_peers().await.unwrap(), vec![]);
     assert_eq!(decoy.net.connected_peers().await.unwrap(), vec![]);
 
     // Dialing the decoy's address as the victim's fails in the handshake: whoever
@@ -1218,5 +1222,73 @@ async fn public_network_how_long_a_stopped_node_stays_findable() {
         last_found = stopped.elapsed();
     }
     println!("A was last found {last_found:.0?} after it stopped");
+    stop(b).await;
+}
+
+/// A node that keeps running stays findable: for 50 minutes, which is longer than the
+/// servers of the public network remember a peer that left, a second node looks the
+/// first one up every two minutes. Prints each result.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs the public libp2p network and 50 minutes"]
+async fn public_network_a_running_node_stays_findable() {
+    print_logs_if_asked();
+    let a = public_node(Arc::new(HelloOnlyHandler));
+    let a_id = a.net.local_peer_id();
+    let started = Instant::now();
+    timed(Duration::from_secs(120), || async {
+        let s = status(&a.net).await;
+        (s.bootstrapped && !s.relay_addrs.is_empty()).then_some(())
+    })
+    .await
+    .expect("A joins and gets a relay");
+    let b = public_node(Arc::new(HelloOnlyHandler));
+    let (mut lookups, mut found_in, mut connected) = (0u32, 0u32, 0u32);
+    while started.elapsed() < Duration::from_secs(50 * 60) {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        let t = Instant::now();
+        let found = b
+            .net
+            .find_peer(a_id, Duration::from_secs(25))
+            .await
+            .unwrap_or_default();
+        lookups += 1;
+        let took = t.elapsed();
+        // Every third time, also connect and greet, then hang up again.
+        let mut greeted = None;
+        if !found.is_empty() {
+            found_in += 1;
+            if lookups % 3 == 0 {
+                let mut ok = false;
+                for addr in &found {
+                    if b.net.dial(addr.clone()).await == Ok(a_id) {
+                        ok = b.net.request(a_id, &Request::hello()).await == Ok(Response::hello());
+                        break;
+                    }
+                }
+                let _ = b.net.disconnect(a_id).await;
+                connected += u32::from(ok);
+                greeted = Some(ok);
+            }
+        }
+        let s = status(&a.net).await;
+        println!(
+            "{:>5.0?} after A started: {} address(es) in {took:.1?}{}; A holds {} relay(s), reachability {}",
+            started.elapsed(),
+            found.len(),
+            match greeted {
+                Some(true) => ", greeted",
+                Some(false) => ", NOT greeted",
+                None => "",
+            },
+            s.relay_addrs.len(),
+            s.reachability.as_str()
+        );
+    }
+    println!("found in {found_in} of {lookups} lookups; greeted {connected} time(s)");
+    assert!(
+        found_in * 10 >= lookups * 8,
+        "found in {found_in} of {lookups}"
+    );
+    stop(a).await;
     stop(b).await;
 }

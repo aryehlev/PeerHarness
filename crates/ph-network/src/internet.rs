@@ -31,10 +31,11 @@
 //! # Who is contacted, and what they learn
 //!
 //! The node contacts, on its own: the bootstrap peers; DHT servers that the bootstrap
-//! peers and other servers name while a lookup runs; the relays it chose; and, for the
-//! names in the bootstrap list, the DNS resolvers of this system. It never dials a peer
-//! the application named (the target of a `find_peer`, or of an earlier `dial`) except
-//! to upgrade a connection the application already has with it.
+//! peers and other servers name while a lookup runs (several dozen per lookup, of its
+//! own id or of a peer's); the relays it chose; and, for the names in the bootstrap
+//! list, the DNS resolvers of this system. It never dials a peer the application named
+//! (the target of a `find_peer`, or of an earlier `dial`) except to upgrade a
+//! connection that already exists with it.
 //!
 //! Every peer the node is connected to, whoever opened the connection, can ask for and
 //! is sent its identify record, and is sent it again when the addresses change:
@@ -62,6 +63,13 @@
 //! them, and still authorizes nothing: whoever connects is a stranger to the handler
 //! until the application decides otherwise.
 //!
+//! The connections the node opens on its own are not the application's: they are not
+//! reported as [`NetEvent::Connected`](crate::NetEvent::Connected), not listed by
+//! [`NetworkHandle::connected_peers`](crate::NetworkHandle::connected_peers), and no
+//! request can be sent on them. Should such a server send a request, the handler is
+//! asked like for anyone else. A connection the application dialed, or one that
+//! somebody opened to this node, is reported and listed as before.
+//!
 //! # What is guaranteed
 //!
 //! * **Addresses from the network are hints.** `find_peer` returns addresses ending in
@@ -69,7 +77,8 @@
 //!   never dials them. Only addresses this transport can dial and, unless
 //!   [`InternetConfig::allow_private_addresses`](crate::InternetConfig::allow_private_addresses)
 //!   is set, only public IP addresses are returned, dialed by the node itself or
-//!   announced.
+//!   announced. Servers that lie can keep a peer from being found or have a lookup
+//!   return addresses that lead nowhere; they cannot make a dial reach the wrong peer.
 //! * **Everything a remote party can grow is bounded**: the routing table by the
 //!   k-buckets of Kademlia (20 peers a bucket), lookups in flight by
 //!   [`MAX_CONCURRENT_FINDS`], the addresses of an answer by [`MAX_FOUND_ADDRS`],
@@ -88,13 +97,23 @@
 //! # Limits that are not papered over
 //!
 //! Public relays are *limited* relays: go-libp2p's default, which is what the public
-//! network runs, ends a circuit after 2 minutes or 128 KiB in either direction,
-//! whichever comes first. A relayed connection is enough to say `hello` and to agree on
-//! a hole punch. An exchange larger than the relay's limit fails with
-//! [`NetError::ConnectionClosed`](crate::NetError::ConnectionClosed) unless the direct
+//! network runs, ends a circuit after 2 minutes or 128 KiB in one direction, whichever
+//! comes first. A relayed connection is enough to say `hello` and to agree on a hole
+//! punch. An exchange larger than the relay's limit fails with
+//! [`NetError::ConnectionClosed`] unless the direct
 //! upgrade succeeded first. [`PeerInfo::relayed`](crate::PeerInfo::relayed) and
 //! [`NetEvent::DirectUpgradeSucceeded`](crate::NetEvent::DirectUpgradeSucceeded) say
-//! which kind of connection there is. Hole punching does not get through every NAT.
+//! which kind of connection there is. Hole punching does not get through every NAT: a
+//! node whose NAT gives every destination another port has no address to offer, and
+//! then nothing is attempted.
+//!
+//! A node has to listen on all interfaces, or not at all
+//! ([`NetworkConfig::internet`](crate::NetworkConfig::internet)). One that does not
+//! listen is reached through relays only: there is no socket to punch a hole to.
+//!
+//! Every node in the mode holds relay reservations while it is not known to be publicly
+//! reachable, also one that runs for a moment to fetch something. Such a node should
+//! set [`InternetConfig::max_relays`](crate::InternetConfig::max_relays) to 0.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -137,11 +156,13 @@ pub const MAX_RELAYS: usize = 4;
 pub const DEFAULT_RELAYS: usize = 2;
 
 /// The most addresses one [`NetworkHandle::find_peer`](crate::NetworkHandle::find_peer)
-/// returns. When servers name more, the oldest are dropped.
+/// returns. When servers name more, the oldest are dropped. One answer of one server
+/// counts for at most half of them, so a single server cannot push out what the others
+/// said.
 pub const MAX_FOUND_ADDRS: usize = 16;
 
 /// The most lookups in flight at once; one more is refused with
-/// [`NetError::Busy`](crate::NetError::Busy).
+/// [`NetError::Busy`].
 pub const MAX_CONCURRENT_FINDS: usize = 8;
 
 /// How many of the peers the application named (looked up or dialed) are remembered as
@@ -591,6 +612,8 @@ struct Link {
     /// Whether the node opened it on its own (to a DHT server or a relay), as opposed
     /// to the application dialing or the other side connecting.
     own: bool,
+    /// Whether the node has asked for it to be closed.
+    closing: bool,
     since: Instant,
 }
 
@@ -700,6 +723,8 @@ pub(crate) struct Internet {
     /// Confirmed relayed addresses.
     circuits: Vec<Multiaddr>,
     probe_failures: usize,
+    /// There was a reason to think that the node cannot be dialed.
+    seen_private: bool,
     reachability: Reachability,
 
     relay_candidates: VecDeque<(PeerId, Multiaddr)>,
@@ -752,6 +777,7 @@ impl Internet {
             direct: Vec::new(),
             circuits: Vec::new(),
             probe_failures: 0,
+            seen_private: false,
             reachability: Reachability::Unknown,
             relay_candidates: VecDeque::new(),
             relays: HashMap::new(),
@@ -843,6 +869,12 @@ impl Internet {
 
     pub(crate) fn is_on(&self) -> bool {
         self.stack.is_enabled()
+    }
+
+    /// Whether `connection` is one the node opened on its own, to a DHT server or a
+    /// relay. Such a connection is the mode's business and not the application's.
+    pub(crate) fn is_own(&self, connection: ConnectionId) -> bool {
+        self.links.get(&connection).is_some_and(|link| link.own)
     }
 
     /// Marks the dial the application is about to make with `connection`, so that the
@@ -1031,11 +1063,13 @@ impl Internet {
     }
 
     fn update_reachability(&mut self) {
+        // Once there was a reason to think the node cannot be dialed, that stands until
+        // an address is confirmed: an address that is still under test is no news.
+        self.seen_private |= self.probe_failures > 0
+            || (self.observed.observers.len() >= SYMMETRIC_OBSERVERS && self.observed.offered == 0);
         let new = if !self.direct.is_empty() {
             Reachability::Public
-        } else if self.probe_failures > 0
-            || (self.observed.observers.len() >= SYMMETRIC_OBSERVERS && self.observed.offered == 0)
-        {
+        } else if self.seen_private {
             Reachability::Private
         } else {
             Reachability::Unknown
@@ -1136,7 +1170,7 @@ impl Internet {
         let mut own: Vec<(Instant, ConnectionId, PeerId)> = self
             .links
             .iter()
-            .filter(|(_, link)| link.own && !self.relays.contains_key(&link.peer))
+            .filter(|(_, link)| link.own && !link.closing && !self.relays.contains_key(&link.peer))
             .map(|(id, link)| (link.since, *id, link.peer))
             .collect();
         if own.len() <= keep {
@@ -1151,7 +1185,7 @@ impl Internet {
             }
             // Counted as gone at once, so that the next tick does not close more.
             if let Some(link) = self.links.get_mut(&connection) {
-                link.own = false;
+                link.closing = true;
             }
             closed += 1;
             self.pending.push_back(ToSwarm::CloseConnection {
@@ -1322,11 +1356,16 @@ impl Internet {
             ) else {
                 continue;
             };
-            for addr in offered {
-                if let Some(addr) = found_addr(&find.target, &addr, allow_private) {
-                    if find.found.last() != Some(&addr) {
-                        find.record(addr, now);
-                    }
+            // What the DHT behaviour holds is the last answer that named the target.
+            let target = find.target;
+            let named: Vec<Multiaddr> = offered
+                .iter()
+                .filter_map(|addr| found_addr(&target, addr, allow_private))
+                .take(MAX_FOUND_ADDRS / 2)
+                .collect();
+            for addr in named {
+                if find.found.last() != Some(&addr) {
+                    find.record(addr, now);
                 }
             }
         }
@@ -1560,6 +1599,7 @@ impl Internet {
                 dialed,
                 relayed,
                 own,
+                closing: false,
                 since: Instant::now(),
             },
         );
@@ -2569,6 +2609,7 @@ mod tests {
                     dialed: None,
                     relayed: false,
                     own: true,
+                    closing: false,
                     since: Instant::now(),
                 },
             );
