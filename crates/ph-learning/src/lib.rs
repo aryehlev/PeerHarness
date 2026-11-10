@@ -9,6 +9,8 @@
 //! * [`dedup`]: [`filter_known`] to avoid raising a known concept again.
 //! * [`draft`]: [`draft_skill`] (an instruction-only `SKILL.md` draft) and
 //!   [`draft_question`] (the sanitized question text), built only from extracted tokens.
+//! * [`note`]: rules written down as free text, by the person or reported by their agent
+//!   ([`note_candidate`], [`draft_note_skill`]). A note is a candidate like any other.
 //! * [`providers`]: optional, **advisory-only** agent providers (Claude Code CLI, Codex
 //!   CLI, Ollama-compatible local endpoint). Disabled by default.
 //! * [`assisted`]: [`AgentAssistedDetector`], which asks a provider to rephrase
@@ -45,7 +47,8 @@
 //!
 //! Nothing in this crate logs observation text, prompts or provider output; tracing
 //! events carry counts and provider names only. Error `Display` strings are static.
-//! Detector output and drafts contain only fixed template text plus extracted tokens.
+//! Detector output and its drafts contain only fixed template text plus extracted tokens.
+//! A note draft contains the statement the person wrote or reviewed, and nothing else.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -53,6 +56,7 @@ pub mod assisted;
 pub mod dedup;
 pub mod detector;
 pub mod draft;
+pub mod note;
 pub mod providers;
 
 pub use assisted::{AgentAssistedDetector, AssistedCandidate, SkipReason};
@@ -62,6 +66,10 @@ pub use detector::{
     DeterministicDetector,
 };
 pub use draft::{draft_question, draft_skill, question_topic, SkillDraft};
+pub use note::{
+    draft_note_skill, is_note_key, is_valid_note, note_candidate, note_concept_key, note_origin,
+    note_skill_name, NoteOrigin, MAX_NOTE_CHARS, NOTE_CONCEPT_PREFIX, TOPIC_AGENT_NOTE, TOPIC_NOTE,
+};
 pub use providers::{
     build_provider, AdvisoryPurpose, AdvisoryRequest, AdvisoryResponse, AgentProvider,
     ClaudeCodeCli, CodexCli, OllamaLocal, ProviderConfig, ProviderError, ProviderKind,

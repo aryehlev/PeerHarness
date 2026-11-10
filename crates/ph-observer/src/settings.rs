@@ -228,8 +228,9 @@ impl HookCommand {
         self.home.as_deref()
     }
 
-    /// The shell command for `event`.
-    pub fn render(&self, event: HookEvent) -> String {
+    /// The shell words that run this binary for this home, without a subcommand:
+    /// `PEERHARNESS_HOME='<home>' '<exe>'` (the prefix only when a home is pinned).
+    pub fn render_program(&self) -> String {
         let mut s = String::new();
         if let Some(h) = &self.home {
             s.push_str(HOME_ENV_VAR);
@@ -238,6 +239,12 @@ impl HookCommand {
             s.push(' ');
         }
         s.push_str(&quote(&self.exe));
+        s
+    }
+
+    /// The shell command for `event`.
+    pub fn render(&self, event: HookEvent) -> String {
+        let mut s = self.render_program();
         s.push_str(" hook ");
         s.push_str(event.cli_arg());
         s
@@ -780,6 +787,11 @@ mod tests {
         assert_eq!(
             q.render(HookEvent::Stop),
             r"PEERHARNESS_HOME='/h'\''' '/a'\''b/peerharness' hook stop"
+        );
+        assert_eq!(cmd(None).render_program(), "'/opt/ph bin/peerharness'");
+        assert_eq!(
+            cmd(Some("/x y")).render_program(),
+            "PEERHARNESS_HOME='/x y' '/opt/ph bin/peerharness'"
         );
     }
 
