@@ -433,3 +433,79 @@ read, so one reachable member, or the shared directory of ADR-025, already carri
 everyone's records to everyone else, with the roll deciding who gets what. A libp2p
 circuit relay would add a party that the roll says nothing about. Hole punching and
 router port mapping were left out because they cannot be tested from one machine.
+(ADR-032 revises this paragraph: finding and reaching members across networks is now
+built, opt-in.)
+
+## ADR-032: Opt-in internet mode: members find each other by device key on the public libp2p network
+ADR-031 left a circle to converge through one reachable member or a shared directory.
+That asks every team to have a member who can open a port, and discovery on a local
+network does not help a team that is not on one. So a node can now find and reach
+another by its device key from anywhere, off unless its owner asks for it:
+`daemon --internet`, `sync --internet`, `circle join <peer id> --internet`
+(`NetworkConfig::internet`, default `None`; with it off the transport is built exactly
+as before and speaks its one protocol).
+
+What it uses, all from libp2p 0.57 and all as a client: the Kademlia DHT of the public
+libp2p (IPFS) network (`/ipfs/kad/1.0.0`, client mode, bootstrap peers as that network's
+own software ships them) to turn a peer id into addresses; identify and AutoNAT v2 to
+learn whether the node can be dialed; circuit relay v2 reservations while it cannot;
+DCUtR hole punching to replace a relayed connection with a direct one. A node never
+serves the DHT, never relays and never dials back for others, and it stores nothing in
+the DHT: a node is findable because the DHT servers closest to its id are connected to
+it and answer `FIND_NODE` with the addresses it told them.
+
+Who learns what. The servers a node contacts (bootstrap peers, several dozen DHT
+servers per lookup, its relays, and the DNS resolver for the bootstrap names) see its IP
+address and its device public key, and that it speaks `/peerharness/req/0.1.0`. A DHT
+server asked for a peer id learns which device key the node is looking for. A relay
+learns both device keys of a circuit, their IP addresses, when they talk and how much.
+Nobody there learns a circle id, a name, a roll or an event: none is ever sent, and a
+relayed connection runs TLS 1.3 between the two device keys, so the relay can neither
+read nor alter it nor stand in for either end. A relay is a party the roll says nothing
+about, which ADR-031 objected to; it is accepted because it gets no standing: the
+handler authorizes by the device key at the far end, exactly as on a direct connection.
+
+Whom the application looks up and dials (`ph-network` dials nobody the application
+named; it only reports addresses): the device keys on the rolls this node holds that
+share a roll with it, and the one peer id its owner typed for `circle join`. Addresses
+from the network are hints ending in `/p2p/<peer id>`, so a dial succeeds only if the
+other end proves that key, and whoever answers is judged by the roll like any other
+peer (ADR-026). A device on no roll of the node is not looked up. An address through a
+relay is not stored. A one-shot command asks no relay for a reservation; it listens on
+all IPv4 interfaces for the length of the command, because a hole punch needs a socket
+on each side. After a dial through a relay a sync waits six seconds for the direct
+connection before it goes on over the relay.
+
+Accepted costs. The device key is stable, so the servers a node contacts can recognize
+it on every network, and two device keys that look each other up can be linked by a
+server that sees both. Public relays are limited: a circuit ends after about 128 KiB in
+one direction or two minutes. A small exchange fits; a larger one fails unless the hole
+punch worked, and continues on the next sync because the fetch cursor is now kept after
+every batch (it was kept once per circle). Hole punching does not get through every
+router. Findability depends on servers run by others. Five more libp2p protocol crates
+and `hickory-resolver` (for the `dnsaddr` bootstrap names) are in the build; licences
+and MSRV 1.89 were checked.
+
+Measured on 2026-11-10 from one machine with throwaway keys, both ends behind the same
+router. Joining the network took 6 to 16 s and a lookup 2 to 5 s. A stopped node was
+still named for 29 minutes. In 20 runs of the transport's test a node was found and
+greeted 19 times; the relayed connection became direct in 15 of them, and in none of 7
+later attempts (three of that test, four through the CLI) after the machine's network
+had changed, which shows how much this depends on the router (and both ends behind one
+router says little about two). A node that lost
+its network for seven minutes rejoined by itself; it then went three minutes without a
+relay, which is fixed (pauses for relays are dropped when the network is back). Through
+the CLI, over relays only: a join by peer id, two syncs, a vote and the installation of
+the rule on both nodes worked.
+
+Not tested: two different routers, IPv6, Linux. Tests that need the public network are
+`#[ignore]`d; the others run a private hub on loopback that answers like the public
+servers do, which the app's own test reaches through `PEERHARNESS_INTERNET_BOOTSTRAP`
+and `PEERHARNESS_INTERNET_PRIVATE` (a closed network on private addresses; refused
+without a bootstrap list of one's own).
+
+Not done. A relay run by a member for its circle: not needed for convergence, since a
+member whose node others can reach already carries everyone's records (every node
+stores what the roll lets it read), and one such node, for example a member's second
+device on a server, is the dependable setup. No switch in the configuration file: the
+mode is asked for per command.

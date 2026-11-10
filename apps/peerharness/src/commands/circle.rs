@@ -346,18 +346,28 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
                 "They run: `peerharness circle join <file> --expect-fingerprint <fingerprint>`.",
             );
             // A running daemon here already has them on its roll: no file is needed.
-            if let Some(addr) = crate::daemon_info::DaemonInfo::running(&node.home)
-                .and_then(|d| d.listen_addrs.into_iter().next())
-            {
+            let daemon = crate::daemon_info::DaemonInfo::running(&node.home);
+            if let Some(d) = daemon.as_ref().filter(|d| d.internet.is_some()) {
+                t.line(format!(
+                    "Or, from anywhere, since your daemon is on the public network: \
+                     `peerharness circle join {} --internet --expect-fingerprint {}`.",
+                    d.peer_id,
+                    circle.root_key.fingerprint()
+                ));
+            } else if let Some(addr) = daemon.and_then(|d| d.listen_addrs.into_iter().next()) {
                 t.line(format!(
                     "Or, if they can reach your daemon: `peerharness circle join {addr} \
                      --expect-fingerprint {}`.",
                     circle.root_key.fingerprint()
                 ));
             } else {
-                t.line(
-                    "Or run `peerharness daemon` and give them its address instead of the file.",
-                );
+                t.line(format!(
+                    "Or run `peerharness daemon --internet` and give them this node's peer \
+                     id instead of the file: `peerharness circle join {} --internet \
+                     --expect-fingerprint {}`.",
+                    node.peer_id(),
+                    circle.root_key.fingerprint()
+                ));
             }
             written = Some(path.display().to_string());
         }
@@ -1161,16 +1171,28 @@ fn finish_join(node: &Node, plan: &JoinPlan, lines: &[&str]) -> Result<(Value, T
 
 fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
     // A path that exists is a file or a directory. Anything else that reads as a
-    // multiaddr is a member's node.
+    // multiaddr is a member's node; with --internet, so is a peer id.
     if !args.invite_file.exists() {
-        if let Ok(addr) = args
-            .invite_file
-            .to_string_lossy()
-            .trim()
-            .parse::<ph_network::Multiaddr>()
-        {
-            return join_from_peer(ctx, args, addr);
+        let text = args.invite_file.to_string_lossy().trim().to_owned();
+        let peer = crate::internet::peer_id_of(&text);
+        if let (true, Some(peer)) = (args.internet, peer) {
+            return join_from_peer(ctx, args, JoinFrom::Found(peer));
         }
+        if peer.is_some() {
+            return Err(usage(
+                "that is a peer id: pass --internet to find its node over the public \
+                 network, or give the node's address",
+            ));
+        }
+        if let Ok(addr) = text.parse::<ph_network::Multiaddr>() {
+            return join_from_peer(ctx, args, JoinFrom::Addr(addr));
+        }
+    }
+    if args.internet {
+        return Err(usage(
+            "--internet goes with the peer id of a member's node (its `daemon --internet` \
+             prints it), not with a file",
+        ));
     }
     let node = ctx.open_node()?;
     let now = node.now();
@@ -1194,21 +1216,48 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
     Ok(Report::new(json, t.finish()))
 }
 
+/// Where `circle join` gets a circle from when it is not a file.
+enum JoinFrom {
+    /// A member's node at an address the owner gave.
+    Addr(ph_network::Multiaddr),
+    /// A member's node the owner named by its peer id, to be found over the public
+    /// network (`--internet`).
+    Found(ph_network::PeerId),
+}
+
 /// `circle join <address>`: gets the circle from a member's running daemon. That node
 /// answers because the admission that passed put this device on its roll; what it sends
 /// is verified here exactly like a file (the charter must carry the root signature and
 /// the fingerprint the owner expects, and every record is checked on import).
-fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, addr: ph_network::Multiaddr) -> Result<Report> {
+fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, from: JoinFrom) -> Result<Report> {
     use crate::commands::net::{dial_only, tokio_runtime};
     use crate::runtime::{self, Running};
 
     let home = ctx.home.clone();
+    let config = if args.internet {
+        ctx.out.note(crate::internet::DISCLOSURE);
+        crate::internet::client_config()?
+    } else {
+        dial_only()
+    };
     tokio_runtime()?.block_on(async {
-        let run = Running::start(home, dial_only())?;
+        let run = Running::start(home, config)?;
+        let run = if args.internet { run.passing() } else { run };
         let joined = async {
             let me = run.device_key;
             let now = ph_core::Timestamp::now();
-            let (peer, offered) = runtime::fetch_for_join(&run, &addr).await?;
+            let (addr, peer, offered) = match from {
+                JoinFrom::Addr(addr) => {
+                    let (peer, offered) = runtime::fetch_for_join(&run, &addr).await?;
+                    (addr, peer, offered)
+                }
+                JoinFrom::Found(peer) => {
+                    let wait = std::time::Duration::from_secs(u64::from(
+                        crate::internet::DEFAULT_WAIT_SECS,
+                    ));
+                    runtime::fetch_for_join_found(&run, peer, wait).await?
+                }
+            };
             // The circles on offer whose records hold a charter that lists this device
             // and is signed by the key the circle id is derived from.
             let mut choices = Vec::new();
@@ -1270,11 +1319,18 @@ fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, addr: ph_network::Multiaddr) 
                     installed.extend(r.changes.installed.iter().map(|s| json!(s)));
                     json["installed"] = json!(installed);
                     json["peer_id"] = json!(r.peer_id);
-                    t.line("That node's address is stored: `peerharness sync` syncs with it.");
+                    t.line(if args.internet {
+                        "From now on: `peerharness sync --internet` finds the members of \
+                         this circle by their device keys."
+                    } else {
+                        "That node's address is stored: `peerharness sync` syncs with it."
+                    });
                 }
                 Err(e) => {
                     t.line(format!(
-                        "Joined, but the first sync did not finish ({e}). Run `peerharness sync`."
+                        "Joined, but the first sync did not finish ({e}). Run `peerharness \
+                         sync{}`.",
+                        if args.internet { " --internet" } else { "" }
                     ));
                 }
             }

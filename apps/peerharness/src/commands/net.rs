@@ -8,6 +8,9 @@
 //!   and exits. It does not need a daemon of its own. Without an argument it does that
 //!   with every peer whose address is stored.
 //! * `connect <address>` only checks who answers and remembers the address.
+//! * With `--internet` (ADR-032) the node joins the public libp2p network: a daemon can
+//!   be found there by its peer id, and `sync --internet` looks the devices on this
+//!   node's rolls up there. Off unless asked for.
 //!
 //! A peer is recognized by its device key being on the roll of a circle this node
 //! holds. A device that was just admitted holds no roll yet: it gets the circle with
@@ -23,6 +26,7 @@ use crate::cli::{ConnectArgs, DaemonArgs, SyncArgs};
 use crate::commands::Ctx;
 use crate::daemon_info::{DaemonInfo, DaemonLock};
 use crate::error::usage;
+use crate::internet;
 use crate::output::{safe, Report, Text};
 use crate::runtime::{self, Running, SyncReport};
 
@@ -45,6 +49,9 @@ pub fn parse_addr(s: &str) -> Result<Multiaddr> {
 pub fn dial_only() -> NetworkConfig {
     NetworkConfig::listening_on(Vec::new())
 }
+
+/// How often a daemon in internet mode looks at where it stands on the public network.
+const STANDING_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Resolves `sync`'s argument: a multiaddr, or the id of a peer whose address a
 /// previous `connect` or `sync` stored.
@@ -90,6 +97,12 @@ fn sync_lines(t: &mut Text, r: &SyncReport) {
             r.circles, r.peer_id, r.received, r.bundles, r.sent
         ));
     }
+    if r.relayed {
+        t.line(
+            "  This went through a public relay: a direct connection could not be made. A \
+             relay carries about 128 KiB per connection, enough for a small exchange.",
+        );
+    }
     if r.refused_by_peer > 0 {
         t.line(format!(
             "  The peer did not take {} event(s) (it may lack a record they depend on; they are offered again next time).",
@@ -134,6 +147,7 @@ fn sync_json(r: &SyncReport) -> Value {
         "bundles": r.bundles,
         "sent": r.sent,
         "refused_by_peer": r.refused_by_peer,
+        "relayed": r.relayed,
         "removed_from": r.removed_from,
         "not_recognized": r.not_recognized,
         "installed": r.changes.installed,
@@ -144,43 +158,58 @@ fn sync_json(r: &SyncReport) -> Value {
 }
 
 pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
-    let configured = if args.listen.is_empty() {
-        ctx.open_node()?.config.node.listen.clone()
-    } else {
-        args.listen
-    };
-    let listen = configured
+    let lan = args.lan;
+    let on_internet = args.internet;
+    let given = args
+        .listen
         .iter()
         .map(|s| parse_addr(s))
         .collect::<Result<Vec<_>>>()?;
-    if listen.is_empty() {
-        return Err(usage("no listen address: pass --listen <multiaddr>"));
-    }
+    let config = if on_internet {
+        // The configured default listens on loopback, which is of no use here.
+        internet::daemon_config((!given.is_empty()).then_some(given), lan)?
+    } else {
+        let listen = if given.is_empty() {
+            ctx.open_node()?
+                .config
+                .node
+                .listen
+                .iter()
+                .map(|s| parse_addr(s))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            given
+        };
+        if listen.is_empty() {
+            return Err(usage("no listen address: pass --listen <multiaddr>"));
+        }
+        NetworkConfig {
+            lan_discovery: lan,
+            ..NetworkConfig::listening_on(listen)
+        }
+    };
     let home = ctx.home.clone();
     let out = ctx.out;
     // Held until this function returns; the operating system releases it if we crash.
     let _lock = DaemonLock::acquire(&home)?
         .ok_or_else(|| usage("a daemon is already running for this home"))?;
-    let lan = args.lan;
-    if lan && listen.iter().all(is_loopback) {
+    if lan && config.listen_addrs.iter().all(is_loopback) {
         out.warn(
             "--lan: this daemon only listens on loopback, so it has no address to announce. \
              Listen on a network address, for example --listen /ip4/0.0.0.0/udp/4001/quic-v1.",
         );
     }
     tokio_runtime()?.block_on(async move {
-        let config = NetworkConfig {
-            lan_discovery: lan,
-            ..NetworkConfig::listening_on(listen)
-        };
         let run = Running::start(home.clone(), config)?;
         let addrs = run.dialable_addrs().await?;
-        DaemonInfo {
+        let peer_id = run.net.local_peer_id().to_string();
+        let mut info = DaemonInfo {
             pid: std::process::id(),
-            peer_id: run.net.local_peer_id().to_string(),
+            peer_id: peer_id.clone(),
             listen_addrs: addrs.clone(),
-        }
-        .write(&home)?;
+            internet: runtime::internet_info(&run).await,
+        };
+        info.write(&home)?;
         out.note("Listening. Members of your circles can sync with this node at:");
         for a in &addrs {
             out.note(format!("  {a}"));
@@ -188,6 +217,15 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
         out.note(
             "Only devices on the roll of a circle this node holds are answered. Ctrl-C stops it.",
         );
+        if on_internet {
+            out.note(internet::DISCLOSURE);
+            out.note("Internet: joining the public network.");
+            out.note(format!(
+                "Members anywhere reach this node by its peer id:\n  peerharness sync \
+                 --internet\n  peerharness circle join {peer_id} --internet   (a device \
+                 that was just admitted)"
+            ));
+        }
         if lan {
             out.note(
                 "Announcing this device's public key and port on the local network (mDNS). \
@@ -196,16 +234,29 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
         }
         if let Some(secs) = args.sync_every {
             out.note(format!(
-                "Syncing with the peers this node knows{} every {secs} seconds.",
+                "Syncing with the peers this node knows{}{} every {secs} seconds.",
                 if lan {
-                    ", and members heard on the local network,"
+                    ", members heard on the local network"
+                } else {
+                    ""
+                },
+                if on_internet {
+                    ", members found over the public network"
                 } else {
                     ""
                 }
             ));
+        } else if on_internet {
+            out.note(
+                "This node answers and dials nobody. To also fetch from members by itself, \
+                 add --sync-every <seconds>.",
+            );
         }
         let stop = stop_signal();
         tokio::pin!(stop);
+        // In internet mode: looks every few seconds at where the node stands, keeps
+        // `daemon.json` current and tells the owner when it changes.
+        let mut standing = on_internet.then(|| tokio::time::interval(STANDING_INTERVAL));
         let mut ticker = args.sync_every.map(|secs| {
             let every = Duration::from_secs(u64::from(secs));
             tokio::time::interval_at(tokio::time::Instant::now() + every, every)
@@ -219,11 +270,49 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
                     None => std::future::pending().await,
                 }
             };
+            let look = async {
+                match standing.as_mut() {
+                    Some(t) => {
+                        t.tick().await;
+                    }
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 _ = &mut stop => break,
+                _ = look => {
+                    let now = runtime::internet_info(&run).await;
+                    if now != info.internet {
+                        let said = info.internet.as_ref().map(|i| i.summary());
+                        if let Some(i) = now.as_ref().filter(|i| Some(i.summary()) != said) {
+                            out.note(format!("Internet: {}.", i.summary()));
+                        }
+                        info.internet = now;
+                        // Best effort: the file is for `status`, the daemon does not need it.
+                        let _ = info.write(&home);
+                    }
+                }
                 _ = tick => {
                     // Failures are expected (a peer that is off) and only counted.
                     let mut results = runtime::sync_known(&run).await.unwrap_or_default();
+                    if on_internet {
+                        // Members that were not just synced, found by their device keys.
+                        let done = results
+                            .iter()
+                            .filter(|(_, r)| r.is_ok())
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        let wait = Duration::from_secs(u64::from(internet::DEFAULT_WAIT_SECS));
+                        if let Ok(found) = runtime::sync_internet(&run, wait, &done).await {
+                            tracing::info!(
+                                looked_up = found.looked_up,
+                                not_found = found.not_found,
+                                left_out = found.left_out,
+                                "internet lookups"
+                            );
+                            results.extend(found.results);
+                        }
+                    }
                     if lan {
                         // Members heard on the local network that were not just synced.
                         let done = results
@@ -285,17 +374,53 @@ pub fn connect(ctx: &Ctx, args: ConnectArgs) -> Result<Report> {
 }
 
 pub fn sync(ctx: &Ctx, args: SyncArgs) -> Result<Report> {
+    if args.wait.is_some() && !args.lan && !args.internet {
+        return Err(usage("--wait goes with --lan or --internet"));
+    }
+    let wait = |default: u32| Duration::from_secs(u64::from(args.wait.unwrap_or(default)));
     if args.lan {
-        return sync_many(ctx, Some(Duration::from_secs(u64::from(args.wait))));
+        return sync_many(ctx, Find::Lan(wait(3)));
     }
     let Some(target) = args.peer_id else {
-        return sync_many(ctx, None);
+        return sync_many(
+            ctx,
+            if args.internet {
+                Find::Internet(wait(internet::DEFAULT_WAIT_SECS))
+            } else {
+                Find::Known
+            },
+        );
     };
-    let addr = resolve_target(ctx, &target)?;
+    // With --internet: an address (it may go through a relay), or the peer id of a
+    // device on a roll this node holds, which is then looked up.
+    let found = if args.internet && !target.trim_start().starts_with('/') {
+        Some(internet::peer_id_of(&target).ok_or_else(|| usage("that is not a peer id"))?)
+    } else {
+        None
+    };
+    let addr = match found {
+        Some(_) => None,
+        None => Some(resolve_target(ctx, &target)?),
+    };
+    let config = if args.internet {
+        internet::client_config()?
+    } else {
+        dial_only()
+    };
+    if args.internet {
+        ctx.out.note(internet::DISCLOSURE);
+    }
+    let wait = wait(internet::DEFAULT_WAIT_SECS);
     let home = ctx.home.clone();
+    let passing = args.internet;
     tokio_runtime()?.block_on(async move {
-        let run = Running::start(home, dial_only())?;
-        let result = runtime::sync(&run, &addr).await;
+        let run = Running::start(home, config)?;
+        let run = if passing { run.passing() } else { run };
+        let result = match (found, addr) {
+            (Some(peer), _) => runtime::sync_found(&run, peer, wait).await,
+            (None, Some(addr)) => runtime::sync(&run, &addr).await,
+            (None, None) => Err(usage("no peer to sync with")),
+        };
         run.stop().await;
         let r = result?;
         let mut t = Text::new();
@@ -307,6 +432,17 @@ pub fn sync(ctx: &Ctx, args: SyncArgs) -> Result<Report> {
     })
 }
 
+/// How `sync` without an address finds whom to sync with.
+enum Find {
+    /// Every peer whose address this node has stored.
+    Known,
+    /// The members that announce themselves on the local network within that time.
+    Lan(Duration),
+    /// The devices on this node's rolls that the public network knows, looked up for
+    /// at most that long.
+    Internet(Duration),
+}
+
 fn is_loopback(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| match p {
         ph_network::libp2p::multiaddr::Protocol::Ip4(ip) => ip.is_loopback(),
@@ -315,34 +451,69 @@ fn is_loopback(addr: &Multiaddr) -> bool {
     })
 }
 
-/// `sync` without an address. With `lan`, the members of this node's circles that
-/// announce themselves on the local network within that time; without, every peer
-/// whose address this node has stored.
-fn sync_many(ctx: &Ctx, lan: Option<Duration>) -> Result<Report> {
+/// `sync` without an address: with whoever `find` turns up.
+fn sync_many(ctx: &Ctx, find: Find) -> Result<Report> {
     let home = ctx.home.clone();
-    tokio_runtime()?.block_on(async move {
-        let config = NetworkConfig {
-            lan_discovery: lan.is_some(),
+    let config = match find {
+        Find::Known => dial_only(),
+        Find::Lan(_) => NetworkConfig {
+            lan_discovery: true,
             ..dial_only()
-        };
+        },
+        Find::Internet(_) => {
+            ctx.out.note(internet::DISCLOSURE);
+            internet::client_config()?
+        }
+    };
+    tokio_runtime()?.block_on(async move {
         let run = Running::start(home, config)?;
-        let results = match lan {
-            Some(wait) => runtime::sync_lan(&run, wait, &Default::default()).await,
-            None => runtime::sync_known(&run).await,
+        let run = if matches!(find, Find::Internet(_)) {
+            run.passing()
+        } else {
+            run
+        };
+        // Devices that were looked up over the public network and not found.
+        let mut missing = None;
+        let results = match find {
+            Find::Lan(wait) => runtime::sync_lan(&run, wait, &Default::default()).await,
+            Find::Known => runtime::sync_known(&run).await,
+            Find::Internet(wait) => runtime::sync_internet(&run, wait, &Default::default())
+                .await
+                .map(|found| {
+                    missing = Some((found.looked_up, found.not_found, found.left_out));
+                    found.results
+                }),
         };
         run.stop().await;
         let results = results?;
         if results.is_empty() {
-            return Err(usage(match lan {
-                Some(_) => {
+            return Err(usage(match (find, missing) {
+                (Find::Lan(_), _) => {
                     "no member of your circles announced itself on this network. A member's \
                      node must run `peerharness daemon --lan` on a network address, and this \
                      node must already hold a circle with it."
+                        .to_owned()
                 }
-                None => {
-                    "this node knows no peer yet: sync once with an address, \
-                     `peerharness sync <multiaddr>`, or on a shared network `peerharness sync --lan`"
+                (Find::Internet(_), Some((0, _, 0))) => {
+                    "no other device is on the roll of a circle this node holds, so there is \
+                     nobody to look for. A device that was just admitted joins first: \
+                     `peerharness circle join <peer id> --internet`."
+                        .to_owned()
                 }
+                (Find::Internet(_), Some((looked_up, _, left_out))) => format!(
+                    "none of the {looked_up} other device(s) on your rolls was found on the \
+                     public network{}. A member's node must be running `peerharness daemon \
+                     --internet`.",
+                    if left_out > 0 {
+                        format!(" ({left_out} more were not looked up in time: raise --wait)")
+                    } else {
+                        String::new()
+                    }
+                ),
+                _ => "this node knows no peer yet: sync once with an address, `peerharness \
+                      sync <multiaddr>`, or find members over the internet with \
+                      `peerharness sync --internet`"
+                    .to_owned(),
             }));
         }
         let mut t = Text::new();
@@ -372,9 +543,23 @@ fn sync_many(ctx: &Ctx, lan: Option<Duration>) -> Result<Report> {
         if received > 0 {
             t.line("See what needs your vote: `peerharness proposal list`.");
         }
-        Ok(Report::new(
-            json!({ "synced": synced, "failed": failed }),
-            t.finish(),
-        ))
+        let mut json = json!({ "synced": synced, "failed": failed });
+        if let Some((looked_up, not_found, left_out)) = missing {
+            json["looked_up"] = json!(looked_up);
+            json["not_found"] = json!(not_found);
+            json["left_out"] = json!(left_out);
+            if not_found > 0 {
+                t.line(format!(
+                    "{not_found} other device(s) on your rolls were not found on the public \
+                     network (their nodes are not running `daemon --internet`)."
+                ));
+            }
+            if left_out > 0 {
+                t.line(format!(
+                    "{left_out} device(s) were not looked up in time: raise --wait."
+                ));
+            }
+        }
+        Ok(Report::new(json, t.finish()))
     })
 }

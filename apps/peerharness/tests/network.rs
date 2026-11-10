@@ -5,7 +5,15 @@
 //! an admission and a removal decided by ballots that arrive over the network, with the
 //! founder's daemon issuing the charters; a new member who gets the circle from a
 //! member's node; a removed member whose node is shown the vote that removed it; and
-//! the ways a node that is not on the roll is turned away.
+//! the ways a node that is not on the roll is turned away; and the internet mode, in
+//! which members find each other by device key, against a private stand-in for the
+//! public network (the hub that the transport's own tests use).
+
+// The stand-in network of `crates/ph-network/tests`: a DHT server and relay in one.
+#[path = "../../../crates/ph-network/tests/common/mod.rs"]
+mod common;
+#[path = "../../../crates/ph-network/tests/common/hub.rs"]
+mod hub;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -23,6 +31,8 @@ struct Node {
     name: &'static str,
     home: PathBuf,
     skills: PathBuf,
+    /// Further environment of every command of this node.
+    env: Vec<(&'static str, String)>,
 }
 
 /// A running `peerharness daemon`, killed when dropped.
@@ -45,6 +55,7 @@ impl Node {
             name,
             home: root.join(name),
             skills: root.join(format!("{name}-skills")),
+            env: Vec::new(),
         };
         node.run(&[
             "init",
@@ -56,11 +67,60 @@ impl Node {
     }
 
     fn envs(&self) -> Vec<(&'static str, std::ffi::OsString)> {
-        vec![
+        let mut envs: Vec<(&'static str, std::ffi::OsString)> = vec![
             ("PEERHARNESS_HOME", self.home.clone().into()),
             ("PEERHARNESS_CLAUDE_SKILLS_DIR", self.skills.clone().into()),
             ("USER", self.name.into()),
-        ]
+        ];
+        envs.extend(self.env.iter().map(|(k, v)| (*k, v.into())));
+        envs
+    }
+
+    /// The internet mode of this node goes to `hub` instead of the public network.
+    fn on(mut self, hub: &hub::Hub) -> Self {
+        self.env = vec![
+            ("PEERHARNESS_INTERNET_BOOTSTRAP", hub.addr.to_string()),
+            ("PEERHARNESS_INTERNET_PRIVATE", "1".to_owned()),
+        ];
+        self
+    }
+
+    /// Runs a command that depends on what another process has done by now, again
+    /// until it succeeds. Only a runtime failure (exit 1) is tried again.
+    fn eventually(&self, args: &[&str]) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(40);
+        loop {
+            let out = self.cmd(args).output().unwrap();
+            if out.status.success() {
+                return serde_json::from_slice(&out.stdout).unwrap();
+            }
+            assert!(
+                out.status.code() == Some(1) && Instant::now() < deadline,
+                "{} {:?} failed:\n{}\n{}",
+                self.name,
+                args,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    /// Waits until this node's daemon says it has reached the network.
+    fn wait_joined(&self) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(40);
+        loop {
+            let internet = self.run(&["status"])["daemon"]["internet"].clone();
+            if internet["joined"] == true {
+                return internet;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{}'s daemon did not reach the network: {internet}",
+                self.name
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
@@ -512,4 +572,192 @@ fn members_find_each_other_on_the_local_network() {
     let (code, msg) = nobody.fail(&["sync", "--lan", "--wait", "2"]);
     assert_eq!(code, 2, "{msg}");
     assert!(msg.contains("no member of your circles"), "{msg}");
+}
+
+/// The internet mode, end to end, with real processes. The public network is replaced
+/// by a hub on loopback that answers like its servers do; the lookups, the handshakes
+/// and the sync are the real ones.
+#[test]
+fn members_find_each_other_by_device_key_over_a_dht() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let hub = runtime.block_on(hub::Hub::start(200, hub::HubOptions::default()));
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice").on(&hub);
+    let bob = Node::new(root, "bob").on(&hub);
+    let mallory = Node::new(root, "mallory").on(&hub);
+    let peer_id = |node: &Node| {
+        node.run(&["status"])["peer_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    // Who asked the hub for whose key.
+    let asked = |who: &str, whom: &str| {
+        let who: ph_network::PeerId = who.parse().unwrap();
+        let whom: ph_network::PeerId = whom.parse().unwrap();
+        hub.state()
+            .asked
+            .iter()
+            .any(|(peer, key)| *peer == who && *key == whom.to_bytes())
+    };
+
+    let created = alice.run(&["circle", "create", "team"]);
+    let fingerprint = created["root_fingerprint"].as_str().unwrap().to_owned();
+    alice.run(&[
+        "circle",
+        "invite",
+        &bob.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+        "--out",
+        root.join("unused.jsonl").to_str().unwrap(),
+    ]);
+    let alice_id = peer_id(&alice);
+
+    // What is refused before anything goes on a network.
+    let (code, msg) = bob.fail(&["circle", "join", &alice_id]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("--internet"), "{msg}");
+    assert_eq!(bob.fail(&["sync", "--wait", "5"]).0, 2);
+    assert_eq!(bob.fail(&["sync", "--internet", "--lan"]).0, 2);
+    // Nobody is on the network yet, and Bob holds no circle: there is nobody to look for.
+    let (code, msg) = bob.fail(&["sync", "--internet", "--wait", "3"]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("nobody to look for"), "{msg}");
+    assert!(!asked(&peer_id(&bob), &alice_id));
+
+    // Alice's node goes on the network. She gave it no address to listen on.
+    let daemon = alice.daemon_with(&["--internet"]);
+    assert_eq!(daemon.peer_id, alice_id);
+    let standing = alice.wait_joined();
+    assert!(standing["reachability"].is_string(), "{standing}");
+
+    // Bob was given a peer id and a fingerprint, no address. His node finds hers,
+    // which answers because the admission that passed put his device on its roll.
+    let wrong = [
+        "circle",
+        "join",
+        &alice_id,
+        "--internet",
+        "--expect-fingerprint",
+        "0000-0000-0000-0000-0000",
+        "--yes",
+    ];
+    let join = [
+        "circle",
+        "join",
+        &alice_id,
+        "--internet",
+        "--expect-fingerprint",
+        &fingerprint,
+        "--yes",
+        "--name",
+        "team",
+    ];
+    let joined = bob.eventually(&join);
+    assert_eq!(joined["peer_id"], alice_id.as_str(), "{joined}");
+    assert_eq!(bob.roll(), ["alice", "bob"]);
+    assert!(
+        asked(&peer_id(&bob), &alice_id),
+        "the hub was asked for her key"
+    );
+    // He is in it now, so there is nothing left to join there.
+    let (code, msg) = bob.fail(&wrong);
+    assert_eq!(code, 3, "{msg}");
+
+    // A rule, proposed and approved on Alice's node. Bob's node looks up the devices
+    // on his roll, finds hers and fetches it.
+    let cand = alice.run(&["note", RULE])["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let rule = alice.run(&["proposal", "create", &cand, "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    let synced = bob.run(&["sync", "--internet", "--wait", "20"]);
+    assert_eq!(synced["failed"], serde_json::json!([]), "{synced}");
+    assert_eq!(synced["synced"][0]["peer_id"], alice_id.as_str());
+    assert_eq!(synced["synced"][0]["received"], 2, "{synced}");
+    assert_eq!(synced["synced"][0]["bundles"], 1);
+    assert_eq!(
+        (synced["looked_up"].as_u64(), synced["not_found"].as_u64()),
+        (Some(1), Some(0)),
+        "{synced}"
+    );
+
+    // He approves: two of two. One member, named by peer id, is looked up and takes
+    // his ballot; her daemon installs the rule.
+    assert_eq!(
+        bob.run(&["proposal", "vote", &rule, "approve", "--yes"])["passed"],
+        true
+    );
+    let synced = bob.run(&["sync", &alice_id, "--internet"]);
+    assert_eq!(synced["sent"], 2, "{synced}");
+    assert!(alice.has_skill(), "the daemon applied the passed rule");
+
+    // Mallory is on no roll. Her node does not look anybody up for a sync: the device
+    // she names is on no roll she holds.
+    let mallory_id = peer_id(&mallory);
+    let (code, msg) = mallory.fail(&["sync", &alice_id, "--internet"]);
+    assert_eq!(code, 3, "{msg}");
+    assert!(msg.contains("on no roll"), "{msg}");
+    assert!(!asked(&mallory_id, &alice_id));
+    // She can find Alice's node by its peer id, like anybody can, and is told nothing.
+    let attempt = [
+        "circle",
+        "join",
+        &alice_id,
+        "--internet",
+        "--expect-fingerprint",
+        &fingerprint,
+        "--yes",
+    ];
+    let (code, msg) = mallory.fail(&attempt);
+    assert_eq!(code, 3, "{msg}");
+    assert!(
+        msg.contains("does not have this device on the roll"),
+        "{msg}"
+    );
+    assert!(asked(&mallory_id, &alice_id));
+    assert_eq!(mallory.run(&["status"])["circles"], serde_json::json!([]));
+
+    // When Alice's node is gone, nobody is found, and Bob is told why.
+    drop(daemon);
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        let out = bob
+            .cmd(&["sync", "--internet", "--wait", "3"])
+            .output()
+            .unwrap();
+        if out.status.code() == Some(2) {
+            let json: Value = serde_json::from_slice(&out.stdout).unwrap();
+            let msg = json["error"]["message"].as_str().unwrap();
+            assert!(msg.contains("daemon --internet"), "{msg}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "her node is still found");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// `--internet` and a loopback address do not go together, and the node says so before
+/// it starts anything.
+#[test]
+fn internet_mode_refuses_a_loopback_listener() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let (code, msg) = node.fail(&["daemon", "--internet", "--listen", LISTEN]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("loopback"), "{msg}");
+    assert!(!node.home.join("daemon.json").exists());
 }

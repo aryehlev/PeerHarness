@@ -13,8 +13,9 @@ contract. `apps/peerharness` wires every command of the CLI contract: the local 
 `rule`; `events`; `demo`). Nodes exchange signed events as a file or as a directory of
 small files (`events export`, `events import`, `events sync`; ADR-019, ADR-025), or
 directly over QUIC (`daemon`, `connect`, `sync`; section 7, ADR-026, ADR-028), with
-optional discovery on the local network (ADR-031). Not built: gossip, relays and hole
-punching (ADR-031 says why), and Windows support. Where this file departs from
+optional discovery on the local network (ADR-031) and, also opt-in, across the internet
+by device key over the public libp2p network (ADR-032). Not built: gossip, a relay run
+by members, and Windows support. Where this file departs from
 `docs/spec.md`, the ADRs in `docs/decisions.md` say why; the largest departure is
 governance (section 10, ADR-012 onwards).
 
@@ -361,15 +362,41 @@ any                                   ->  Error { code: "unauthorized"|"rate_lim
   one, and `daemon --sync-every`, dial the peers whose addresses earlier syncs stored.
   With `--lan`, members announce themselves over mDNS (`ph-network`'s `lan_discovery`,
   off by default) and a node dials only announced device keys that are on a roll it
-  holds, at an address ending in that key's peer id (ADR-031). Nobody else is dialed.
+  holds, at an address ending in that key's peer id (ADR-031). With `--internet`
+  (below) a node looks up the device keys that share a roll with it, and for
+  `circle join <peer id>` the one peer id its owner typed, and dials what the lookup
+  returned, again only at addresses ending in that key's peer id. Nobody else is
+  looked up or dialed.
+* **Internet mode** (`ph-network`'s `NetworkConfig::internet`, off by default; ADR-032).
+  The node joins the public libp2p network as a client: it asks that network's DHT for
+  the addresses of a peer id (`find_peer`), learns from the servers whether it can be
+  dialed itself (`internet_status`), holds up to two relay reservations while it
+  cannot, and lets the transport replace a connection through a relay with a direct
+  one (hole punching). It never serves the DHT, never relays, and stores nothing in
+  the DHT. Those servers see the node's device key and IP address and the device keys
+  it looks up; they are sent nothing about circles, and a relay carries TLS between the
+  two device keys, which it cannot read. `ph-network` dials no peer the application
+  named: the app decides from its rolls. A relayed connection gives no standing: the
+  handler sees the device key at the far end and `PeerInfo::relayed`. An address
+  through a relay is not stored (`peers.addrs_json`). A relay of the public network
+  ends a circuit after about 128 KiB or two minutes, so a sync waits six seconds for
+  the direct connection first, and the fetch cursor is kept after every batch that
+  left nothing in the pool, so an exchange that a relay cuts off continues next time.
+  `daemon --internet` listens on all IPv4 interfaces unless told where (a loopback
+  address is refused), writes where it stands to `daemon.json` (`internet`: `joined`,
+  `reachability`, `relays`, `direct_addrs`) for `status` and `doctor`, and with
+  `--sync-every` also looks its circles' members up on the timer.
 * Rate limits, enforced in ph-network before the handler runs: per-peer token bucket
   (default 20 requests/s, burst 40), at most 512 KiB/s inbound bytes, at most 8
   concurrent inbound streams per peer. Over the limit gets `rate_limited` and a tracing
   warning with no content.
-* Limits of this transport in v0: no relays, hole punching or port mapping, so one of
-  two syncing nodes must be reachable by the other. A circle still converges across
-  networks through any one reachable member, or through the shared directory of
-  ADR-025, because every member's node carries what the roll lets it read (ADR-031).
+* Limits of this transport in v0: without `--internet`, one of two syncing nodes must
+  be reachable by the other. With it, two nodes behind routers get a direct connection
+  only where both routers allow the hole punch; otherwise they have a public relay's
+  128 KiB per connection. No port mapping, and no relay run by members. A circle still
+  converges through any one member whose node the others can reach, or through the
+  shared directory of ADR-025, because every member's node carries what the roll lets
+  it read (ADR-031).
 
 ## 8. SQLite schema (ph-store)
 

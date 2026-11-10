@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use ph_core::{CircleId, DeviceKey, Digest, EventId, MembershipOracle};
-use ph_network::{handler_fn, Multiaddr, NetworkConfig, NetworkHandle, PeerId, PeerInfo};
+use ph_network::{handler_fn, Multiaddr, NetEvent, NetworkConfig, NetworkHandle, PeerId, PeerInfo};
 use ph_protocol::limits::MAX_FETCH_LIMIT;
 use ph_protocol::wire::{ErrorCode, PushStatus, Request, Response, PROTOCOL_VERSION};
 use serde_json::{json, Value};
@@ -34,7 +34,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use zeroize::Zeroizing;
 
-use crate::error::refused;
+use crate::error::{refused, usage, CliError};
 use crate::governance;
 use crate::home::Home;
 use crate::node::Node;
@@ -48,6 +48,26 @@ const PULL_WAIT: Duration = Duration::from_secs(15);
 
 /// Most events a sync keeps aside while the records they depend on have not arrived.
 const MAX_POOL_EVENTS: usize = 8192;
+
+/// How long a sync waits for a connection through a relay to be replaced by a direct
+/// one before it goes on over the relay. Long enough for the first attempt, which is
+/// the one that works where the networks allow it at all (measured: about three
+/// seconds); the transport keeps trying while the exchange runs.
+const UPGRADE_WAIT: Duration = Duration::from_secs(6);
+
+/// How many devices one internet sync looks up at the same time (the transport allows
+/// [`ph_network::internet::MAX_CONCURRENT_FINDS`] lookups in flight).
+const FINDS_AT_ONCE: usize = 6;
+
+/// The most devices one internet sync looks up. A node whose rolls list more looks the
+/// first ones up and says how many it left out.
+const MAX_DEVICES_LOOKED_UP: usize = 128;
+
+/// How many of the addresses found for a device are tried.
+const MAX_ADDRS_TRIED: usize = 6;
+
+/// What a person is told when an exchange failed on a connection through a relay.
+const RELAY_LIMIT: &str = "the connection to that peer goes through a public relay, which      carries about 128 KiB and two minutes per connection, and a direct connection could      not be made (the networks in between do not allow it). What arrived is kept, and the      next sync goes on from there. For a dependable link, one member's node needs an      address the others can reach.";
 
 type Job = Box<dyn FnOnce(&Node) + Send + 'static>;
 
@@ -295,6 +315,8 @@ pub struct Running {
     pub worker: Worker,
     pub net: NetworkHandle,
     pub device_key: DeviceKey,
+    /// Whether this node tells a peer where it listens when it announces itself.
+    announce_addrs: bool,
     join: JoinHandle<()>,
 }
 
@@ -311,8 +333,17 @@ impl Running {
             worker,
             net,
             device_key,
+            announce_addrs: true,
             join,
         })
+    }
+
+    /// For a node that listens only for the length of one command (a hole punch needs
+    /// a socket): where it listens is of no use to a peer afterwards, so it does not
+    /// say.
+    pub fn passing(mut self) -> Self {
+        self.announce_addrs = false;
+        self
     }
 
     /// Stops the transport and waits for its event loop.
@@ -353,12 +384,16 @@ pub struct SyncReport {
     /// Circles this node holds with the peer on the roll in which the peer does not
     /// recognize this node, and gave no verifiable reason.
     pub not_recognized: Vec<String>,
+    /// Whether the exchange ran through a relay (internet mode, no direct connection).
+    pub relayed: bool,
     pub changes: Changes,
 }
 
 /// Dials `addr` and exchanges greetings. Nothing else is sent to a peer that does not
 /// speak this node's protocol version.
 async fn greet(run: &Running, addr: &Multiaddr) -> Result<(PeerId, DeviceKey)> {
+    // Subscribed before the dial, so that the outcome of the upgrade is not missed.
+    let mut events = ph_network::is_relayed(addr).then(|| run.net.subscribe());
     let peer = run
         .net
         .dial(addr.clone())
@@ -376,18 +411,53 @@ async fn greet(run: &Running, addr: &Multiaddr) -> Result<(PeerId, DeviceKey)> {
         Ok(_) => return Err(anyhow!("the peer did not answer hello")),
         Err(e) => return Err(anyhow!("the peer does not speak this protocol: {e}")),
     }
+    if let Some(events) = events.as_mut() {
+        wait_for_direct(run, peer, events).await;
+    }
     Ok((peer, peer_key))
+}
+
+/// Whether the connection to `peer` goes through a relay.
+async fn via_relay(run: &Running, peer: PeerId) -> bool {
+    matches!(run.net.peer_info(peer).await, Ok(Some(info)) if info.relayed)
+}
+
+/// After a dial through a relay: waits, for at most [`UPGRADE_WAIT`], until the
+/// transport has replaced the relayed connection with a direct one or has given up. A
+/// relay of the public network carries little, so the exchange is worth that wait.
+async fn wait_for_direct(
+    run: &Running,
+    peer: PeerId,
+    events: &mut tokio::sync::broadcast::Receiver<NetEvent>,
+) {
+    use tokio::sync::broadcast::error::RecvError;
+    let deadline = tokio::time::Instant::now() + UPGRADE_WAIT;
+    while via_relay(run, peer).await {
+        match tokio::time::timeout_at(deadline, events.recv()).await {
+            Ok(Ok(NetEvent::DirectUpgradeSucceeded { peer_id })) if peer_id == peer => {
+                // The relayed connection is closed a moment later; requests already go
+                // over the direct one.
+                return;
+            }
+            Ok(Ok(NetEvent::DirectUpgradeFailed { peer_id })) if peer_id == peer => return,
+            Ok(Ok(_)) | Ok(Err(RecvError::Lagged(_))) => {}
+            Ok(Err(RecvError::Closed)) | Err(_) => return,
+        }
+    }
 }
 
 /// Announces this node to `peer`. Returns the circles in which the peer has this
 /// node's device on the roll, or `None` when it has it on none.
 async fn announce(run: &Running, peer: PeerId) -> Result<Option<Vec<CircleId>>> {
-    let listen: Vec<String> = run
-        .net
-        .current_listen_addrs()
-        .iter()
-        .map(|a| ph_network::with_p2p(a, run.net.local_peer_id()).to_string())
-        .collect();
+    let listen: Vec<String> = if run.announce_addrs {
+        run.net
+            .current_listen_addrs()
+            .iter()
+            .map(|a| ph_network::with_p2p(a, run.net.local_peer_id()).to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
     let request = Request::Authenticate {
         memberships: Vec::new(),
         listen_addrs: listen,
@@ -416,14 +486,20 @@ async fn remember(
     peer_key: DeviceKey,
     circles: Vec<CircleId>,
 ) -> Result<()> {
-    let dialed = ph_network::with_p2p(addr, peer).to_string();
+    // An address through a relay names a reservation that ends with the peer's
+    // process: it is found again when needed, not stored.
+    let dialed: Vec<String> = if ph_network::is_relayed(addr) {
+        Vec::new()
+    } else {
+        vec![ph_network::with_p2p(addr, peer).to_string()]
+    };
     run.worker
         .call(move |node| {
             peer::remember_peer(
                 &node.store,
                 &peer.to_string(),
                 &peer_key,
-                &[dialed],
+                &dialed,
                 &circles,
                 node.now(),
             )
@@ -505,7 +581,6 @@ async fn fetch_events(run: &Running, peer: PeerId, circle: CircleId) -> Result<u
         .await?;
     let mut pool: Vec<Value> = Vec::new();
     let mut stored = 0;
-    let mut reached: Option<EventId> = None;
     for _ in 0..MAX_FETCH_ROUNDS {
         let known = run
             .worker
@@ -557,23 +632,25 @@ async fn fetch_events(run: &Running, peer: PeerId, circle: CircleId) -> Result<u
         pool = kept;
         let Some(last) = last else { break };
         after = Some(last);
-        reached = Some(last);
+        // Kept after every batch that left nothing in the pool, so that a connection
+        // that ends early (a relay's limit) does not cost what already arrived.
+        if pool.is_empty() {
+            let who = peer_s.clone();
+            run.worker
+                .call(move |node| {
+                    Ok(node.store.advance_sync_cursor(
+                        &who,
+                        &circle,
+                        Some(&last),
+                        None,
+                        node.now(),
+                    )?)
+                })
+                .await?;
+        }
         if !more || pool.len() > MAX_POOL_EVENTS {
             break;
         }
-    }
-    if let (true, Some(cursor)) = (pool.is_empty(), reached) {
-        run.worker
-            .call(move |node| {
-                Ok(node.store.advance_sync_cursor(
-                    &peer_s,
-                    &circle,
-                    Some(&cursor),
-                    None,
-                    node.now(),
-                )?)
-            })
-            .await?;
     }
     Ok(stored)
 }
@@ -785,6 +862,26 @@ async fn learn_of_removal(
 /// its side (a result, a new charter).
 pub async fn sync(run: &Running, addr: &Multiaddr) -> Result<SyncReport> {
     let (peer, peer_key) = greet(run, addr).await?;
+    let relayed = via_relay(run, peer).await;
+    match sync_greeted(run, addr, peer, peer_key).await {
+        Ok(mut report) => {
+            report.relayed = relayed;
+            Ok(report)
+        }
+        // A refusal is an answer: the relay had nothing to do with it.
+        Err(e) if relayed && e.downcast_ref::<CliError>().is_none() => {
+            Err(anyhow!("{e}: {RELAY_LIMIT}"))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn sync_greeted(
+    run: &Running,
+    addr: &Multiaddr,
+    peer: PeerId,
+    peer_key: DeviceKey,
+) -> Result<SyncReport> {
     let mine = circles_with(run, peer_key).await?;
     if mine.is_empty() {
         return Err(refused(
@@ -1054,4 +1151,185 @@ pub async fn sync_lan(
         out.push((id, outcome));
     }
     Ok(out)
+}
+
+/// Looks `peer` up on the public network (internet mode). The addresses are hints from
+/// strangers, each ending in the peer's id, so a dial succeeds only if the other end
+/// proves that key. Direct addresses come first: a relay of the public network carries
+/// little.
+async fn find(run: &Running, peer: PeerId, wait: Duration) -> Result<Vec<Multiaddr>> {
+    let mut addrs = run
+        .net
+        .find_peer(peer, wait)
+        .await
+        .map_err(|e| anyhow!("cannot look that device up: {e}"))?;
+    addrs.sort_by_key(ph_network::is_relayed);
+    addrs.truncate(MAX_ADDRS_TRIED);
+    Ok(addrs)
+}
+
+/// Syncs with a device at the first of `addrs` that answers. A refusal ends it: the
+/// peer answered, and another address of it would say the same.
+async fn sync_at(run: &Running, addrs: &[Multiaddr]) -> Result<SyncReport> {
+    let mut outcome = Err(anyhow!("no address was found for that device"));
+    for addr in addrs {
+        outcome = sync(run, addr).await;
+        match &outcome {
+            Ok(_) => break,
+            Err(e) if e.downcast_ref::<CliError>().is_some() => break,
+            Err(_) => {}
+        }
+    }
+    outcome
+}
+
+/// Finds one device over the public network and syncs with it. The device must be on
+/// the roll of a circle this node holds: nothing else is looked up, so the servers of
+/// the public network only ever learn of device keys the owner's circles list.
+pub async fn sync_found(run: &Running, peer: PeerId, wait: Duration) -> Result<SyncReport> {
+    let key = ph_network::device_key_from_peer_id(&peer)
+        .ok_or_else(|| usage("that peer id is not a device key"))?;
+    if key == run.device_key {
+        return Err(usage("that is this node's own peer id"));
+    }
+    if circles_with(run, key).await?.is_empty() {
+        return Err(refused(
+            "that device is on no roll this node holds with you on it, so it is not looked \
+             up. If you were just admitted to a circle its node holds: `peerharness circle \
+             join <its peer id> --internet --expect-fingerprint <fingerprint>`.",
+        ));
+    }
+    let addrs = find(run, peer, wait).await?;
+    if addrs.is_empty() {
+        return Err(anyhow!(
+            "that device was not found on the public network. Its node must be running \
+             `peerharness daemon --internet`, and stays findable for a few minutes after \
+             it stops."
+        ));
+    }
+    sync_at(run, &addrs).await
+}
+
+/// What an internet sync did.
+#[derive(Debug, Default)]
+pub struct InternetSync {
+    /// One entry per device that was found: its peer id and what the sync did.
+    pub results: Vec<(String, Result<SyncReport>)>,
+    /// Devices on this node's rolls that were looked up.
+    pub looked_up: usize,
+    /// Of those, the devices nobody on the public network knew.
+    pub not_found: usize,
+    /// Devices that were not looked up: more than the limit, or no time left.
+    pub left_out: usize,
+}
+
+/// Syncs with the members of this node's circles that can be found over the public
+/// network (the transport must have been started in internet mode). Looks up, for at
+/// most `wait`, every device that shares a roll with this node except those in `skip`,
+/// then syncs with each one found.
+///
+/// Only device keys on a roll this node holds are looked up, and whoever answers at an
+/// address that was found must prove that key in the handshake and is then judged by
+/// the roll like any other peer.
+pub async fn sync_internet(
+    run: &Running,
+    wait: Duration,
+    skip: &HashSet<String>,
+) -> Result<InternetSync> {
+    let me = run.device_key;
+    let devices: Vec<DeviceKey> = run
+        .worker
+        .call(move |node| {
+            let oracle = peer::roll_oracle(&node.store)?;
+            let mut devices = BTreeSet::new();
+            for circle in node.store.circles()? {
+                let Some(charter) = node.store.current_charter(&circle.circle_id)? else {
+                    continue;
+                };
+                for entry in &charter.content.roll {
+                    devices.extend(entry.devices.iter().map(DeviceKey::to_string));
+                }
+            }
+            Ok(devices
+                .iter()
+                .filter_map(|d| d.parse::<DeviceKey>().ok())
+                .filter(|d| *d != me && !oracle.shared_circles(&me, d).is_empty())
+                .collect())
+        })
+        .await?;
+    let mut peers: Vec<PeerId> = devices
+        .iter()
+        .map(ph_network::peer_id_from_device_key)
+        .filter(|p| !skip.contains(&p.to_string()))
+        .collect();
+    let mut out = InternetSync::default();
+    if peers.len() > MAX_DEVICES_LOOKED_UP {
+        out.left_out = peers.len() - MAX_DEVICES_LOOKED_UP;
+        peers.truncate(MAX_DEVICES_LOOKED_UP);
+    }
+    let deadline = tokio::time::Instant::now() + wait;
+    let mut found: Vec<(PeerId, Vec<Multiaddr>)> = Vec::new();
+    for group in peers.chunks(FINDS_AT_ONCE) {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left < Duration::from_secs(1) {
+            out.left_out += group.len();
+            continue;
+        }
+        let lookups = group.iter().map(|peer| find(run, *peer, left));
+        for (peer, addrs) in group.iter().zip(futures::future::join_all(lookups).await) {
+            out.looked_up += 1;
+            match addrs {
+                Ok(addrs) if !addrs.is_empty() => found.push((*peer, addrs)),
+                _ => out.not_found += 1,
+            }
+        }
+    }
+    for (peer, addrs) in found {
+        out.results
+            .push((peer.to_string(), sync_at(run, &addrs).await));
+    }
+    Ok(out)
+}
+
+/// `circle join <peer id> --internet`: finds the node its owner named over the public
+/// network and fetches what it offers this device ([`fetch_for_join`]). Returns the
+/// address that answered as well. The peer id is the one thing looked up here that is
+/// on no roll of this node: its owner typed it.
+pub async fn fetch_for_join_found(
+    run: &Running,
+    peer: PeerId,
+    wait: Duration,
+) -> Result<(Multiaddr, PeerId, Vec<Offered>)> {
+    let addrs = find(run, peer, wait).await?;
+    if addrs.is_empty() {
+        return Err(anyhow!(
+            "that node was not found on the public network. It must be running \
+             `peerharness daemon --internet`; check the peer id (its daemon prints it)."
+        ));
+    }
+    let mut outcome = Err(anyhow!("no address was found for that node"));
+    for addr in addrs {
+        match fetch_for_join(run, &addr).await {
+            Ok((answered, offered)) => return Ok((addr, answered, offered)),
+            Err(e) if e.downcast_ref::<CliError>().is_some() => return Err(e),
+            Err(e) => outcome = Err(e),
+        }
+    }
+    outcome
+}
+
+/// Where this node stands on the public network, for `daemon.json` and the daemon's
+/// own notes. `None` when the mode is off.
+pub async fn internet_info(run: &Running) -> Option<crate::daemon_info::InternetInfo> {
+    let status = run.net.internet_status().await.ok()?;
+    status.enabled.then(|| crate::daemon_info::InternetInfo {
+        joined: status.bootstrapped,
+        reachability: status.reachability.as_str().to_owned(),
+        relays: status.relay_addrs.len(),
+        direct_addrs: status
+            .external_addrs
+            .iter()
+            .map(Multiaddr::to_string)
+            .collect(),
+    })
 }

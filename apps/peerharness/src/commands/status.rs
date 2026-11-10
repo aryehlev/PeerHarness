@@ -99,7 +99,11 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         "active_installations": installs.len(),
         "known_peers": peers,
         "hooks": hooks,
-        "daemon": daemon.as_ref().map(|d| json!({"pid": d.pid, "listen_addrs": d.listen_addrs})),
+        "daemon": daemon.as_ref().map(|d| json!({
+            "pid": d.pid,
+            "listen_addrs": d.listen_addrs,
+            "internet": d.internet,
+        })),
     });
 
     let mut t = Text::new();
@@ -115,6 +119,9 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
             format!("running (pid {})", d.pid)
         }),
     );
+    if let Some(i) = daemon.as_ref().and_then(|d| d.internet.as_ref()) {
+        t.kv("internet", i.summary());
+    }
     t.kv(
         "claude hooks",
         if hooks["installed"].as_bool() == Some(true) {

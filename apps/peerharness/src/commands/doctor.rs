@@ -257,7 +257,18 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
 
     // Daemon file.
     match (DaemonInfo::running(home), DaemonInfo::read(home)) {
-        (Some(d), _) => c.add("daemon", Level::Ok, format!("running (pid {})", d.pid)),
+        (Some(d), _) => {
+            c.add("daemon", Level::Ok, format!("running (pid {})", d.pid));
+            if let Some(i) = &d.internet {
+                // Behind a router without a relay, nobody can reach this node.
+                let level = if i.joined && (i.reachability == "public" || i.relays > 0) {
+                    Level::Ok
+                } else {
+                    Level::Warn
+                };
+                c.add("internet", level, i.summary());
+            }
+        }
         (None, Ok(Some(_))) => c.add(
             "daemon",
             Level::Warn,

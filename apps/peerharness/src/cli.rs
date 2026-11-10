@@ -154,6 +154,12 @@ pub struct DaemonArgs {
     /// the port it listens on. It needs a listen address that is not loopback.
     #[arg(long)]
     pub lan: bool,
+    /// Join the public libp2p network, so members anywhere can find this node by its
+    /// peer id (`sync --internet`, `circle join <peer id> --internet`). The servers of
+    /// that network see this device's public key and IP address, and which device keys
+    /// this node looks for. They never see a circle or anything said in one.
+    #[arg(long)]
+    pub internet: bool,
 }
 
 #[derive(Debug, Args)]
@@ -524,10 +530,15 @@ pub enum RoleArg {
 #[derive(Debug, Args)]
 pub struct CircleJoinArgs {
     /// Where to get the circle from, once your admission has passed: the address of a
-    /// member's running daemon (a multiaddr), or an events file or shared directory a
-    /// member wrote.
+    /// member's running daemon (a multiaddr), with --internet its peer id, or an events
+    /// file or shared directory a member wrote.
     #[arg(value_name = "ADDRESS_OR_FILE")]
     pub invite_file: PathBuf,
+    /// Find the member's node over the public libp2p network: give its peer id (its
+    /// `daemon --internet` prints it) instead of an address. The servers of that network
+    /// see this device's public key and IP address and the peer id it looks for.
+    #[arg(long)]
+    pub internet: bool,
     /// Skip the prompt; requires --expect-fingerprint.
     #[arg(long)]
     pub yes: bool,
@@ -741,17 +752,25 @@ pub enum RuleCommand {
 
 #[derive(Debug, Args)]
 pub struct SyncArgs {
-    /// The peer's multiaddr (as its daemon prints it), or its peer id after a first sync.
-    /// Omit it to sync with every peer this node knows.
+    /// The peer's multiaddr (as its daemon prints it), or its peer id after a first sync
+    /// (with --internet: the peer id of any device on a roll this node holds). Omit it
+    /// to sync with every peer this node knows.
     #[arg(value_name = "ADDRESS_OR_PEER_ID", conflicts_with = "lan")]
     pub peer_id: Option<String>,
     /// Find members of your circles on the local network (mDNS) and sync with them.
     /// Only devices on a roll this node holds are contacted.
-    #[arg(long)]
+    #[arg(long, group = "find")]
     pub lan: bool,
-    /// With --lan: how many seconds to listen for members.
-    #[arg(long, value_name = "SECONDS", requires = "lan", default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=60))]
-    pub wait: u32,
+    /// Find members of your circles over the public libp2p network, by their device
+    /// keys, and sync with them. With a peer id: that member only. The servers of that
+    /// network see this device's public key and IP address and the device keys it looks
+    /// for, never a circle. Only devices on a roll this node holds are looked for.
+    #[arg(long, group = "find")]
+    pub internet: bool,
+    /// With --lan or --internet: how many seconds to look for members (default 3 on
+    /// the local network, 30 over the internet).
+    #[arg(long, value_name = "SECONDS", requires = "find", value_parser = clap::value_parser!(u32).range(1..=120))]
+    pub wait: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -1011,6 +1030,29 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["peerharness", "daemon", "--sync-every", "5"]).is_err());
         assert!(Cli::try_parse_from(["peerharness", "sync", "--wait", "5"]).is_err());
+        assert!(Cli::try_parse_from(["peerharness", "sync", "--lan", "--internet"]).is_err());
+        assert!(Cli::try_parse_from(["peerharness", "sync", "--internet", "--wait", "0"]).is_err());
+        for args in [
+            vec!["peerharness", "sync", "--internet"],
+            vec!["peerharness", "sync", "--internet", "--wait", "90"],
+            vec![
+                "peerharness",
+                "sync",
+                "12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+                "--internet",
+            ],
+            vec!["peerharness", "daemon", "--internet", "--sync-every", "300"],
+            vec!["peerharness", "daemon", "--internet", "--lan"],
+            vec![
+                "peerharness",
+                "circle",
+                "join",
+                "12D3KooWKnDdG3iXw9eTFijk3EWSunZcFi54Zka4wmtqtt6rPxc8",
+                "--internet",
+            ],
+        ] {
+            Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+        }
         assert!(Cli::try_parse_from(["peerharness", "sync", "/ip4/1.2.3.4", "--lan"]).is_err());
         assert!(
             Cli::try_parse_from(["peerharness", "circle", "place", "x", "--circle", "team"])

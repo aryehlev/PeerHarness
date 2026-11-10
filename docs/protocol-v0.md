@@ -1033,8 +1033,11 @@ Reference: `crates/ph-protocol/src/wire.rs`, `crates/ph-network/src/`.
 ### 11.1 Transport and identity
 
 * libp2p over **QUIC v1** only (`/ip4/<addr>/udp/<port>/quic-v1`, or `/ip6/...`), with
-  the libp2p TLS 1.3 handshake. No TCP, no relays, no DHT and no gossip in v0. mDNS on
-  the local network is used only when the owner turns it on (section 13.8).
+  the libp2p TLS 1.3 handshake. No TCP and no gossip in v0. A node may be reached
+  through a libp2p circuit relay (section 13.9): the same handshake then runs between
+  the two ends, through the relay. mDNS on the local network (section 13.8) and the
+  public libp2p network (section 13.9) are used only when the owner turns them on;
+  neither is part of this protocol.
 * The libp2p identity key is the node's Ed25519 device key (the same 32-byte seed). The
   `PeerId` is the identity-multihash of the Ed25519 public key, so the authenticated
   `PeerId` yields the device key directly. Nodes refuse connections whose `PeerId` is not
@@ -1849,11 +1852,62 @@ the key. It then runs the session of section 13.2, where the peer is judged by t
 like any other. A device on no roll of this node is never dialed and is sent nothing,
 not even `hello`.
 
-`sync --lan` listens for 1 to 60 seconds (3 by default) and syncs with each member it
+`sync --lan` listens for 1 to 120 seconds (3 by default) and syncs with each member it
 found. A daemon started with both `--lan` and `--sync-every` also syncs, on its timer,
 with the members it currently hears. `daemon --lan` alone announces and dials nobody.
 The address at which a member was synced with is stored like any other. What discovery
 exposes on the local network is described in `docs/security-model.md` (4.27).
+
+### 13.9 Finding and reaching peers over the internet (optional)
+
+Off by default: with it off a node speaks the one protocol of section 11 to the
+addresses it is told to dial. The owner turns it on per command, with
+`daemon --internet`, `sync --internet` and `circle join <peer id> --internet`
+(reference: `ph-network`, `NetworkConfig::internet`; ADR-032). It is not part of the
+request/response protocol, it changes nothing in sections 11 to 13.7, and a client need
+not implement it. It uses existing libp2p protocols unchanged; this section says how
+the reference node uses them.
+
+With it on, a node is a client of the public libp2p (IPFS) network:
+
+* **Lookup.** It speaks the Kademlia DHT `/ipfs/kad/1.0.0` in client mode. To find a
+  device it sends `FIND_NODE` for that device's peer id (section 11.1: the
+  identity-multihash of the device key) and collects the addresses the servers hold for
+  it. It keeps at most 16, only `/ip4|ip6/<public address>/udp/<port>/quic-v1`, direct
+  or through a relay (`…/p2p/<relay>/p2p-circuit`), and appends `/p2p/<peer id>` to
+  each. It stores nothing in the DHT. A node is findable because it stays connected to
+  the servers closest to its own id (it looks its own id up when it starts, every five
+  minutes, and when its addresses change) and tells them its addresses with identify
+  (`/ipfs/id/1.0.0`, `/ipfs/id/push/1.0.0`).
+* **What it announces.** Its device public key, the agent string `peerharness`, the
+  protocols it speaks, and its confirmed addresses: public addresses that a server
+  dialed back (AutoNAT v2, `/libp2p/autonat/2/dial-request`, client only, tried once
+  three peers agree on the address) and the relay addresses it holds a reservation for.
+  Listen addresses are not announced, so private addresses do not leave the node.
+* **Relays.** While it is not known to be publicly reachable, a daemon holds up to two
+  reservations with circuit relay v2 servers (`/libp2p/circuit/relay/0.2.0/hop`). A
+  one-shot command holds none. The node relays for nobody.
+* **Direct connections.** A connection through a relay is upgraded with DCUtR
+  (`/libp2p/dcutr`) where the networks allow, and the relayed one is then closed.
+
+Whom the application looks up and dials: the device keys that share a roll with this
+node, which it reads from its own records, and for `circle join` the one peer id its
+owner typed. It dials only addresses that end in that key's `/p2p/<peer id>`, so the
+handshake of section 11.1 must prove the key, through a relay as well as directly. It
+then runs the session of section 13.2 (or 13.6), where the peer is judged by the roll
+like any other. A device on no roll of the node is not looked up.
+
+A relay of the public network ends a circuit after about 128 KiB in one direction or two
+minutes. After dialing through a relay a sync waits 6 seconds for the direct connection,
+then goes on over whichever it has. An exchange that a relay cuts off loses nothing:
+the fetch cursor of section 13.3 is kept after every batch that left nothing in the
+pool, and the next sync continues from it. An address through a relay is not stored.
+
+`sync --internet` looks up at most 128 devices, 6 at a time, for 1 to 120 seconds (30 by
+default), and syncs with each one found. A daemon started with `--internet` and
+`--sync-every` does the same on its timer for the members it did not just sync with.
+`daemon --internet` alone answers and dials nobody. What the mode exposes is described
+in `docs/security-model.md` (4.28).
 
 ## 14. Governance: voting under a charter
 
@@ -2320,7 +2374,8 @@ signing input, digest and signature were reproduced the same way.
 | reference responder | holds a peer's next request, other than `hello` and `fetch_bundle`, until its own bundle fetch-back from that peer and the settling after it are done, at most 15 s |
 | removal notice | at most `limit` (1-256) events per answer, within the frame size |
 | reference `daemon --sync-every` | 30 to 86,400 seconds |
-| reference discovery on the local network | off by default; at most 256 announced peers with 8 addresses each; `sync --lan` listens 1 to 60 s (default 3) |
+| reference discovery on the local network | off by default; at most 256 announced peers with 8 addresses each; `sync --lan` listens 1 to 120 s (default 3) |
+| reference internet mode | off by default; at most 16 addresses per lookup, 8 lookups in flight, 4 relay reservations (2 by default), 16 bootstrap addresses; `sync --internet` looks up at most 128 devices for 1 to 120 s (default 30) and tries 6 addresses per device |
 | reference question guard | 20 questions per author and 100 per circle per 24 h |
 | default lifetimes | QUESTION, ANSWER 30 d; permanent types 400 d (not enforced); invite 24 h (max 7 d); member credential 30 d; founder credential 365 d |
 
@@ -2376,8 +2431,9 @@ or different:
   and `peerharness sync` runs the session of section 13.2, so two reference nodes can be
   run against each other over QUIC. `sync` without an argument, and
   `daemon --sync-every`, run it with every peer whose address the node has stored.
-  `circle join <address>` runs the exchange of section 13.6, and `--lan` turns on the
-  discovery of section 13.8. Not implemented: gossip, relays, a delivery queue, a local
+  `circle join <address>` runs the exchange of section 13.6, `--lan` turns on the
+  discovery of section 13.8, and `--internet` the lookup, relays and hole punching of
+  section 13.9. Not implemented: gossip, a relay of its own, a delivery queue, a local
   control endpoint, and disconnecting a peer when its revocation arrives (it is refused
   on its next request instead).
 * **Sync order and cursor.** Architecture describes `fetch_events` by `known` alone. In

@@ -66,6 +66,51 @@ pub struct DaemonInfo {
     pub peer_id: String,
     /// The addresses it listens on, each ending in `/p2p/<peer id>`.
     pub listen_addrs: Vec<String>,
+    /// Where it stands on the public network, when it runs with `--internet`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub internet: Option<InternetInfo>,
+}
+
+/// What a daemon in internet mode last knew about itself on the public network.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InternetInfo {
+    /// Whether it reached the network: members can look its peer id up.
+    pub joined: bool,
+    /// `public` (others can dial it), `private` (they reach it through a relay and,
+    /// where the networks allow, directly after that) or `unknown`.
+    pub reachability: String,
+    /// The relay reservations it holds.
+    pub relays: usize,
+    /// The confirmed addresses others can dial directly.
+    pub direct_addrs: Vec<String>,
+}
+
+impl InternetInfo {
+    /// One line for a person.
+    pub fn summary(&self) -> String {
+        if !self.joined {
+            return "joining the public network".to_owned();
+        }
+        match self.reachability.as_str() {
+            "public" => "on the public network; others can dial this node directly".to_owned(),
+            "private" if self.relays > 0 => format!(
+                "on the public network behind a router; reachable through {} relay(s), \
+                 directly where the networks allow",
+                self.relays
+            ),
+            "private" => "on the public network behind a router; no relay yet, so others \
+                          cannot reach this node at the moment (it can still reach them)"
+                .to_owned(),
+            _ if self.relays > 0 => format!(
+                "on the public network; reachable through {} relay(s)",
+                self.relays
+            ),
+            _ => {
+                "on the public network; not yet known whether others can reach this node".to_owned()
+            }
+        }
+    }
 }
 
 impl DaemonInfo {

@@ -131,7 +131,8 @@ The precise rules are in [docs/architecture.md](docs/architecture.md), section 1
 | `init`, `status`, `doctor`, `observe demo`, `inbox`, `export --local` | work |
 | `watch claude --install` / `--remove`: the hooks, and the skill that asks your agent to report corrections | work, tested; other hooks and settings in the file are kept, with a backup |
 | `reset` (delete this node and its keys; explains first, deletes only with `--confirm`) | works, tested |
-| `daemon`, `sync`, `connect` (direct peer-to-peer over QUIC), joining a circle from a member's node | work, tested with separate processes on loopback. No relays or hole punching: one side must be reachable |
+| `daemon`, `sync`, `connect` (direct peer-to-peer over QUIC), joining a circle from a member's node | work, tested with separate processes on loopback |
+| `daemon --internet`, `sync --internet`, `circle join <peer id> --internet` (members find each other from anywhere, by device key, over the public libp2p network) | work. Tested with separate processes against a private stand-in network, and by hand against the real one from a single machine. Whether two nodes behind different routers get a direct connection depends on the routers and is not tested yet; without one, only small exchanges fit through the public relays |
 | `daemon --lan`, `sync --lan` (members find each other on a local network) | work on macOS, tested there with separate processes; the test needs real multicast and does not run in CI. Not tried on Linux |
 | Finding corrections | you write the rule down, or your agent reports it when you correct it (best effort: it depends on the agent noticing). The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our own test set, none of 52 ordinary prompts); it does not recognize whole-sentence rules such as "always run the tests first" |
 | Windows | not supported yet |
@@ -294,6 +295,40 @@ Announcing is off unless you ask for it. It tells everyone on that network this
 device's public key and port, and nothing about any circle. A node only contacts
 announced devices that are on a roll it holds.
 
+### Across the internet
+
+Most machines sit behind a router and have no address others can dial. With
+`--internet` a node joins the public libp2p network (the one IPFS uses), where it can be
+looked up by its device key, reached through a relay, and, where the routers allow it,
+connected to directly. No address, no port forwarding and no server of ours:
+
+```sh
+peerharness daemon --internet --sync-every 300      # prints this node's peer id
+peerharness sync --internet                         # finds the members of your circles and syncs
+peerharness circle join <peer id> --internet --expect-fingerprint <fingerprint>   # a new member
+```
+
+It is off unless you ask for it. What it costs you:
+
+* The servers of that network see this device's public key and your IP address, and
+  which device keys your node looks for. They are never told a circle, a roll or
+  anything said in one.
+* A relay sees which two devices talk, when and how much. It cannot read or change
+  what they say: the connection is encrypted between the two devices.
+* An address found there is only a hint. A connection counts when the other end proves
+  its device key, and that device is then answered only if it is on the roll.
+* Your node looks up only devices on a roll it holds (and the peer id you type for
+  `circle join`).
+
+What to expect: a node needs about ten seconds to join the network and a few more to
+find a member. Two nodes behind routers get a direct connection where both routers
+allow it. Where they do not, the public relays carry about 128 KiB per connection:
+enough for a vote or a short rule, and a larger sync continues where it stopped the
+next time. For a link that always works, one member's node needs an address the others
+can reach (for example a second device of that member on a server): every node carries
+the whole circle, so the others then sync through it. `peerharness status` shows where
+your daemon stands.
+
 There is no relay: for a direct sync one of the two machines has to be reachable by the
 other (same network, VPN, or a forwarded UDP port). You do not need every pair to
 connect, though. One member's node that the others can reach carries everyone's records
@@ -341,6 +376,10 @@ vote.
 * **A compromised device** counts until its revocation reaches each node.
 * **Announcing on a local network identifies your device.** With `--lan`, anyone on that
   network sees the same public key wherever you connect.
+* **Internet mode shows your device to strangers.** With `--internet`, servers run by
+  volunteers see your device's public key with your IP address, wherever you connect,
+  and can tell which device keys look each other up. They learn nothing about a circle.
+  Hole punching between two different routers is not tested yet.
 
 The full list is in [docs/security-model.md](docs/security-model.md).
 

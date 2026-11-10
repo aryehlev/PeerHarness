@@ -103,7 +103,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   standing.
   Requests are strictly parsed with size and depth limits before any handler runs
   (`ph-network`). By default a node is not advertised: there is no DHT and no gossip,
-  and discovery on the local network is off unless the owner turns it on (4.27).
+  and discovery on the local network is off unless the owner turns it on (4.27), as is
+  the internet mode (4.28).
 * **Residual risk.** An attacker who can reach the port learns that a PeerHarness node
   listens there, its `PeerId` (device public key) and the protocol version. Parser or
   libp2p/QUIC bugs are possible; the wire parser has property and adversarial tests, but
@@ -663,6 +664,49 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   address of its choosing, to which the node then sends a handshake that fails unless
   the answerer holds that key. IPv4 only.
 
+### 4.28 Internet mode: the public libp2p network
+
+* **Threat.** Servers run by strangers identify, track or profile PeerHarness nodes; a
+  DHT server lies about where a device is, to be dialed in its place, to hide a member
+  or to send the node somewhere; a relay reads, alters or injects traffic, or stands in
+  for a member; strangers reach a node that was only reachable by address before; a
+  remote party makes a node use memory, connections or log space without bound.
+* **Mitigation.** The mode is off unless the owner asks for it with `--internet`;
+  without it none of its protocols is spoken or answered and no DNS lookup is made
+  (ADR-032). With it, the node is a client: it never serves the DHT, never relays and
+  never dials back for others, and it stores nothing in the DHT. It sends that network
+  its device public key, a fixed agent string, the protocols it speaks and its
+  confirmed public or relay addresses, never a listen address on a private network and
+  nothing about circles, members or rules. An answer to a lookup is a hint: only
+  addresses with a public IP are kept, at most 16 with one server's share capped at
+  half, and every one ends in the peer id that was asked for, so a dial succeeds only
+  if the other end proves that device key in the TLS handshake. The same handshake runs
+  through a relay, between the two ends: a relay cannot read or change the stream or
+  answer for a member, and gives a peer no standing. `ph-network` dials no peer the
+  application named; the application looks up and dials only device keys that share a
+  roll with it (and the peer id its owner typed for `circle join`), and whoever answers
+  is judged by the roll like any other peer (4.1). A stranger who finds a node gets
+  `hello` and nothing else, as before. An own address is tested only when three peers
+  agree on it. Routing table, lookups in flight, reservations, address candidates and
+  the connections the node opens on its own are bounded, and the limits of 4.7 apply
+  to relayed connections too. The libp2p crates log addresses, so their log output is
+  discarded while the mode is on; the node logs ids and counts.
+* **Residual risk.** The device key is stable: every server a node contacts can
+  recognize the device on any network and tie it to an IP address, and anyone who holds
+  a roll that lists the key, a former member included, can look it up and learn the IP
+  address or relays of a member whose daemon is in the mode. A server that sees lookups
+  can link device keys that look each other up, which reveals that they belong
+  together, though not to what. The identify record says the node is a PeerHarness
+  node. Servers that lie or go away can keep a member from being found, which costs
+  reachability and nothing else. A relay sees who talks to whom, when and how much.
+  While a daemon is in the mode, strangers anywhere can connect to it (and get `hello`
+  only), so the rate limits of 4.7 are what stands between it and a flood; a one-shot
+  command is exposed the same way for as long as it runs. Public relays end a circuit
+  after about 128 KiB or two minutes, so where the hole punch fails only small
+  exchanges get through. Hole punching between two different routers, IPv6 and Linux
+  are untested; the dependency surface grew by the DHT, identify, AutoNAT, relay and
+  DCUtR implementations of libp2p and a DNS resolver (4.19).
+
 ## 5. Privacy limitations
 
 These are limits of the design, not bugs, and they apply even when everything works as
@@ -712,8 +756,10 @@ intended.
   list, including each member's handle, device keys and scopes on the roll (4.4), and
   the addresses a member's node announces when it syncs. Network observers see IP
   addresses, ports, timing and traffic volume of QUIC connections, even though content
-  is encrypted; a daemon that syncs on a timer shows a regular pattern (4.26), and one
-  started with `--lan` announces its device key and port to the local network (4.27).
+  is encrypted; a daemon that syncs on a timer shows a regular pattern (4.26), one
+  started with `--lan` announces its device key and port to the local network (4.27),
+  and one started with `--internet` shows its device key and IP address to servers of
+  the public libp2p network, along with the device keys it looks up (4.28).
   Invite
   files contain the circle name, root key, addresses and the invitee's credential; treat
   them as sensitive.
@@ -759,6 +805,7 @@ directory and QUIC on loopback.
 | 4.24 (leaving, amendments, devices, the owner's mode) | `apps/peerharness/tests/circle_life.rs` (`a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`: two devices of one member are one approval, the amend threshold, leaving acts locally at once and changes the roll only by vote) |
 | 4.15 (placing a scope's rules in one project) | `apps/peerharness/tests/circle_life.rs` (`the_rules_of_a_scope_can_live_in_one_project`: only a person can place a scope; repeals and opt-outs act on the copy in the project; nobody else's machine changes) |
 | 4.27 (discovery on the local network) | `crates/ph-network/tests/discovery.rs` (`discovery_is_off_by_default_and_then_nothing_is_reported` always runs; five tests that need multicast are `#[ignore]`d); `apps/peerharness/tests/network.rs` (`members_find_each_other_on_the_local_network`, `#[ignore]`d for the same reason) |
+| 4.28 (internet mode) | `crates/ph-network/tests/internet.rs` (a private hub on loopback that answers like the public servers: off by default and then no further protocol is spoken; with the mode on the node serves nobody; a peer is found by its id, through a relay and at its own address; addresses from a lying server are filtered, bounded and never dialed; rate and connection limits hold for relayed peers; an exchange larger than a relay carries fails and says so; shutdown ends reservations and lookups; three tests against the public network are `#[ignore]`d), `internet_logs.rs` (no address in the log); `crates/ph-network/src/internet.rs` and `config.rs` (unit tests: which addresses count as public, the gate that keeps the node from dialing a peer the application named, the bounds, a loopback listener refused); `apps/peerharness/tests/network.rs` (`members_find_each_other_by_device_key_over_a_dht`, separate processes against that hub: a join by peer id, a sync that looks up the roll, a device on no roll is not looked up for a sync and is told nothing when it finds the node itself; `internet_mode_refuses_a_loopback_listener`) |
 | 4.25 (recorded opt-outs) | `apps/peerharness/src/governance.rs` (`a_stance_is_a_record_by_a_member_of_the_roll_and_counts_for_nothing`); `apps/peerharness/tests/circle_life.rs` (`an_opt_out_can_be_put_on_the_circles_record`: voluntary, refused for an agent while the opt-out itself stands, open to a member admitted after the rule passed); `crates/ph-protocol/tests/vectors.rs` (the STANCE vector) |
 
 Not covered by an automated test: 4.15 (untrusted repository content) beyond the
@@ -768,4 +815,6 @@ chain), which CI checks with `cargo deny` and `cargo audit`, and of 4.26 the tim
 itself: `sync` without an argument runs in `apps/peerharness/tests/network.rs`, while
 `daemon --sync-every` has no test beyond argument parsing. The tests of 4.27 that
 exercise real announcements need multicast on the local network and do not run in CI;
-they are run by hand with `-- --ignored`.
+they are run by hand with `-- --ignored`. Of 4.28, nothing automated runs against the
+public network in CI, and a hole punch between two different routers has not been
+tried at all: the runs against the public network (ADR-032) were made from one machine.

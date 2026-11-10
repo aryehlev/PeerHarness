@@ -18,6 +18,7 @@ mod home;
 mod hook;
 mod ids;
 mod installs;
+mod internet;
 mod library;
 mod node;
 mod output;

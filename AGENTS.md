@@ -31,7 +31,7 @@ apps/peerharness depends on everything and is the only place crates are wired to
 | `ph-protocol` | JCS, signing, envelopes and bodies, credentials, the charter, bundles, wire types, limits, golden vectors | do I/O or networking |
 | `ph-identity` | keystores, device identity, circle authority (credentials, revocations, charter issuance), invites, `MembershipRegistry` | store private keys anywhere but the keystore; decide whether a charter change was voted |
 | `ph-store` | SQLite schema, migrations, typed repositories | make authorization decisions |
-| `ph-network` | libp2p QUIC transport, framing, rate limits | know about circles or authorize anything |
+| `ph-network` | libp2p QUIC transport, framing, rate limits; opt-in LAN discovery; opt-in internet mode (lookup by peer id, relay reservations, hole punching) | know about circles or authorize anything; dial a peer the application named unless told to |
 | `ph-observer` | hook parsing, settings install/remove, spool, notification throttle | open paths from hook payloads |
 | `ph-learning` | detectors, free-text notes, drafts, advisory providers | let provider or agent output drive any decision |
 | `ph-governance` | incoming-event authorization, the roll as membership (`RollOracle`), read rules, tally, result verification, rules in force, charter succession, conflicts, anti-spam, adoption gate | do storage or networking; read a clock when counting |
@@ -101,10 +101,20 @@ stop, leave the feature disabled, and document the blocker.
   not share that circle's roll with. A node that is joining (`circle join <address>`)
   sends back only circle ids the peer itself just named, and stores nothing before its
   owner has confirmed the charter.
-* A node dials only an address its owner gave, a peer an earlier sync stored, or, with
-  `--lan`, an announced device key that is on a roll it holds. An mDNS announcement is
-  an unauthenticated hint: never treat it as membership, and never dial a key that is
-  on no roll (ADR-031). Discovery stays off unless asked for.
+* A node dials only an address its owner gave, a peer an earlier sync stored, with
+  `--lan` an announced device key that is on a roll it holds, or with `--internet` an
+  address the public network gave for a device key on a roll it holds or for the one
+  peer id its owner typed for `circle join`. An mDNS announcement and a lookup answer
+  are unauthenticated hints: never treat one as membership, never dial without the
+  `/p2p/<peer id>` that makes the handshake prove the key, and never look up or dial a
+  key that is on no roll (ADR-031, ADR-032). Discovery and the internet mode stay off
+  unless asked for.
+* In internet mode the public network learns a device key, an IP address and which
+  device keys a node looks up. Never send it anything else: no circle id, name, roll or
+  event, and store nothing in the DHT. A node is a client there, never a DHT server, a
+  relay or a dial-back server. A relay gives no standing: authorize by the device key
+  at the far end of a relayed connection exactly as on a direct one. Do not store an
+  address that goes through a relay.
 * Never move a fetch cursor past an event that could not be placed yet, and never move
   a push cursor past an event the peer refused (ADR-028).
 * A credential counts only with a matching subject-signed acceptance, only from the
@@ -201,6 +211,10 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
 * Multi-node tests use real separate OS processes on ephemeral loopback QUIC ports, with
   no shared database and no network mocks. Poll with deadlines instead of fixed sleeps,
   and kill daemons in `Drop` guards.
+* Tests of the internet mode run against the private hub in
+  `crates/ph-network/tests/common/hub.rs` (the app reaches it through
+  `PEERHARNESS_INTERNET_BOOTSTRAP` and `PEERHARNESS_INTERNET_PRIVATE`). A test that
+  needs the public network is `#[ignore]`d and uses throwaway keys.
 * Tests that play the person remove `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` from
   the child process (the suite itself may be run by a coding agent). Tests of the
   agent-session guard set one of them.
