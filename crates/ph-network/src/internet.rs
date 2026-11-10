@@ -235,6 +235,10 @@ const ANNOUNCE_DELAY: Duration = Duration::from_millis(500);
 /// A connection the node opened on its own is left alone for this long, so that what
 /// it was opened for can finish.
 const OWN_CONNECTION_MIN_AGE: Duration = Duration::from_secs(10);
+/// How long the node looks for another relay before it asks a bootstrap peer to be one.
+/// The bootstrap peers of the public network refuse, and every node asks them first
+/// for everything else already.
+const BOOTSTRAP_RELAY_PATIENCE: Duration = Duration::from_secs(3);
 /// How long a relay may take to accept a reservation.
 const RESERVATION_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a relay that refused, timed out or dropped a reservation is left alone.
@@ -728,6 +732,8 @@ pub(crate) struct Internet {
     reachability: Reachability,
 
     relay_candidates: VecDeque<(PeerId, Multiaddr)>,
+    /// When the first possible relay was seen.
+    relay_wanted_since: Option<Instant>,
     relays: HashMap<PeerId, RelaySlot>,
     relay_backoff: VecDeque<(PeerId, Instant)>,
 
@@ -780,6 +786,7 @@ impl Internet {
             seen_private: false,
             reachability: Reachability::Unknown,
             relay_candidates: VecDeque::new(),
+            relay_wanted_since: None,
             relays: HashMap::new(),
             relay_backoff: VecDeque::new(),
             bootstrapped: false,
@@ -1225,10 +1232,15 @@ impl Internet {
                 self.relay_dropped(relay, slot.reserved, now);
             }
         }
+        // A bootstrap peer only when nothing else turned up for a while.
+        let bootstrap_too = self
+            .relay_wanted_since
+            .is_some_and(|t| now.saturating_duration_since(t) >= BOOTSTRAP_RELAY_PATIENCE);
         while self.relays.len() < wanted {
             let usable = |(relay, _): &(PeerId, Multiaddr)| {
                 !self.relays.contains_key(relay)
                     && !self.relay_backoff.iter().any(|(p, _)| p == relay)
+                    && (bootstrap_too || !self.bootstrap.iter().any(|(p, _)| p == relay))
             };
             // A relay at an IPv4 address first: everybody can reach those.
             let ip4 = |(_, addr): &(PeerId, Multiaddr)| {
@@ -1523,6 +1535,7 @@ impl Internet {
                     self.relay_candidates.pop_front();
                 }
                 self.relay_candidates.push_back((peer, dialed.clone()));
+                self.relay_wanted_since.get_or_insert_with(Instant::now);
             }
         }
         // Where that peer sees this node.
