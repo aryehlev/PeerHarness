@@ -601,7 +601,7 @@ mod tests {
         let bundle = ph_skills::build_bundle(SKILL_MD, Some("pnpm")).unwrap();
         governance::record_bundle(&store, &bundles, &bundle, now).unwrap();
         let adopt = |scope: &str| {
-            governance::propose(
+            governance::propose_without_preview(
                 &store,
                 &key(1),
                 &circle,

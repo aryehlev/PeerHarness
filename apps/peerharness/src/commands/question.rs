@@ -211,22 +211,25 @@ fn send(
     let key = node.device()?.signing_key();
     // The owner confirmed sending their text to the members they were shown. A sync or
     // an import can have stored a newer charter while they read or typed a passphrase,
-    // with another roll: then nothing is sent on that yes.
-    if !governance::charter_as_shown(&node.store, key, &circle.circle_id, &shown)? {
-        return Err(refused(READERS_CHANGED));
-    }
-    let env = governance::submit(
-        &node.store,
-        key,
-        &circle.circle_id,
-        &scope,
-        EventBody::Question(QuestionBody {
-            question,
-            topic,
-            related_candidate: None,
-        }),
-        now,
-    )?;
+    // with another roll: then nothing is sent on that yes. The look and the signature
+    // are one transaction, like every check after a yes (`governance::atomically`).
+    let env = governance::atomically(&node.store, key, |store| {
+        if !governance::charter_as_shown(store, key, &circle.circle_id, &shown)? {
+            return Err(refused(READERS_CHANGED));
+        }
+        governance::submit(
+            store,
+            key,
+            &circle.circle_id,
+            &scope,
+            EventBody::Question(QuestionBody {
+                question,
+                topic,
+                related_candidate: None,
+            }),
+            now,
+        )
+    })?;
     // The human confirmed the exact text: walk the candidate to `Questioned`.
     let mut status = cand.status;
     for next in [

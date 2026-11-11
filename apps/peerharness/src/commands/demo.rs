@@ -302,7 +302,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         bundle.size()
     ));
 
-    let proposal = governance::propose(
+    let proposal = governance::propose_without_preview(
         &alice.store,
         &alice.key,
         &circle,

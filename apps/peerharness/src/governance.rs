@@ -700,7 +700,10 @@ pub fn atomically<T>(
 /// A change to the charter is never put this way, and an `amend` action is an error
 /// here: an amendment is a complete next charter drafted from one charter, and it is
 /// signed under that one and no other.
-pub fn propose(
+///
+/// The name says what it is not for. A command that calls this after a preview signs
+/// under a charter its owner may not have been shown.
+pub fn propose_without_preview(
     store: &Store,
     key: &SigningKey,
     circle: &CircleId,
@@ -2719,7 +2722,7 @@ pub(crate) mod tests {
         scope: &str,
         now: Timestamp,
     ) -> ProposalView {
-        propose(
+        propose_without_preview(
             store,
             &key(1),
             circle,
@@ -3086,7 +3089,7 @@ pub(crate) mod tests {
     ) -> (ProposalView, Bundle) {
         let bundle = skill(name, sentence);
         record_bundle(store, &machine.bundles, &bundle, now).unwrap();
-        let proposal = propose(
+        let proposal = propose_without_preview(
             store,
             &key(1),
             circle,
@@ -3126,7 +3129,7 @@ pub(crate) mod tests {
     }
 
     fn repeal(store: &Store, circle: &CircleId, target: &ProposalView, now: Timestamp) {
-        let proposal = propose(
+        let proposal = propose_without_preview(
             store,
             &key(1),
             circle,
@@ -4152,7 +4155,8 @@ pub(crate) mod tests {
     static ALL: std::sync::LazyLock<Scope> = std::sync::LazyLock::new(Scope::all);
 
     /// A change to the charter is drafted from the charter its preview named, and the
-    /// owner's yes is for that preview. `propose` used to read the current charter at
+    /// owner's yes is for that preview. `propose` (which is `propose_without_preview`
+    /// now) used to read the current charter at
     /// the moment of signing: with a charter that arrived while the owner read, the
     /// draft of charter 1 was signed as an amendment of charter 2, undoing whatever
     /// charter 2 had changed.
@@ -4214,18 +4218,19 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(again.charter(), second.digest().unwrap());
-        // `propose` signs no amendment at all: it would name whatever charter is
+        // `propose_without_preview` signs no amendment at all: it would name whatever charter is
         // current, which is the behaviour this test is about.
         let stored = proposals(&store);
         let wrong_door =
-            propose(&store, &key(1), &circle, admission(&second, "gina", 7), now).unwrap_err();
+            propose_without_preview(&store, &key(1), &circle, admission(&second, "gina", 7), now)
+                .unwrap_err();
         assert_eq!(
             wrong_door.to_string(),
             "an amendment is put to the vote under the charter it was drafted from"
         );
         assert_eq!(proposals(&store), stored, "nothing was signed or stored");
         // An `adopt` or `repeal` proposal is put under whatever charter is current.
-        let repeal = propose(
+        let repeal = propose_without_preview(
             &store,
             &key(1),
             &circle,
