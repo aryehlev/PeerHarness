@@ -498,7 +498,7 @@ impl Server {
 
     /// Starts the daemon as a child of this server and returns its peer id.
     fn start_daemon(&self) -> Result<String, String> {
-        let log = self.home.root().join("mcp-daemon.log");
+        let log = self.home.root().join(crate::home::MCP_LOG_FILE);
         crate::home::write_private_file(&log, b"")
             .map_err(|_| "The daemon's log file could not be written.".to_owned())?;
         let open = || std::fs::OpenOptions::new().append(true).open(&log);

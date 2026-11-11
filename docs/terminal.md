@@ -768,7 +768,10 @@ rm ~/.local/bin/peerharness
 only as its preview showed it. Where it makes no request, it says so and why, and
 running it again once the cause is gone shows the request and makes it. A team's
 only member cannot leave it: opt out of its rules one by one. `reset --confirm` cannot
-be undone, and ballots you already cast stay on the other members' nodes. A skill
+be undone, and ballots you already cast stay on the other members' nodes. It deletes
+what PeerHarness put into its folder and nothing else: a file of yours that lies there
+stays, the folder stays with it, and the report says so. It also works when the
+database can no longer be read. A skill
 that is still installed when you reset stays where it is, and the report lists its
 folder for you to delete by hand. If you founded a team, its root key is deleted with
 your node, and nobody can be admitted to that team or removed from it afterwards.

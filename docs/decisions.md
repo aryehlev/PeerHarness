@@ -3364,3 +3364,51 @@ against a hand-written model of the two patterns
 it. The new one refuses it at `note`, and refuses to `keep` the candidate the old one
 had stored.
 
+### `reset` deletes what PeerHarness put into its home, and nothing else
+
+**Found.** `reset --confirm` removed the home directory with everything in it
+(`remove_dir_all`). A home is whatever folder `--home` or `PEERHARNESS_HOME` names, and
+`init` took any folder that existed, made it private (mode 0700) and put a node into
+it. With the variable pointed at a project folder, the reset deleted the project. Its
+account before said "the device key" and "the database" and named no other file.
+
+The one guard compared the home with `$HOME` as text. The same directory spelled
+`~/Documents/..`, or reached through a linked folder, passed, and so did a folder that
+holds the user's home directory. Reproduced in a scratch directory with a stand-in
+`HOME`: the stand-in home directory was removed with a document in it.
+
+And `reset` opened the database before anything else, so a node whose database was
+damaged, or written by a newer version, could not be deleted by the one command that
+deletes a node.
+
+**Decision.** `reset` deletes the files and folders PeerHarness itself puts into a
+home (`home::is_own_entry`: the config, the database and what SQLite keeps beside it,
+the daemon's files, and the folders `keys`, `bundles`, `backups` and `spool`) and then
+the home, if that left it empty (`Home::delete_own`). Anything else stays, the folder
+stays with it, and the account and the report name what stays. A link in the home is
+never followed.
+
+The guard compares the two directories as the file system resolves them and refuses
+the user's home directory and every folder that holds it, in the account as in the
+deletion.
+
+A node whose database cannot be read is deleted all the same. The account then says
+that what it held cannot be listed. Root keys in the keychain of the operating system
+are found through the database, so without it they stay, and the account says that
+too.
+
+**Not changed.** `init` still takes a folder that is there with files in it, and
+makes it private with a warning: a failed `init` leaving such a folder as it found it
+is tested behaviour, and refusing the folder was tried for this fix and taken back
+for that reason. The four folders are deleted with what they hold. Somebody who kept
+files of their own in `keys` or `backups` of a home loses them, and the account names
+the four.
+
+**Not tested.** The keychain of the operating system: no test may touch it.
+
+**Tests.** `reset_deletes_only_what_peerharness_put_into_its_home`,
+`reset_refuses_the_users_home_directory_under_every_spelling` and
+`reset_deletes_a_node_whose_database_cannot_be_read`
+(`apps/peerharness/tests/reset.rs`). By hand: the reproduction of the audit, a home
+in a folder with `src`, `.git` and a note, run with the new build.
+

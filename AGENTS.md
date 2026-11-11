@@ -342,6 +342,10 @@ stop, leave the feature disabled, and document the blocker.
   directory without `--force-overwrite-unmanaged`, and uninstall/rollback touch only
   managed files.
 * Changes to Claude settings are idempotent, backed up and atomic.
+* `reset` deletes only what PeerHarness itself put into its home (`Home::delete_own`,
+  `home::is_own_entry`, ADR-050). Never remove a home with everything in it: a home is
+  whatever folder its owner named. A file or folder PeerHarness starts to keep in its
+  home is added to that list in the same change.
 
 **Honesty**
 

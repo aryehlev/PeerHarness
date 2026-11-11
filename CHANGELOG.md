@@ -44,6 +44,12 @@ database schema it writes.
     and such a rule could be kept or proposed. The syntax is now refused anywhere in
     the file, the frontmatter included. A rule that only mentions `!` in a code span
     and has another code span further down is refused too.
+  * **`reset --confirm` could delete files that were not PeerHarness's.** It removed
+    the whole home folder, so with `PEERHARNESS_HOME` pointed at a folder with other
+    work in it, that work went too, and the check that refuses your home directory
+    could be passed with another spelling of the same path. `reset` now deletes only
+    what PeerHarness put there and says what stays, refuses your home directory under
+    every spelling, and works when the database cannot be read.
 
 ## 0.4.0 (2026-11-11)
 
