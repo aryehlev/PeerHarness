@@ -652,8 +652,6 @@ fn members_vote_over_quic_and_strangers_are_turned_away() {
     assert_eq!(code, 3, "{msg}");
 }
 
-/// Needs working multicast between processes on this machine and a non-loopback IPv4
-/// interface, which CI containers often lack. Run it with `-- --ignored`.
 /// A daemon that only answers. Bob's node runs `daemon` without a sync interval and
 /// knows no peer: the members sync to it, and it dials nobody. Alice and Carol pass a
 /// rule that has the name of a skill Bob keeps for himself, and Alice's sync pushes
@@ -798,6 +796,8 @@ fn a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once() {
     drop(daemon);
 }
 
+/// Needs working multicast between processes on this machine and a non-loopback IPv4
+/// interface, which CI containers often lack. Run it with `-- --ignored`.
 #[test]
 #[ignore = "needs multicast on the local network"]
 fn members_find_each_other_on_the_local_network() {
