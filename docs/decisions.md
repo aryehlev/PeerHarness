@@ -2067,7 +2067,10 @@ nothing. `init` and `note` named next steps the guide no longer teaches. A faile
   …" of `rule opt-out --announce` and of `rule repeal`, "only the node that founded …
   holds its root key" of `circle revoke`, "… is a rule in force in …" of `skills
   uninstall`, and "a circle named … already exists here" of `circle create`. They are
-  older than this change and were left as they are.
+  older than this change and were left as they are. (A sixth was seen after the
+  third review, in a run: when the confirmation of `rule opt-out --announce` is
+  refused, the error repeats the report of the opt-out, "Opted out of … in …", before
+  "Nothing was announced". It is as old as the others and was left as it is.)
 * **A rule that is in place is not waiting.** `apply_rules` reports a rule as waiting
   for its owner only when it is not installed with the voted text. `circle mode ask`
   listed every installed rule as waiting, with a reason code and a literal `<id>`.
