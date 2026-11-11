@@ -146,6 +146,46 @@ fn confirm_or_window_for(
     ask_in_window(preview, what, window.as_ref().map(|w| w as &dyn Ask))
 }
 
+/// Refuses a step that goes through [`confirm_circle_or_window`] before it does
+/// anything else, when the refusal is certain: this is an agent's session and the step
+/// cannot be put in a window, because the owner did not allow that or because this
+/// machine can show none. The refusal is the one the consent step itself would give.
+///
+/// For a step with work before its preview that reaches outside the machine: `circle
+/// join <peer id>` looks a peer up and dials it to get the charter it then shows. A
+/// session must not make a node do that for a join nobody can be asked about.
+/// In the person's own terminal, and in a session that can show the window, this is
+/// `Ok` and the step goes on to its preview as before.
+pub fn circle_step_can_be_asked(what: &str, config: &Config) -> Result<()> {
+    if !in_agent_session() {
+        return Ok(());
+    }
+    cannot_be_asked(
+        what,
+        config.agent.asked() >= Asked::RulesAndCircle,
+        Window::find().is_some(),
+    )
+    .map_or(Ok(()), Err)
+}
+
+/// The refusal of a step inside a session that cannot be put in a window, if it cannot:
+/// `allowed` is whether the owner allowed windows for it, `has_window` whether this
+/// machine can show one.
+fn cannot_be_asked(what: &str, allowed: bool, has_window: bool) -> Option<anyhow::Error> {
+    if !allowed {
+        return Some(windows_off(what, has_window));
+    }
+    (!has_window).then(|| no_window(what))
+}
+
+/// The refusal where the owner allowed the window and this machine can show none.
+fn no_window(what: &str) -> anyhow::Error {
+    refused(format!(
+        "{what} is your decision, and this machine has no confirmation window that \
+         PeerHarness can show. Run it yourself in your own terminal."
+    ))
+}
+
 fn windows_off(what: &str, has_window: bool) -> anyhow::Error {
     if !has_window {
         return agent_refusal(what);
@@ -162,10 +202,7 @@ fn windows_off(what: &str, has_window: bool) -> anyhow::Error {
 fn ask_in_window(preview: &str, what: &str, window: Option<&dyn Ask>) -> Result<()> {
     let terminal = "Run it yourself in your own terminal.";
     let Some(window) = window else {
-        return Err(refused(format!(
-            "{what} is your decision, and this machine has no confirmation window that \
-             PeerHarness can show. {terminal}"
-        )));
+        return Err(no_window(what));
     };
     let preview = preview.trim_end();
     if preview.trim().is_empty() {
@@ -364,6 +401,38 @@ mod tests {
                 .contains("your own terminal")
         );
         assert!(w.1.borrow().is_empty(), "the window was never opened");
+    }
+
+    /// What `circle join <peer id>` asks before it goes to the network: inside a
+    /// session, a step that cannot be put in a window is refused with the words the
+    /// consent step itself has for that case.
+    #[test]
+    fn a_step_that_cannot_be_asked_is_refused_with_the_consent_steps_own_words() {
+        let said = |allowed, has_window| {
+            cannot_be_asked("joining the circle", allowed, has_window).map(|e| {
+                assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+                e.to_string()
+            })
+        };
+        // Allowed, and a window to show it in: nothing is refused here.
+        assert_eq!(said(true, true), None);
+        // Not allowed: what `confirm_circle_or_window` says with windows off.
+        assert_eq!(
+            said(false, true),
+            Some(windows_off("joining the circle", true).to_string())
+        );
+        assert_eq!(
+            said(false, false),
+            Some(windows_off("joining the circle", false).to_string())
+        );
+        // Allowed, and no window on this machine: what `ask_in_window` says then.
+        assert_eq!(
+            said(true, false),
+            Some(refusal(ask_in_window("p", "joining the circle", None)))
+        );
+        assert!(said(true, false)
+            .unwrap()
+            .contains("this machine has no confirmation window"));
     }
 
     #[test]

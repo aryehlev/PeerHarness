@@ -51,7 +51,8 @@ use crate::commands::proposal::key_before_window;
 use crate::commands::Ctx;
 use crate::config::Config;
 use crate::consent::{
-    asks_circle_in_window, confirm, confirm_circle_or_window, human_only, in_agent_session,
+    asks_circle_in_window, circle_step_can_be_asked, confirm, confirm_circle_or_window, human_only,
+    in_agent_session,
 };
 use crate::error::{exit_kind, refused, usage, ExitKind};
 use crate::governance::{self, NewProposal, Settled};
@@ -1805,6 +1806,16 @@ fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, from: JoinFrom) -> Result<Rep
     use crate::commands::net::{dial_only, tokio_runtime};
     use crate::runtime::{self, Running};
 
+    // Getting the charter means starting the transport, and looking the peer up or
+    // dialling it. Inside a session that is done only for a join the owner can be asked
+    // about: where the window is not allowed or cannot be shown, the refusal the
+    // confirmation would end in comes now, before anything leaves this machine. (A
+    // home without a readable configuration has no node: the start below says so.)
+    if in_agent_session() {
+        if let Ok(config) = Config::load(&ctx.home) {
+            circle_step_can_be_asked("joining the circle", &config)?;
+        }
+    }
     let home = ctx.home.clone();
     let config = if args.internet {
         ctx.out.note(crate::internet::DISCLOSURE);

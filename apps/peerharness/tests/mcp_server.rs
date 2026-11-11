@@ -514,6 +514,129 @@ fn where_no_window_can_be_shown_a_refused_tool_does_not_point_back_to_setup() {
     assert_eq!(client.close(), 0);
 }
 
+/// How much a hub has seen of anyone: peers that connected, identified themselves or
+/// asked it for a peer. Zero means that nothing reached it.
+fn seen_by(hub: &hub::Hub) -> usize {
+    let state = hub.state();
+    state.connected.len() + state.identified.len() + state.asked.len()
+}
+
+/// `circle join <peer id> --internet` gets the charter it then asks about from a
+/// member's node: it joins the public network, looks the peer id up and dials it.
+/// Inside a session it used to do all of that before the confirmation refused it, also
+/// where the refusal was certain. So an agent could make the node look up and dial a
+/// peer id of its choosing, a key on no roll, for a join nobody would be asked about.
+/// Now the refusal comes first, and nothing reaches the network.
+#[test]
+fn a_join_nobody_can_be_asked_about_goes_nowhere_near_the_network() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let hub = runtime.block_on(hub::Hub::start(201, hub::HubOptions::default()));
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path()).on(&hub);
+    node.init();
+    // A peer id to look for. Any will do: it names a key that is on no roll here.
+    let peer = hub.peer_id.to_string();
+    let join = |session: bool| {
+        let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
+        node.env(&mut cmd);
+        cmd.args([
+            "circle",
+            "join",
+            &peer,
+            "--internet",
+            "--expect-fingerprint",
+            "0000-0000-0000-0000-0000",
+            "--yes",
+        ])
+        .stdin(Stdio::null());
+        if session {
+            cmd.env("CLAUDECODE", "1");
+        }
+        cmd
+    };
+
+    // --- Inside a session, with the circle's windows not allowed: refused with the
+    // words of the consent step, before the disclosure line of the internet mode.
+    let out = join(true).output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(
+        printed.contains("joining the circle is your decision"),
+        "{printed}"
+    );
+    assert!(printed.contains("your own terminal"), "{printed}");
+    assert!(!printed.contains("Internet mode:"), "{printed}");
+    assert_eq!(seen_by(&hub), 0, "the network saw the node: {printed}");
+    assert!(node.shown().is_empty());
+
+    // --- The control: the same command in the person's own terminal does go to the
+    // network, so the hub would have seen the session's. (It finds no circle there;
+    // it is stopped as soon as the hub has seen it.)
+    let mut person = join(false)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while seen_by(&hub) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the person's join never reached the network"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = person.kill();
+    let _ = person.wait();
+    assert_eq!(node.run(&["status"])["circles"], json!([]));
+    runtime.block_on(hub.stop());
+}
+
+/// The same where the owner allowed the window and this machine can show none (a home
+/// that came from a Mac): the `join_circle` tool runs, because a tool runs at the level
+/// the settings allow, and the command it runs refuses before it goes anywhere.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn the_join_tool_goes_nowhere_where_no_window_can_be_shown() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let hub = runtime.block_on(hub::Hub::start(202, hub::HubOptions::default()));
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path()).on(&hub);
+    node.init();
+    // Allowed where a window could be shown (the stand-in), then used where none can.
+    let on = node.run(&["watch", "claude", "--install", "--dialogs", "--yes"]);
+    assert_eq!(on["circle_windows"], true);
+    let mut client = node.serve_without_a_window();
+    client.handshake();
+
+    let said = client.fails(
+        "join_circle",
+        json!({ "member": hub.peer_id.to_string(), "fingerprint": "0000-0000-0000-0000-0000" }),
+    );
+    assert!(
+        said.contains("this machine has no confirmation window that PeerHarness can show"),
+        "{said}"
+    );
+    assert!(said.contains("your own terminal"), "{said}");
+    assert!(!said.contains("Internet mode:"), "{said}");
+    assert!(!said.contains("cannot reach"), "{said}");
+    assert_eq!(seen_by(&hub), 0, "the network saw the node: {said}");
+    assert!(node.shown().is_empty());
+    assert_eq!(node.run(&["status"])["circles"], json!([]));
+
+    assert_eq!(client.close(), 0);
+    runtime.block_on(hub.stop());
+}
+
 #[test]
 fn the_daemon_a_tool_started_stops_when_the_client_leaves() {
     let runtime = tokio::runtime::Builder::new_current_thread()
