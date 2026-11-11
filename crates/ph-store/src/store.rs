@@ -126,6 +126,44 @@ impl Store {
     /// assert_eq!(n, 0);
     /// ```
     pub fn transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+        self.transaction_with(f)
+    }
+
+    /// [`Store::transaction`] for a closure with an error type of its own. `E` only
+    /// has to hold a [`StoreError`], so the caller's steps between the repository
+    /// calls can fail for reasons that are not this crate's, and such a failure rolls
+    /// everything back exactly like one of ours.
+    ///
+    /// The outermost call holds SQLite's write lock from its first statement to its
+    /// commit: no other connection writes in between, so what `f` reads is what it
+    /// writes on. Keep `f` short, and let it wait for nothing and nobody.
+    ///
+    /// This is a transaction and nothing more. Which steps go into `f`, and whether
+    /// they may be taken at all, is the caller's to decide.
+    ///
+    /// ```
+    /// # use ph_store::{Store, StoreError};
+    /// #[derive(Debug)]
+    /// enum Failed {
+    ///     Store(StoreError),
+    ///     Refused,
+    /// }
+    /// impl From<StoreError> for Failed {
+    ///     fn from(e: StoreError) -> Self {
+    ///         Failed::Store(e)
+    ///     }
+    /// }
+    /// let store = Store::open_in_memory().unwrap();
+    /// let refused: Result<(), Failed> = store.transaction_with(|s| {
+    ///     s.pending_outbox_count()?;
+    ///     Err(Failed::Refused)
+    /// });
+    /// assert!(matches!(refused, Err(Failed::Refused)));
+    /// ```
+    pub fn transaction_with<T, E: From<StoreError>>(
+        &self,
+        f: impl FnOnce(&Store) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
         let tx = Tx::begin(&self.conn)?;
         let out = f(self)?;
         tx.commit()?;
