@@ -1813,6 +1813,121 @@ fn a_proposal_that_could_not_be_signed_leaves_its_candidate_as_it_was() {
     assert!(!alice.windows_opened());
 }
 
+/// A copy a vote installed that its owner edited is never deleted: when it is to go it
+/// is left in place and named, by the one run that finds it, because that run clears
+/// the record that a vote put it there. `circle mode` and `rule opt-in` bring the skills
+/// directory in line too and used to print nothing about it: where one of them was the
+/// first command to settle after a repeal passed on the node, the copy was never named
+/// by anything. And `rule opt-out` installed another rule that had passed meanwhile
+/// (mode `follow`) without a line for it. Each now says what it did.
+#[test]
+fn a_command_that_settles_says_what_it_did_to_other_rules() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let left = |name: &str| {
+        format!(
+            "rule {name}: the copy a vote installed was edited on this machine and was \
+             left in place"
+        )
+    };
+
+    // --- Three rules pass and are installed on Carol's machine. She edits two.
+    for (name, text) in [
+        ("style", "Indent with two spaces."),
+        ("naming", "Names are lower case."),
+        ("layout", "One type per file."),
+    ] {
+        let noted = alice.note(name, text);
+        let proposal =
+            id_of(&alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]));
+        alice.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        bob.import(&alice.export(root, name));
+        let voted = bob.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        assert_eq!(voted["passed"], true, "{voted}");
+        let passed = bob.export(root, name);
+        alice.import(&passed);
+        carol.import(&passed);
+        assert!(carol.skill_file(name).is_file(), "{name}");
+    }
+    let edit = |name: &str| -> String {
+        let edited = format!("{}\nA line Carol added.\n", carol.skill_text(name));
+        std::fs::write(carol.skill_file(name), &edited).unwrap();
+        edited
+    };
+    let style = edit("style");
+    let naming = edit("naming");
+
+    // A proposal of Alice's passes on Carol's node first: Alice's and Bob's ballots
+    // meet there while her key does not unlock, so the import that completes the count
+    // fails when it is to sign the RESULT. The ballots are stored, and nothing was
+    // done to her skills.
+    let passes_on_carols_node_unsettled = |proposal: &str, tag: &str| {
+        let proposed = alice.export(root, tag);
+        bob.import(&proposed);
+        carol.import(&proposed);
+        alice.run(&["proposal", "vote", proposal, "approve", "--yes"]);
+        bob.run(&["proposal", "vote", proposal, "approve", "--yes"]);
+        let ballots = format!("{tag}-ballot");
+        let from_alice = alice.export(root, &ballots);
+        let from_bob = bob.export(root, &ballots);
+        let (code, _, _) =
+            with_a_passphrase_that_unlocks_nothing(&carol, &["events", "import", &from_alice]);
+        assert_eq!(code, 0, "one ballot of three: nothing to sign yet");
+        let (code, _, _) =
+            with_a_passphrase_that_unlocks_nothing(&carol, &["events", "import", &from_bob]);
+        assert_eq!(code, 1, "the RESULT needs the key");
+        assert_eq!(results_for(&carol, proposal), 0);
+    };
+    let repeal = |name: &str| -> String {
+        id_of(&alice.run(&["rule", "repeal", name, "--circle", "team", "--yes"]))
+    };
+
+    // --- `circle mode` is the first command to settle after `style` was repealed.
+    passes_on_carols_node_unsettled(&repeal("style"), "repeal-style");
+    let said = carol.reads(&["circle", "mode", "ask", "--circle", "team", "--yes"]);
+    assert!(said.contains(&left("style")), "{said}");
+    assert!(
+        said.contains("`peerharness skills uninstall style --allow-modified` takes it out"),
+        "{said}"
+    );
+    assert_eq!(carol.skill_text("style"), style, "an edited file stays");
+    // It is named once: the record went with the report.
+    let again = carol.reads(&["circle", "mode", "follow", "--circle", "team", "--yes"]);
+    assert!(!again.contains(&left("style")), "{again}");
+
+    // --- `rule opt-in` is the first command to settle after `naming` was repealed.
+    carol.run(&["rule", "opt-out", "layout", "--circle", "team"]);
+    assert!(!carol.skill_file("layout").exists());
+    passes_on_carols_node_unsettled(&repeal("naming"), "repeal-naming");
+    let said = carol.reads(&["rule", "opt-in", "layout", "--circle", "team", "--yes"]);
+    assert!(said.contains("Following layout again."), "{said}");
+    assert!(said.contains("installed it for your agent"), "{said}");
+    assert!(said.contains(&left("naming")), "{said}");
+    assert_eq!(carol.skill_text("naming"), naming, "an edited file stays");
+
+    // --- `rule opt-out` is the first command to settle after `commits` passed. Carol
+    // follows the circle, so the rule is installed by that run, and the run says so.
+    let noted = alice.note("commits", "Commit subjects are one word.");
+    let commits = id_of(&alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]));
+    passes_on_carols_node_unsettled(&commits, "commits");
+    assert!(!carol.skill_file("commits").exists());
+    let said = carol.reads(&["rule", "opt-out", "layout", "--circle", "team"]);
+    assert!(
+        said.contains("removed it from your agent's skills"),
+        "{said}"
+    );
+    assert!(
+        said.contains("installed rule commits for your agent"),
+        "{said}"
+    );
+    assert!(carol.skill_file("commits").is_file());
+    assert!(!carol.skill_file("layout").exists());
+    for node in [&alice, &bob, &carol] {
+        assert!(!node.windows_opened(), "{}", node.name);
+    }
+}
+
 /// A yes is for the text that was shown. Carol is asked before a rule is installed. A
 /// rule passes, and her agent starts installing it: the window shows its text. While
 /// she reads, her node receives a second rule of the same name that the others passed,

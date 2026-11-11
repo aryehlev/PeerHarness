@@ -244,11 +244,18 @@ pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
     if applied.removed.iter().any(|s| s == name) {
         t.line("  removed it from your agent's skills");
     }
-    for skill in &applied.not_removed {
-        t.line(format!("  {}", governance::not_removed_line(skill)));
+    // Bringing the skills directory in line can change more than this one rule: a
+    // rule that passed since the circle was last settled is installed by it (mode
+    // `follow`), and one that was repealed goes. The owner is told of each here, as
+    // by a sync: this may be the first command to settle since.
+    for skill in applied.removed.iter().filter(|s| *s != name) {
+        t.line(format!("  removed rule {skill}"));
     }
-    for kept in &applied.kept_edited {
-        t.line(format!("  {}", kept.line()));
+    for skill in &applied.installed {
+        t.line(format!("  installed rule {skill} for your agent"));
+    }
+    for line in applied.left_in_place_lines() {
+        t.line(format!("  {line}"));
     }
     if done.key_locked {
         t.line(format!("  {}", governance::NOT_SIGNED_KEY_LOCKED));
@@ -390,6 +397,17 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
     }
     for held in applied.held.iter().filter(|h| h.name == name) {
         t.line(format!("  {}", held.line(&circle.name)));
+    }
+    // What the same run changed for other rules of the circle, as `rule opt-out`
+    // says it. An edited copy that was left is named by this run or by none.
+    for skill in applied.installed.iter().filter(|s| *s != name) {
+        t.line(format!("  installed rule {skill} for your agent"));
+    }
+    for skill in &applied.removed {
+        t.line(format!("  removed rule {skill}"));
+    }
+    for line in applied.left_in_place_lines() {
+        t.line(format!("  {line}"));
     }
     if done.key_locked {
         t.line(format!("  {}", governance::NOT_SIGNED_KEY_LOCKED));

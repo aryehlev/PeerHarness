@@ -485,6 +485,9 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             ));
         }
     }
+    for line in settled_rule_lines(&settled) {
+        t.line(format!("  {line}"));
+    }
     Ok(Report::new(
         json!({
             "proposal_id": proposal.event_id(),
@@ -492,6 +495,9 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             "approvals": tally.approvals().len(),
             "need": tally.need(),
             "charter_seq": settled.charter_notarized,
+            "removed_rules": settled.applied.removed,
+            "not_removed_rules": settled.applied.not_removed,
+            "kept_edited_rules": settled.applied.kept_edited_names(),
             "events_file": written,
             "peer_id": node.peer_id().to_string(),
             "root_fingerprint": circle.root_key.fingerprint(),
@@ -639,6 +645,31 @@ fn approve_and_settle(node: &Node, circle: &CircleRow, proposal: ProposalView) -
     })
 }
 
+/// What settling the circle did to the owner's skills besides the amendment a command
+/// was run for: a rule that went, a skill that could not be removed and a voted copy
+/// that was left because it was edited. The command may be the first to settle since
+/// a vote passed on this node, and an edited copy is named by that run or by none
+/// ([`governance::Applied::left_in_place_lines`]).
+fn settled_rule_lines(settled: &governance::Settled) -> Vec<String> {
+    let mut lines: Vec<String> = settled
+        .applied
+        .removed
+        .iter()
+        .map(|skill| format!("removed rule {skill}"))
+        .collect();
+    lines.extend(settled.applied.left_in_place_lines());
+    lines
+}
+
+/// [`settled_rule_lines`] under the report of an amendment a command proposed.
+/// `circle leave` prints its own and does not use this.
+fn with_rule_lines(mut report: Report, settled: &governance::Settled) -> Report {
+    for line in settled_rule_lines(settled) {
+        report.text.push_str(&format!("  {line}\n"));
+    }
+    report
+}
+
 /// What to tell the proposer after [`put_amendment`], and the JSON of the report.
 fn amendment_report(circle: &CircleRow, put: &Put, done: &str, mut t: Text) -> Report {
     t.line(format!("  {}", put.tally));
@@ -721,7 +752,8 @@ fn remove(ctx: &Ctx, args: CircleRemoveArgs) -> Result<Report> {
         args.member,
         short_id(&put.proposal.event_id())
     ));
-    Ok(amendment_report(&circle, &put, "The removal passed.", t))
+    let report = amendment_report(&circle, &put, "The removal passed.", t);
+    Ok(with_rule_lines(report, &put.settled))
 }
 
 /// Why `circle leave` made no request to take its owner off the roll.
@@ -1111,11 +1143,24 @@ fn follow_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result
     for skill in &settled.applied.installed {
         t.line(format!("  installed rule {skill} for your agent"));
     }
+    for skill in &settled.applied.removed {
+        t.line(format!("  removed rule {skill}"));
+    }
+    for line in settled.applied.left_in_place_lines() {
+        t.line(format!("  {line}"));
+    }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
     }
     Ok(Report::new(
-        json!({ "circle": circle.name, "left": false, "installed": settled.applied.installed }),
+        json!({
+            "circle": circle.name,
+            "left": false,
+            "installed": settled.applied.installed,
+            "removed_rules": settled.applied.removed,
+            "not_removed_rules": settled.applied.not_removed,
+            "kept_edited_rules": settled.applied.kept_edited_names(),
+        }),
         t.finish(),
     ))
 }
@@ -1636,7 +1681,8 @@ fn amend(ctx: &Ctx, args: CircleAmendArgs) -> Result<Report> {
         "Proposed changing the rules of the vote (proposal {}).",
         short_id(&put.proposal.event_id())
     ));
-    Ok(amendment_report(&circle, &put, "The amendment passed.", t))
+    let report = amendment_report(&circle, &put, "The amendment passed.", t);
+    Ok(with_rule_lines(report, &put.settled))
 }
 
 /// `circle device add|remove`: a member's devices are part of the roll, so changing them
@@ -1699,7 +1745,7 @@ fn device(ctx: &Ctx, args: CircleDeviceArgs, add: bool) -> Result<Report> {
             circle.root_key.fingerprint()
         ));
     }
-    Ok(report)
+    Ok(with_rule_lines(report, &put.settled))
 }
 
 /// `circle mode`: the owner's standing choice about rules that pass in this circle.
@@ -1735,6 +1781,12 @@ fn mode(ctx: &Ctx, args: CircleModeArgs) -> Result<Report> {
     for skill in &settled.applied.installed {
         t.line(format!("  installed rule {skill} for your agent"));
     }
+    for skill in &settled.applied.removed {
+        t.line(format!("  removed rule {skill}"));
+    }
+    for line in settled.applied.left_in_place_lines() {
+        t.line(format!("  {line}"));
+    }
     // Rules in force that are not installed and wait for the owner: each with the
     // proposal to confirm. What is installed already stays and is not listed.
     for waiting in &settled.applied.asking {
@@ -1754,6 +1806,9 @@ fn mode(ctx: &Ctx, args: CircleModeArgs) -> Result<Report> {
             "circle": circle.name,
             "adoption_mode": wanted,
             "installed": settled.applied.installed,
+            "removed_rules": settled.applied.removed,
+            "not_removed_rules": settled.applied.not_removed,
+            "kept_edited_rules": settled.applied.kept_edited_names(),
             "waiting": settled.applied.asking.iter().map(governance::Waiting::json).collect::<Vec<_>>(),
         }),
         t.finish(),

@@ -1242,6 +1242,20 @@ impl Applied {
     pub fn kept_edited_names(&self) -> Vec<&str> {
         self.kept_edited.iter().map(|k| k.name.as_str()).collect()
     }
+
+    /// One line for each skill that was to go and is still on the machine: one that
+    /// could not be removed ([`Self::not_removed`]) and a voted copy that was left
+    /// because its owner edited it ([`Self::kept_edited`]). An edited copy is found
+    /// by one run only, the one that clears its record, so every command that brings
+    /// the skills directory in line prints these lines: a run that kept them to
+    /// itself would be the last that could have named the copy.
+    pub fn left_in_place_lines(&self) -> Vec<String> {
+        self.not_removed
+            .iter()
+            .map(|skill| not_removed_line(skill))
+            .chain(self.kept_edited.iter().map(KeptEdited::line))
+            .collect()
+    }
 }
 
 /// A copy that a vote installed and that was to be removed, left in place because its
@@ -1290,10 +1304,18 @@ impl KeptEdited {
             );
         }
         if self.uninstall_refused {
+            // The command is quoted with its scope: the rule's own copy is in the other
+            // one by now, and without a scope `skills uninstall` asks which is meant.
+            let asked = match &self.place {
+                Some(dir) => format!(
+                    "`peerharness skills uninstall {name} --scope project`, run in {},",
+                    crate::output::safe(dir)
+                ),
+                None => format!("`peerharness skills uninstall {name} --scope user`"),
+            };
             return format!(
-                "{left}. You still follow a rule with this text, and while you do \
-                 `peerharness skills uninstall {name}` refuses this copy as well and names \
-                 the opt-out."
+                "{left}. You still follow a rule with this text, and while you do {asked} \
+                 refuses this copy as well and names the opt-out."
             );
         }
         match &self.place {
@@ -3610,7 +3632,7 @@ pub(crate) mod tests {
         );
         assert!(
             moved.contains(&format!(
-                "`peerharness skills uninstall {name}` refuses this copy as well"
+                "`peerharness skills uninstall {name} --scope user` refuses this copy as well"
             )),
             "{moved}"
         );
