@@ -562,8 +562,9 @@ impl TryFrom<ProposalRepr> for ProposalBody {
 
 /// VOTE body: one ballot on one proposal.
 ///
-/// `proposal_id` is the hash of the entire signed proposal, so the ballot is bound to
-/// every byte of what was proposed, including the bundle digest of an `adopt` proposal.
+/// `proposal_id` is the hash of everything the proposer signed (the signature itself is
+/// not hashed), so the ballot is bound to every signed byte of what was proposed,
+/// including the bundle digest of an `adopt` proposal.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VoteBody {

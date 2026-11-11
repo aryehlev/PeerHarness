@@ -309,6 +309,13 @@ not matter.
 | fingerprint of a key | first 20 hex chars of `SHA-256("peerharness-fingerprint-v0" \|\| 0x00 \|\| pubkey_32_bytes)`, grouped as `xxxx-xxxx-xxxx-xxxx-xxxx` |
 | bundle digest | `"sha256:" + hex(SHA-256("peerharness-bundle-v0" \|\| 0x00 \|\| JCS(manifest)))` (section 10) |
 
+An event id does not cover the signature. The holder of a key can sign the same bytes
+more than once, and each signature verifies. One event can therefore exist in two
+transmitted forms that differ in `signature` alone. They are one event with one id: a
+node keeps the form that reached it first and treats the other as a duplicate (section
+13.4), and nothing that is counted or decided reads the signature bytes. Only the
+author can make a second form: a signature that anyone else changed does not verify.
+
 The circle id and the fingerprint hash the **raw 32 key bytes**, not the `ed25519:`
 string. Fingerprints are for humans to compare out of band (for example the root
 fingerprint shown when joining). They are 80 bits and are not used for authorization.
@@ -546,8 +553,9 @@ error.
 {"proposal_id": "sha256:<event id>", "decision": "approve" | "reject" | "revise", "rationale?": "<text>"}
 ```
 
-* `proposal_id` is the event id of the PROPOSAL, which is the hash of the entire signed
-  proposal. A ballot is therefore bound to every byte of what was proposed, including
+* `proposal_id` is the event id of the PROPOSAL, which is the hash of everything the
+  proposer signed (section 5: the signature itself is not hashed). A ballot is
+  therefore bound to every signed byte of what was proposed, including
   the bundle digest of an `adopt` proposal; a ballot for proposal A never counts for a
   proposal B that differs in anything. There is no separate `bundle_digest` member.
 * `rationale`: 0 to 2000 code points, multi-line. The reference client is stricter
@@ -1745,7 +1753,8 @@ Notes for implementers:
 no duplicate questions or proposals, and a ballot received twice is one ballot (the
 count in section 14.2 also ignores a repeated event id). A replayed event is a duplicate; a
 modified one has a different `event_id` and a broken signature or a new author's
-signature (and is then judged on its own).
+signature (and is then judged on its own). The same event signed a second time by its
+author has the same `event_id` and is a duplicate as well (section 5).
 
 ### 13.5 Offline behaviour
 

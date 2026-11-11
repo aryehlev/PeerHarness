@@ -427,7 +427,7 @@ keep a vote intact.
 
 | | Commands | Good to know |
 |---|---|---|
-| A repository you already share | `peerharness events sync .peerharness/team --circle team`, then commit and push | Each record is its own file, so there are no merge conflicts. Everyone who can read the repository can read the roll and the ballots |
+| A repository you already share | `peerharness events sync .peerharness/team --circle team`, then commit and push | Each record is its own file, so members who add different records never touch the same file. Everyone who can read the repository can read the roll and the ballots |
 | A member's address | `peerharness daemon --listen /ip4/0.0.0.0/udp/4001/quic-v1`, then `peerharness sync <the address it prints>` | Needs the same network, a VPN or a forwarded UDP port |
 | The local network | `peerharness daemon --listen … --lan`, then `peerharness sync --lan` | Announces the device's public key and port on that network |
 | A file | `peerharness events export --circle team --out f.jsonl`, then `peerharness events import f.jsonl` | Holds the roll and proposals in clear text: send it only to members |
@@ -442,6 +442,14 @@ only, no member twice, and nothing but the one member a record has (`event` or
 `bundle`). A line that is not such a record is refused and counted, and the other
 records are still imported. The event inside is then verified as one from a peer is,
 which refuses an unknown member or an explicit `null` anywhere in it.
+
+The report gives a reason for what was refused, one line for each (`refused
+(not_a_record): 3`). At most 64 MiB of records are read from one directory, and as
+much again of files that have a record's name and hold none. Beyond that the command
+goes on with what it read and says how many files it did NOT read: take out the files
+that are no records and run it again. In a shared directory, a file that already
+holds a record is left as it is, and a file with a record's name and anything else in
+it is replaced by the record.
 
 Joining from a file or a directory joins the circle whose root fingerprint you pass.
 Anyone who can write to a shared directory can add records of a circle of their own

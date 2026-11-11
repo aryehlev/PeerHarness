@@ -42,6 +42,11 @@ The other limits:
   add`), which may not reach its threshold once a device is revoked. What was tried
   by hand is in [ADR-044](decisions.md), and the mechanism in section 4.16 of
   the [security model](security-model.md#416-root-key-holder-and-circle-administrator).
+* **An event its author signed twice can conflict once in a shared git directory.**
+  An event's id does not cover its signature. If two members each add the same
+  event, signed a second time by its author, before either pulled, git reports one
+  conflict on that file. Either copy settles it, and no sync rewrites it afterwards
+  ([ADR-050](decisions.md)).
 * **The roll changes by simple majority**, so a majority can shrink the roll and then
   change the rules of the vote alone
   ([security model, 4.20](security-model.md#420-governance-by-vote)).

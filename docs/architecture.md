@@ -696,8 +696,8 @@ changes, open proposals are dead and must be proposed again.
 ### 10.5 Ballots
 
 `VOTE` is `{proposal_id, decision: "approve"|"reject"|"revise", rationale?}`. There is
-no `bundle_digest` member: `proposal_id` is the hash of the entire signed proposal and
-already binds every byte of it.
+no `bundle_digest` member: `proposal_id` is the hash of everything the proposer signed
+(the signature itself is not hashed) and already binds every signed byte of it.
 
 * A ballot is counted (`tally`) if it is in the proposal's circle, names the proposal,
   has the proposal's envelope scope, is signed by a device of a member in the proposal's

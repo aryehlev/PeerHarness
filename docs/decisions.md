@@ -256,6 +256,9 @@ has not synced yet, but cannot forge or alter a vote). Writing records out is a 
 step and refuses inside an agent session; importing is open. The spec's request for a
 libp2p transport stands; this does not replace it.
 
+ADR-050 corrects "never conflicts": an event that its author signed twice is one file
+in two forms.
+
 ## ADR-026: The transport answers the roll, not credentials
 The spec authorizes peers by membership credential, and the library implements that.
 Wiring the transport showed two consequences of using it for access once membership is
@@ -3572,3 +3575,97 @@ a charter turns binding is still not written (architecture 10.9).
 (`apps/peerharness/tests/circle_life.rs`) and
 `the_rules_of_the_vote_are_shown_old_and_new` (`apps/peerharness/src/amendment.rs`).
 
+### One event in two signed forms is one record
+
+**Found.** An event's id is the digest of what its author signed. The signature is
+not part of it. The holder of a key can sign the same bytes a second time with
+another nonce, and that signature passes `verify_strict` like the first. One event id
+can so travel in two transmitted forms. A node keeps the form it saw first and calls
+the other a duplicate, which is right, and nothing is counted by signature, so no
+vote and no result was affected. `events sync` was affected. `write_dir` compared a
+record file with the node's own line byte for byte and replaced a file that differed.
+Two members who held the two forms and shared a directory rewrote one file after each
+other at every sync, and in a git repository every rewrite was a commit for the
+other to pull and undo. One proposal that a member signed twice was enough. The
+documents said an id was "the hash of the entire signed proposal" and that the
+directory "never conflicts".
+
+**Decision.** A file that holds the same event id in a form whose signature verifies
+is the record, and is left as it is (`carrier::same_record`). A file of that name
+whose signature does not verify, or whose id is not the id of its content, is
+replaced as before. A rule text is the record when it has the digest it is filed
+under. The documents say what an id covers (protocol sections 5 and 13.4).
+
+**Rejected.** Putting the signature into the event id: it changes what a ballot
+names and what every stored id means, which is a new schema version, for a case in
+which nothing is decided wrongly. Letting one form win by a rule, the lower signature
+for example: a node would then rewrite a valid file another node wrote, and the
+store keeps the first form whatever the directory holds.
+
+**Not changed.** Two members who each add the same event in another form before
+either pulled get one add/add conflict from git on that file. Either copy settles
+it, and no sync rewrites it afterwards. Only the event's author can cause it
+(`docs/limits.md`).
+
+**Tests.** `the_same_event_in_another_valid_form_is_not_rewritten`
+(`apps/peerharness/src/carrier.rs`) signs the same bytes twice and shows each form
+left alone where the other stands, and a file with a changed signature or another
+body under the same id replaced. The dev-dependency on `ed25519-dalek` has the
+`hazmat` feature for that second signature, in tests only. The audit's script was run
+again with two nodes and a git repository: after the one conflict, three rounds of
+sync by each node wrote nothing and left git nothing to commit. On 0.4.0 every round
+rewrote the file.
+
+### A file in a shared directory is not read whole to compare it
+
+**Found.** `write_dir` read an existing file of a record's name with `fs::read`
+before it compared it. Whoever can write to the shared directory could put a file of
+any size there, and two gibibytes of zeros are a few megabytes in a git repository.
+Every `events sync` and `events export --dir` of every member then read it into
+memory: 1.6 GiB and 2.1 GiB at the peak were measured on 0.4.0 with a 2 GiB file,
+against 14 MiB without it. The import that runs first was bounded and ignored the
+file.
+
+**Decision.** `carrier::holds` looks at the entry first. Something that is not a
+regular file, or is larger than a record can be (1 MiB), is not read: it is not the
+record, and it is replaced as any other wrong content is. What is read is read
+through `read_bounded_file`.
+
+**Tests.** `a_file_too_large_to_be_a_record_is_replaced_unread`, with a sparse
+gibibyte. The audit's script, run again with 2 GiB: 15.5 MiB at the peak for
+`events sync` and 14.0 MiB for `events export --dir`, and the file is the record
+again afterwards.
+
+### A directory with files that are no records is still read
+
+**Found.** `read_source` counted every file with a record's name against the 64 MiB
+a source may hold before it knew whether the file held a record, and ended the run
+with an error once the sum passed that. Sixty-five files of 1 MiB with a record's
+name and no record in them made `events sync` and `events import` fail for every
+member of the circle, with "holds more than 67108864 bytes of records", whatever
+else the directory held. And an import said "65 refused" with no word on why: only
+events that `ingest` refused had a code.
+
+**Decision.** Two budgets of 64 MiB, one for records and one for files with a
+record's name that hold none. Files that are no records are counted
+(`Source::not_records`) and reported as refused with the code `not_a_record`. When
+either budget is used up, reading stops there, the run goes on with what was read,
+and the files behind that point are counted (`Source::not_read`) and named in a line
+that says they were not read and what to do. `--json` has `not_read`. Every refusal
+of an import now has a code (`not_a_record`, `text_no_proposal_names`,
+`text_not_a_valid_rule`), so the codes add up to the count and `--json` lists them
+(`rejection_codes`).
+
+**Rejected.** Ending the run with an error as before when a budget is used up: it
+is what let one person with write access stop the exchange for everyone. Deleting the
+files that are no records: a sync writes its own records and removes nothing that it
+did not find to be a wrong copy of one of them.
+
+**Not changed.** Someone with write access can still fill the directory with real
+size, and can delete record files (ADR-025). A directory with more than 64 MiB of
+genuine records is read up to there, and says so.
+
+**Tests.** `a_directory_with_files_that_are_no_records_is_still_read`
+(`apps/peerharness/src/carrier.rs`). The audit's script, run again: with the 65
+files in place `events sync` and `events import` end with exit code 0, report
+"refused (not_a_record): 65" and write and import what there is.

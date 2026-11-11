@@ -54,6 +54,9 @@ tempfile.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# `hazmat` for one test: it signs the same bytes a second time with another nonce, as
+# an author can, to make the second valid form of an event (carrier.rs, ADR-050).
+ed25519-dalek = { workspace = true, features = ["hazmat"] }
 proptest.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true

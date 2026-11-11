@@ -145,7 +145,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Threat.** Replaying a ballot to count it twice, moving a ballot to a different
   proposal, voting from several devices, or inventing device keys to reach a threshold.
 * **Mitigation.** Every ballot is signed and names one `proposal_id`, which is the hash
-  of the whole signed proposal, so it counts only for exactly what was proposed
+  of everything the proposer signed, so it counts only for exactly what was proposed
   (including the bundle digest) and only if its envelope scope equals the proposal's. A
   ballot counts only from a device on the **roll** of the charter the proposal names,
   for a member in the proposal's electorate. Ballots are counted **per member**: any

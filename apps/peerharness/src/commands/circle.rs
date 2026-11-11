@@ -1293,6 +1293,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         for kept in &applied.kept_edited {
             t.line(format!("  {}", kept.line()));
         }
+        for kept in &applied.kept_for {
+            t.line(format!("  {}", kept.line()));
+        }
         t.line(format!(
             "No request to take you off the roll was made: {}",
             why.explain(&circle.name, "")
@@ -1390,6 +1393,7 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     let mut removed = applied.removed;
     let mut not_removed = applied.not_removed;
     let mut kept_edited = applied.kept_edited;
+    let mut kept_for = applied.kept_for;
     let mut report = match outcome {
         Ok(put) => {
             t.line(format!(
@@ -1415,6 +1419,11 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                     kept_edited.push(kept.clone());
                 }
             }
+            for kept in &put.settled.applied.kept_for {
+                if !kept_for.contains(kept) {
+                    kept_for.push(kept.clone());
+                }
+            }
             for skill in &removed {
                 t.line(format!("  removed rule {skill}"));
             }
@@ -1422,6 +1431,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                 t.line(format!("  {}", governance::not_removed_line(skill)));
             }
             for kept in &kept_edited {
+                t.line(format!("  {}", kept.line()));
+            }
+            for kept in &kept_for {
                 t.line(format!("  {}", kept.line()));
             }
             let mut report = amendment_report(&circle, &put, "You are off the roll.", t);
@@ -1438,6 +1450,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                 t.line(format!("  {}", governance::not_removed_line(skill)));
             }
             for kept in &kept_edited {
+                t.line(format!("  {}", kept.line()));
+            }
+            for kept in &kept_for {
                 t.line(format!("  {}", kept.line()));
             }
             let mut json = json!({ "requested": false, "reason": why.code() });
@@ -1545,6 +1560,9 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         machine.line(governance::not_removed_line(skill));
     }
     for kept in &applied.kept_edited {
+        machine.line(kept.line());
+    }
+    for kept in &applied.kept_for {
         machine.line(kept.line());
     }
     let machine = machine.finish();
@@ -1981,6 +1999,9 @@ fn place(ctx: &Ctx, args: CirclePlaceArgs) -> Result<Report> {
     for kept in &settled.applied.kept_edited {
         t.line(format!("  {}", kept.line()));
     }
+    for kept in &settled.applied.kept_for {
+        t.line(format!("  {}", kept.line()));
+    }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
     }
@@ -2125,6 +2146,9 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
         t.line(format!("  {}", governance::not_removed_line(skill)));
     }
     for kept in &settled.applied.kept_edited {
+        t.line(format!("  {}", kept.line()));
+    }
+    for kept in &settled.applied.kept_for {
         t.line(format!("  {}", kept.line()));
     }
     Ok(Report::new(

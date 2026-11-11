@@ -214,6 +214,9 @@ pub struct Changes {
     /// Copies a vote installed that were to be removed and were left in place because
     /// they were edited on this machine (`governance::Applied::kept_edited`).
     pub kept_edited: Vec<governance::KeptEdited>,
+    /// Copies a vote installed that were to be removed and stay because another
+    /// circle's rule needs them (`governance::Applied::kept_for`).
+    pub kept_for: Vec<governance::KeptFor>,
     /// Rules in force that wait for the owner's confirmation.
     pub asking: Vec<governance::Waiting>,
     /// Rules in force that this node holds back (`governance::Held`), each with the
@@ -234,6 +237,7 @@ impl std::fmt::Debug for Changes {
             .field("removed", &self.removed)
             .field("not_removed", &self.not_removed)
             .field("kept_edited", &self.kept_edited.len())
+            .field("kept_for", &self.kept_for.len())
             .field("asking", &self.asking)
             .field("held", &self.held.len())
             .field("charters_issued", &self.charters_issued)
@@ -284,6 +288,11 @@ impl Changes {
                 self.kept_edited.push(kept);
             }
         }
+        for kept in other.kept_for {
+            if !self.kept_for.contains(&kept) {
+                self.kept_for.push(kept);
+            }
+        }
         for waiting in other.asking {
             if !self.asking.contains(&waiting) {
                 self.asking.push(waiting);
@@ -309,6 +318,7 @@ impl Changes {
         self.installed.is_empty()
             && self.removed.is_empty()
             && self.kept_edited.is_empty()
+            && self.kept_for.is_empty()
             && self.asking.is_empty()
             && self.charters_issued.is_empty()
     }
@@ -347,6 +357,7 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                 changes.removed.extend(settled.applied.removed);
                 changes.not_removed.extend(settled.applied.not_removed);
                 changes.kept_edited.extend(settled.applied.kept_edited);
+                changes.kept_for.extend(settled.applied.kept_for);
                 changes.asking.extend(settled.applied.asking);
                 changes.held.extend(
                     settled

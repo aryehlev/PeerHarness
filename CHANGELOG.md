@@ -77,6 +77,19 @@ database schema it writes.
     still follows without being asked, and the line now says so and names `circle
     mode ask`. `rule list` says when you have left a team, where it showed its rules
     as not installed.
+  * **One member could make a shared directory change at every sync.** An event its
+    author signed twice has one id and two valid forms, and two members who held one
+    each rewrote the same file after each other. A file that holds the record in
+    either form is now left alone.
+  * **A large file in a shared directory was read into memory.** A file with a
+    record's name was read whole before it was compared, whatever its size. It is
+    now looked at first, and one too large to be a record is replaced unread.
+  * **Files that are no records could stop `events sync` for a whole team.**
+    Sixty-five such files of 1 MiB ended every sync and import of the directory with
+    an error. They are now counted as refused, the records are read all the same,
+    and when a directory holds more than may be read the command says how many
+    files it did not read. An import gives a reason for everything it refused
+    (`rejection_codes` with `--json`).
 
 ## 0.4.0 (2026-11-11)
 

@@ -1098,9 +1098,30 @@ pub struct ImportSummary {
     pub deferred: usize,
     pub rejected: usize,
     pub bundles: usize,
-    /// Rejection codes with counts, for the local report.
+    /// Rejection codes with counts, for the local report. Every refusal has a code,
+    /// so the counts add up to [`Self::rejected`].
     pub rejection_codes: Vec<(String, usize)>,
 }
+
+impl ImportSummary {
+    /// Counts `n` more refusals under `code`: what the source itself turned away (a
+    /// file of a directory with a record's name that holds no record).
+    pub fn add_refused(&mut self, code: &str, n: usize) {
+        if n == 0 {
+            return;
+        }
+        self.rejected += n;
+        match self.rejection_codes.iter_mut().find(|(c, _)| c == code) {
+            Some((_, count)) => *count += n,
+            None => self.rejection_codes.push((code.to_owned(), n)),
+        }
+        self.rejection_codes.sort();
+    }
+}
+
+/// The code an import reports for a line, or a file of a directory, that is not a
+/// record.
+pub const NOT_A_RECORD: &str = "not_a_record";
 
 /// Imports lines produced by [`export_circle`]. Every line is parsed strictly
 /// (`carrier::parse_record`: a size limit, no member twice, nothing but the one member a
@@ -1118,6 +1139,7 @@ pub fn import_lines<'a>(
     let mut events: Vec<String> = Vec::new();
     let mut offered_bundles: Vec<(Digest, String)> = Vec::new();
     let mut summary = ImportSummary::default();
+    let mut codes: HashMap<&'static str, usize> = HashMap::new();
     for line in lines {
         let line = line.trim();
         if line.is_empty() {
@@ -1128,11 +1150,13 @@ pub fn import_lines<'a>(
         match crate::carrier::parse_record(line) {
             Some(Record::Event(event)) => events.push(event.to_string()),
             Some(Record::Bundle { digest, skill_md }) => offered_bundles.push((digest, skill_md)),
-            None => summary.rejected += 1,
+            None => {
+                summary.rejected += 1;
+                *codes.entry(NOT_A_RECORD).or_default() += 1;
+            }
         }
     }
     let mut pending = events;
-    let mut codes: HashMap<&'static str, usize> = HashMap::new();
     loop {
         let mut progress = false;
         let mut next = Vec::new();
@@ -1173,6 +1197,7 @@ pub fn import_lines<'a>(
         }
         if !named {
             summary.rejected += 1;
+            *codes.entry("text_no_proposal_names").or_default() += 1;
             continue;
         }
         match ph_skills::validate_received(
@@ -1184,7 +1209,10 @@ pub fn import_lines<'a>(
                 record_bundle(store, bundles, &bundle, now)?;
                 summary.bundles += 1;
             }
-            Err(_) => summary.rejected += 1,
+            Err(_) => {
+                summary.rejected += 1;
+                *codes.entry("text_not_a_valid_rule").or_default() += 1;
+            }
         }
     }
     let mut codes: Vec<(String, usize)> =
