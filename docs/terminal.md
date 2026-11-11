@@ -286,15 +286,30 @@ on your node nor among the carried rules it lacks. An amendment that leaves it o
 not caught there.
 
 A yes counts for what you were shown. If a sync or an import changes the charter or
-the rules in force on your node while you read, nothing is signed:
+the rules in force on your node while you read, or while you type your passphrase,
+nothing is signed. Your node looks again after the key is unlocked, and nothing asks
+you anything between that look and the signature:
 
-* `circle invite`, `remove`, `amend` and `device` stop with "the circle's charter
-  changed on this node while this was being confirmed. Nothing was proposed and
-  nothing was signed. Run the command again to see what it would do now."
+* `circle invite`, `remove`, `amend` and `device` stop with "the circle's charter or
+  the rules in force changed on this node while this was being confirmed. Nothing
+  was proposed and nothing was signed. Run the command again to see what it would do
+  now."
 * `proposal vote <id> approve` on an amendment stops with "what this amendment would
   change is no longer what you were shown: the charter or the rules in force changed
   on this node while you read. Nothing was signed. Run the command again." A `reject`
   or a `revise` is not refused.
+* `rule repeal` stops when the rule it showed is no longer the rule of that name,
+  with "the rule changed while this was being confirmed: what you were shown is no
+  longer the rule in force. Nothing was proposed and nothing was signed. Run the
+  command again to see the rule as it is now." `rule opt-out --announce` and `rule
+  opt-in --announce` look in the same way before they sign the record for the
+  circle: what they did on your machine stands and is reported, and the command then
+  ends with "nothing was announced: the rule changed while this was being confirmed,
+  and what you were shown is no longer the rule in force. Run the command again to
+  see the rule as it is now."
+
+Each of these exits 3. `circle leave` signs its request under the same check
+([Leaving a circle](#leaving-a-circle)).
 
 A reason given with `--rationale` is published with the ballot. It is one line of at
 most 200 characters, counted after redaction, without control characters, invisible
@@ -416,7 +431,11 @@ sync or an import stored a newer proposal of the same name while you read, `rule
 opt-in` changes nothing, leaves your opt-out in place and says to run it again.
 `proposal adopt` installs nothing on that yes and says that `peerharness rule list`
 shows the rule as it is now. Both are refusals: the command exits 3, so a script of
-yours does not go on as if the rule it confirmed were installed.
+yours does not go on as if the rule it confirmed were installed. One case differs: if
+the newer proposal takes the name only after `proposal adopt` installed the rule you
+confirmed, it prints "Installed rule <name>, as you were shown it.", and then ends
+with exit 3 and "the rule was installed as you were shown it, and another rule of
+that name is in force since".
 
 A rule that waits for you is printed with the command that confirms it, by every
 command that brings the rules on your machine up to date: "rule <name> is in force and
@@ -424,9 +443,21 @@ waits for your confirmation, because …", followed by `peerharness proposal ado
 the proposal's id. It waits because you chose `ask`, because the scanner found
 high-risk content, or because a policy you set for your node is not met. A rule that
 is installed is never listed as waiting. A sync reports a rule that waits or is held
-once per exchange. A daemon with `--sync-every` prints a hold once, with the first
-report that has it, also when that exchange moved no event, and not again on later
-ticks. `peerharness rule list` shows it at any time.
+once per exchange, and a one-shot `sync` lists every hold it finds.
+
+A running daemon prints each hold once for as long as it runs:
+
+* A hold that one of its own exchanges finds is printed with the first report that
+  has it, also when that exchange moved no event. A later report, printed because
+  events moved or because a rule waits, does not repeat it.
+* A hold that a member's sync to your node created is printed when that push is
+  settled, as a line of its own without a "Synced …" line above it: "rule <name> is
+  in force and is held on this machine: …". This needs no `--sync-every`, and your
+  daemon does not have to know that member's address.
+
+A rule that waits for your confirmation is printed on every tick while it waits. A
+hold that goes away and comes back while the daemon runs is not printed a second
+time. `peerharness rule list` shows a hold at any time.
 
 **A rule that is held.** A vote never replaces a skill it did not install. If a skill
 that PeerHarness installed and that no vote of that circle installed (one you kept,
@@ -452,6 +483,14 @@ followed. Inside a coding agent's session the hold is reported without these
 commands: the agent is told that the choice is yours and to take nothing out. `skills
 uninstall` itself is not refused there.
 
+`skills uninstall` does not take out a rule in force that you follow: it is refused
+(exit 2) with "<name> is a rule in force in <circle>. To keep it off this machine, opt
+out", followed by the opt-out command. That holds in your user directory and in a
+project. In a project it is refused for a rule that lives in the project you run it
+in, and for a copy that a circle's vote installed there. Your own skill that holds a
+rule there, and a copy you installed yourself of a rule that lives elsewhere, are
+yours to take out. The project is the directory the command runs in.
+
 A skill folder that you made by hand, and that PeerHarness therefore does not manage,
 is not a hold: `rule list` shows "a skill of that name you manage yourself is in the
 way" and names no way out, `skills uninstall` leaves the folder untouched, and the
@@ -464,6 +503,14 @@ rule changes nothing and the copy stays yours. A repeal removes only what a vote
 installed, from where it was put. A rule named `peerharness-notes` is never installed,
 whoever passed it.
 
+If a skill that a vote installed cannot be removed when it should go (after a repeal,
+an opt-out, `circle leave` or a move of its scope), because its files cannot be
+changed, the command says so: "rule <name> could not be removed: its files could not
+be changed. It is still installed. It is tried again each time this circle is settled
+on this machine (an `events import`, or a sync with one of its members)." While the
+old copy of a rule whose scope you moved cannot be removed, the rule is not installed
+in the new place.
+
 After an upgrade from 0.3.0 or earlier, on a node where a vote had put a rule's text
 under `peerharness-notes`: that text is removed the next time the rules are brought up
 to date, and PeerHarness's own skill is not put back by itself. If `peerharness watch
@@ -472,36 +519,59 @@ once more.
 
 ### Leaving a circle
 
-`peerharness circle leave --circle team` does two things, in this order, after it
-showed both and you confirmed:
+`peerharness circle leave --circle team` shows what it will do and asks. After your
+yes it does two things, in this order:
 
 1. On your machine, at once: the circle is marked as left, and the rules it installed
    for your agent are removed. This needs no key and nobody's agreement.
 2. For the circle: an amendment that takes you off the roll is put to the vote, with
    your approval. You stay on the roll until the members have approved it.
 
-The request is drafted after your answer, from the charter your node holds at that
-moment, and the report names that charter. It is not made when the device key does
-not unlock, when the proposal is refused at that moment, or while your node lacks a
-rule that the charter in force carries. In the last case the preview already says
-that no request will be made from this node: a request drafted there would either
-drop those rules or bring back one that was repealed since. The command then ends
-with "Left team on this machine." and "No request to take you off the roll was made:"
-followed by the reason. Your machine is free of the circle, and you are still on its
-roll.
+What the second step will be is decided before you are asked, and the preview says
+it. It is one of three:
+
+* The request: "an amendment that removes <you> from the roll of charter <n> is put
+  to the vote, with your approval."
+* No request from this node, while it lacks a rule that the charter in force carries:
+  a request drafted there would either drop those rules or bring back one that was
+  repealed since.
+* No request by this run, because one is on record already. A request is on record
+  when a proposal under the charter in force is exactly the removal your node would
+  ask for now: your own, or a member's `circle remove`.
+
+The request is signed only as the preview showed it. After your yes, once your
+machine has left and the key is unlocked, your node checks that the charter and the
+rules in force are still what the preview was built from. If a sync or an import
+changed them while you read or typed your passphrase, no request is made and nothing
+is signed. The same when the device key does not unlock. The command then ends with
+"Left team on this machine." and "No request to take you off the roll was made:"
+followed by the reason, and exits 0. Your machine is free of the circle, and you are
+still on its roll. In `--json`, `requested` is false and `reason` is one of
+`missing_carried_rules`, `request_on_record`, `device_key_locked`,
+`changed_while_confirming`, `proposal_refused` or `off_the_roll`. The last is for a
+member the others already voted off the roll: their first run removes the circle's
+rules from the machine and uses no key.
 
 To make the request afterwards, run the same command again: with the right passphrase,
 or after you imported the events file of a member who holds the rules your node lacked.
-On a machine that already left, it changes nothing there: it shows the request alone
-and asks. While your node still lacks a rule, it says again that no request was made.
-If you are off the roll by then, or a proposal that takes you off the roll of the
-current charter is on record (yours, or a member's `circle remove`), it says so and
-signs nothing, and where your approval is not on that proposal it names the command
-that gives it. A member whose node holds the circle's rules can also propose it for
-you: `peerharness circle remove <you> --circle team`.
+On a machine that already left, it changes nothing there: it shows the request as it
+would be now and asks, and it is refused (exit 3) if your node changes again while you
+answer. While your node still lacks a rule, it says again that no request was made.
+If you are off the roll by then, or your request is on record, it says so and signs
+nothing, and where your approval is not on that proposal it names the command that
+gives it. A member whose node holds the circle's rules can also propose it for you:
+`peerharness circle remove <you> --circle team`.
+
+A proposal on record that takes you off the roll and changes anything else is not
+your request: a removal that was drafted before a rule passed, for example, would
+also take that rule out of force. `circle leave` names it ("Proposal <id> on record
+also takes you off the roll, and changes more than that: `peerharness proposal show
+<id>`."), and shows and makes a request of your own.
 
 `peerharness circle leave --circle team --undo` follows the circle again on your
-machine. A request that was made stays on record. Inside a coding agent's session
+machine. Its preview says whether a request to take you off the roll is on record. A
+request that was made stays on record, and leaving again makes no second one while
+that request is still the one your node would make. Inside a coding agent's session
 leaving is refused, the second run too.
 
 ## Take it out again

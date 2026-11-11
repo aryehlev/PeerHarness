@@ -50,7 +50,12 @@ governance (section 10, ADR-012 onwards).
 * In both, one **node thread** owns the store and the unlocked keys, and every request
   is one job on it (`apps/peerharness/src/runtime.rs`). After events arrive, the circles
   concerned are settled: results published, a passed amendment notarized on the
-  founder's node, the rules in force applied.
+  founder's node, the rules in force applied. A daemon tells its owner of a rule that
+  a settle found held (10.9), each hold once for as long as it runs: with the report
+  of its own exchange that first has it, or, for a settle that the request handler
+  ran after a peer's push, as soon as the handler hands it over on a bounded queue
+  (`runtime::held_queue`, ADR-042). Only holds pass through that queue, and every
+  other command that starts the transport prints nothing for a push.
 * Not built: a delivery loop, an outbox drain, gossip. Events reach a peer when someone
   syncs. Nothing in the CLI writes the `outbox` table yet.
 * Local-only CLI commands open the store, and the keystore when they need it, directly.
@@ -783,20 +788,28 @@ with the missing ids would bring back a rule that was repealed since, and a list
 without them would drop one that is in force (10.9, "Leaving").
 
 **What is signed is what was shown.** A sync or an import can change a node while its
-owner reads a preview. A command that drafts an amendment therefore calls
-`governance::as_drafted` after the owner's answer and before the key is used. It
-reads the rule set again and refuses when the digest of the current charter,
-`RuleSet::carried_ids` or `RuleSet::missing_carried` differ from what the draft was
-built from. `governance::propose_under` then signs the proposal under the digest of
-the charter that was shown and refuses when the current charter is another one;
-`governance::propose` is for `adopt` and `repeal` proposals. `proposal vote` on an
-amendment does the same for an approval: it reads `amendment_changes` again after
-the answer and signs only when the two readings say the same
-(`amendment::Changes::same_as`), and for a ballot asked in a window only when
-`proposal::sole_admission` still gives the same entry under the same charter. All of
-this is display and refusals in the application. `check_successor` and
-`Passed::carried` are unchanged: an amendment that passes still makes the rule set
-exactly its `carried` list.
+owner reads a preview, and while they type a passphrase. A command that drafts an
+amendment therefore calls `governance::as_drafted` after the owner's answer, after
+the key is unlocked and before it signs, with no prompt between the check and the
+signature. `as_drafted` takes the unlocked signing key as a parameter and does
+nothing with it: the parameter keeps a caller from running the check before the
+key is unlocked, which is where a passphrase is asked for. It reads the rule set
+again and refuses when the digest of the current charter, `RuleSet::carried_ids` or
+`RuleSet::missing_carried` differ from what the draft was built from.
+`governance::propose_under` then signs the proposal under the digest of the charter
+that was shown and refuses when the current charter is another one;
+`governance::propose` is for `adopt` and `repeal` proposals and returns an error for
+an amendment. `proposal vote` on an amendment does the same for an approval: with
+the key unlocked it reads `amendment_changes` again (`proposal::approval_as_shown`,
+which takes the key in the same way) and signs only when the two readings say the
+same (`amendment::Changes::same_as`), and for a ballot asked in a window only when
+`proposal::sole_admission` still gives the same entry under the same charter. A
+repeal and an announced stance name a proposal that was read before the preview.
+`rule repeal` and `--announce` look again in the same place
+(`governance::rule_as_shown`) and sign nothing when that proposal is no longer the
+rule of its name. All of this is display and refusals in the application.
+`check_successor` and `Passed::carried` are unchanged: an amendment that passes still
+makes the rule set exactly its `carried` list.
 
 When the amendment has passed, the holder of the circle root key issues the next
 charter (`CircleAuthority::issue_next_charter`) and publishes it in a `CHARTER` event.
@@ -886,7 +899,10 @@ what one rule in force means on this machine, in this order:
   not carried by an amendment), stops binding the node, or the owner opts out, exactly
   the recorded skill is removed, and only while the installed text still has the digest
   that was voted on. A skill the owner installed personally with `skills install` has
-  no such record and is never removed by a vote (ADR-023).
+  no such record and is never removed by a vote (ADR-023). A removal that fails keeps
+  the record: the skill is reported (`Applied::not_removed`) and the next settle tries
+  again, and while the old copy of a rule whose scope was moved cannot be removed, the
+  rule is not installed in the new place (ADR-042).
 * **A vote installs over nothing it did not install** (ADR-042). Before `adoption_step`
   is asked, and before the bundle is fetched, `apply_rules` checks each rule that binds
   the node and is not opted out with `governance::held`. A rule is held when a skill
@@ -905,17 +921,23 @@ what one rule in force means on this machine, in this order:
 * **Leaving.** `circle leave` takes effect on the owner's machine at once
   (`circles.left_at`: nothing of that circle stays installed or is installed again) and
   then puts the owner's removal from the roll to the vote. The roll changes only by
-  that vote. The order is fixed: after the confirmation the circle is marked as left
-  and `governance::apply_on` removes its rules, which is step 3 of `settle` alone and
-  uses no key. Only then is the rule set read again and the removal drafted, signed
-  through `propose_under` and approved (`circle::request_removal`). No request is made
-  while `missing_carried` is not empty, when the device key does not unlock, when the
-  proposal is refused or when the member is off the roll: the report says so
-  (`requested`, `reason`). A second `circle leave` on a machine that left
-  (`circle::leave_again`) makes the request when none that removes the member from the
-  current charter is on record, after a preview and a confirmation of its own. A node
-  that is voted off learns of it from a peer (section 7, the removal notice) or from a
-  file.
+  that vote. What the run does about the request is decided before the owner is asked
+  (`circle::plan_request`), and the preview says it: the removal that was drafted for
+  the preview; no request while `missing_carried` is not empty; or none by this run,
+  because a proposal that is exactly that removal is on record under the charter in
+  force (`circle::removals_on_record`). The order after the confirmation is fixed.
+  The circle is marked as left and `governance::apply_on` removes its rules, which is
+  step 3 of `settle` alone and uses no key. Only where the preview announced a
+  request is the key then unlocked, the node checked with `as_drafted` against what
+  the preview was built from, and that very draft signed through `propose_under` and
+  approved (`circle::request_removal`, `circle::sign_removal`). Nothing is drafted
+  anew after the answer. No request is made when the device key does not unlock,
+  when the node changed meanwhile, when the proposal is refused or when the member is
+  off the roll: the report says so (`requested`, `reason`). A second `circle leave`
+  on a machine that left (`circle::leave_again`) makes the request when none is on
+  record, after a preview and a confirmation of its own, and is checked like every
+  other draft. A node that is voted off learns of it from a peer (section 7, the
+  removal notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step). `rule
   list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force. `rule
@@ -929,14 +951,17 @@ what one rule in force means on this machine, in this order:
   not count as confirmed in step 3 of `adoption_step`. `rule opt-in` also looks again
   before it clears the opt-out, and refuses when the rule changed. `proposal adopt`
   looks again after the confirmation and once more after the rules were applied, and
-  refuses when the rule of that name is no longer the proposal it showed. `skills
-  uninstall` refuses, in the user's skills directory, a skill installed with the text
-  of a rule in force that its owner has not opted out of, except where that skill is
-  itself what holds the rule there (`Held::OwnSkill`). `circle invite`,
-  `remove`, `leave`, `amend` (the thresholds, binding or advisory) and `device add` /
-  `remove` propose amendments. `circle revoke` is the emergency of 10.8. Not written
-  yet: asking once before switching to `follow` when an amendment turns `binding` from
-  false to true.
+  refuses when the rule of that name is no longer the proposal it showed; where the
+  shown text was installed before the name was taken, the refusal says so. `skills
+  uninstall` refuses a skill installed with the text of a rule in force that its
+  owner has not opted out of, in the user's skills directory and in a project, except
+  where that skill is itself what holds the rule in that directory
+  (`Held::OwnSkill`). In a project the refusal is for a rule that lives in the
+  project the command runs in, and for a copy that `rule_installs` records there.
+  `circle invite`, `remove`, `leave`, `amend` (the thresholds, binding or advisory)
+  and `device add` / `remove` propose amendments. `circle revoke` is the emergency of
+  10.8. Not written yet: asking once before switching to `follow` when an amendment
+  turns `binding` from false to true.
 
 ### 10.10 Rights no vote can override
 

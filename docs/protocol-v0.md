@@ -2054,9 +2054,11 @@ bring back a rule that is no longer in force. Its owner still stops following th
 circle on their own machine at once (section 14.6).
 
 The reference client also signs an `amend` proposal only under the charter its owner
-was shown: if the node's current charter, or its rules in force, changed between the
-preview and the answer, it signs nothing. It reads what an amendment changes again
-before it signs an approval, and signs nothing when that differs from what was shown.
+was shown, the request to leave included: if the node's current charter, or its rules
+in force, changed after the preview was made, while the owner read it or unlocked
+the key, it signs nothing. It reads what an amendment changes again before it signs
+an approval, with the key already unlocked, and signs nothing when that differs from
+what was shown.
 
 None of this changes what a node accepts: the steps below are the whole rule, and a
 `carried` list that is not exact still becomes the rule set when the amendment

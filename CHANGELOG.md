@@ -20,8 +20,8 @@ database schema it writes.
 
 A check of 0.4.0 before any tag found defects, and the changes below fix some of them
 (ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). A review of those fixes
-found more, and so did a second review. What was changed for them is in the same
-lists. Several change what a command prints, asks or accepts.
+found more, and so did a second and a third review. What was changed for them is in
+the same lists. Several change what a command prints, asks or accepts.
 
 **What a voter is shown**
 
@@ -73,34 +73,62 @@ lists. Several change what a command prints, asks or accepts.
 * A request to change the charter is signed under the charter you were shown, or not
   at all. `circle invite`, `circle remove`, `circle amend` and `circle device add` and
   `remove` check after your answer, in a terminal or in a window, that the charter and
-  the rules in force on your node are still what the preview was built from. If a
-  sync or an import changed them while you read, the command is refused (exit 3):
-  "the circle's charter changed on this node while this was being confirmed. Nothing
-  was proposed and nothing was signed. Run the command again to see what it would do
-  now." Before, the draft of one charter was signed as an amendment of the next, and
-  undid what that one had changed.
+  the rules in force on your node are still what the preview was built from. The
+  check comes after the key is unlocked, so it also covers the time you take to type
+  a passphrase, and nothing asks you anything between it and the signature. If a
+  sync or an import changed them meanwhile, the command is refused (exit 3): "the
+  circle's charter or the rules in force changed on this node while this was being
+  confirmed. Nothing was proposed and nothing was signed. Run the command again to
+  see what it would do now." Before, the draft of one charter was signed as an
+  amendment of the next, and undid what that one had changed.
 * `proposal vote <id> approve` on an amendment reads what the amendment changes again
-  after your answer. If that is no longer what you were shown, nothing is signed (exit
-  3): "what this amendment would change is no longer what you were shown: the charter
-  or the rules in force changed on this node while you read. Nothing was signed. Run
-  the command again." `reject` and `revise` are not refused.
+  after your answer, once the key is unlocked. If that is no longer what you were
+  shown, nothing is signed (exit 3): "what this amendment would change is no longer
+  what you were shown: the charter or the rules in force changed on this node while
+  you read. Nothing was signed. Run the command again." `reject` and `revise` are not
+  refused.
+* `rule repeal` checks in the same place that the rule it showed is still the rule of
+  that name. If a newer rule took the name meanwhile, nothing is proposed (exit 3):
+  "the rule changed while this was being confirmed: what you were shown is no longer
+  the rule in force. Nothing was proposed and nothing was signed. Run the command
+  again to see the rule as it is now." `rule opt-out --announce` and `rule opt-in
+  --announce` check it before they sign the record for the circle. What they did on
+  your machine stands and is reported, and the command then ends with exit 3 and
+  "nothing was announced: the rule changed while this was being confirmed, and what
+  you were shown is no longer the rule in force. Run the command again to see the
+  rule as it is now."
 * `circle leave` changes your machine before it uses a key: the circle is marked as
   left and the rules it installed are removed, also when the device key does not
-  unlock. The request to take you off the roll comes after, drafted from the charter
-  that is current then, and the report names that charter. No request is made from a
-  node that lacks a rule the charter in force carries, when the key does not unlock or
-  when the proposal is refused: the command says so, with the reason, and exits 0.
-  The preview says beforehand when no request will be made. Before, such a request
-  listed the rules its node lacked by id, which brought a rule back into force that
-  had been repealed since.
+  unlock. What it does about the request to take you off the roll is decided before
+  it asks, and the preview says it: the request, under the charter the preview
+  names; no request from a node that lacks a rule the charter in force carries; or
+  no request by this run, because one is on record already. After your yes it signs
+  the request only as the preview showed it. It makes none when the key does not
+  unlock, when the charter or the rules in force on your node changed while you
+  confirmed, or when the proposal is refused: the command says so, with the reason,
+  and exits 0, and running it again shows the request and makes it. Before, a
+  request from a node that lacked a rule listed that rule by id, which brought a rule
+  back into force that had been repealed since.
 * A second `circle leave` on a machine that already left is no longer a usage error.
-  It makes the request when the first run could not, after its own preview and
-  confirmation, and is refused inside a session. If you are off the roll, or a
-  proposal that takes you off the roll of the current charter is on record, it says
-  so and signs nothing.
+  It makes the request when the first run did not, after its own preview and
+  confirmation, and is refused inside a session. If you are off the roll, or your
+  request is on record, it says so and signs nothing.
+* A request is on record when a proposal under the charter in force is exactly the
+  removal your node would ask for now: your own, or a member's `circle remove`. A
+  first `circle leave` looks for one as well, so leaving again after `--undo` makes
+  no second request. A proposal that takes you off the roll and changes anything
+  else is not your request: `circle leave` names it ("Proposal <id> on record also
+  takes you off the roll, and changes more than that"), and shows and makes your
+  own.
 * `circle leave --json` has `circle`, `requested` and `reason` (`null`,
-  `missing_carried_rules`, `device_key_locked`, `proposal_refused`, `off_the_roll` or
-  `request_on_record`).
+  `missing_carried_rules`, `device_key_locked`, `changed_while_confirming`,
+  `proposal_refused`, `off_the_roll` or `request_on_record`), also on the first run
+  of a member who is already off the roll, which uses no key. With
+  `request_on_record` it has the `proposal_id` and the count of the request on
+  record.
+* `circle leave --undo` says in its preview whether a request to take you off the
+  roll is on record, and names it. It no longer says that one stays on record when
+  none was made.
 
 **What a vote may do to your own skills**
 
@@ -124,14 +152,41 @@ lists. Several change what a command prints, asks or accepts.
   rule that is held when you opt back in, the second step is `rule opt-in` again.
   Inside a coding agent's session the hint does not name these commands: it says
   that the choice is the owner's and to take nothing out.
+* `skills uninstall` refuses a voted copy in a project as it does in your user
+  directory: with `--scope project`, or without `--scope` where the project's copy is
+  the only one, it is refused (exit 2) for a rule that lives in the project you run
+  it in, and for a copy that a circle's vote installed there. The message names the
+  circle and its opt-out. Your own skill that holds a rule in that project, and a
+  copy you installed yourself of a rule that lives elsewhere, are still yours to
+  take out. Before, nothing was refused in a project, and a repeal could later
+  remove a skill you had installed yourself.
+* A skill that a vote installed and that cannot be removed when it should go (its
+  files cannot be changed) is no longer forgotten. The commands that print removed
+  rules print "rule <name> could not be removed: its files could not be changed. It
+  is still installed. It is tried again each time this circle is settled on this
+  machine (an `events import`, or a sync with one of its members)." The JSON has
+  `not_removed_rules` beside `removed_rules` (`circle leave`, `remove`, `amend`,
+  `device`) and `not_removed` beside `removed` (`events import`, `sync`, `rule
+  opt-out`, `rule opt-in`). While the old copy of a rule whose scope you moved cannot
+  be removed, the rule is not installed in the new place.
 * Your yes to `rule opt-in` and to `proposal adopt` counts for the rule you were shown
   and for no other rule of that name. If a newer proposal took the name while you
   read, `rule opt-in` changes nothing and leaves your opt-out in place, and `proposal
   adopt` installs nothing on that yes. Both are refused then (exit 3) and say that
-  the rule changed while it was being confirmed.
-* A rule that is held or waits is reported once per exchange. A daemon with
-  `--sync-every` prints a hold once, with the first report that has it, and not on
-  later ticks. `sync --json` lists a held rule once.
+  the rule changed while it was being confirmed. If the newer proposal takes the
+  name only after `proposal adopt` installed the rule you confirmed, the command
+  prints "Installed rule <name>, as you were shown it." and then refuses (exit 3)
+  with "the rule was installed as you were shown it, and another rule of that name
+  is in force since".
+* A rule that is held or waits is reported once per exchange. A running daemon
+  prints each hold once per run. A hold that its own exchange finds comes with the
+  first report that has it, also when that exchange moved no event, and a later
+  report that is printed for another reason does not repeat it. A hold that a
+  peer's push created is printed when the push is settled, as a line of its own
+  ("rule <name> is in force and is held on this machine: …"), with or without
+  `--sync-every` and also by a daemon that never dials that peer. A rule that waits
+  for your confirmation is still printed on every tick while it waits. A one-shot
+  `sync` lists every hold. `sync --json` lists a held rule once.
 
 **What runs inside a session**
 
@@ -157,9 +212,13 @@ lists. Several change what a command prints, asks or accepts.
 * The preview that turns confirmation windows on no longer says without condition that
   your agent cannot answer a window. It says that this holds inside the agent's
   session, and that it guards against an agent that is trying to help, not against a
-  process that hides that it is one. Its two sentences about the reporting skill
-  ("cannot approve, share, install or join anything", "can only add a note to your
-  inbox") begin with "Inside its session" as well.
+  process that hides that it is one. What it says the agent cannot do with the
+  reporting skill is said for inside its session as well: with windows, "Inside its
+  session the agent cannot approve, share, install or join anything"; without, "It
+  asks your agent to write down a rule when you correct it, and to run nothing else.
+  Inside its session the agent cannot approve, share or install anything." It no
+  longer says that the agent can only add a note to your inbox, which no check
+  enforces.
 * The `vote` tool of `peerharness mcp` takes a reason of one line of at most 200
   characters, the limit of `proposal vote`.
 

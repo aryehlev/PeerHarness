@@ -769,25 +769,33 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   "After a second review"). Separately, and afterwards, it puts the owner's removal to
   the vote, with their approval. The roll changes only if that amendment passes, like
   any other: a unilateral exit would be a second way to change the roll, with a
-  threshold other than a majority (ADR-027). The request is drafted from the charter
-  the node holds once the machine has changed, and it is made only where the node can
-  show what it asks for: not while the node lacks a rule the charter in force carries,
-  because a removal drafted there would either drop that rule or bring back one that
-  was repealed since. The preview says so beforehand, and the report says that no
-  request was made and why. Running the command again makes the request when the first
-  run could not; it then shows the request alone, asks, and is bound to the charter
-  that was shown (4.29).
+  threshold other than a majority (ADR-027). What the run does about the request is
+  decided before the owner is asked, and the preview says it. The request is signed
+  only as it was shown (ADR-041, "After a third review"): once the machine has
+  changed and the key is unlocked, the node is checked against the charter and the
+  rules in force that the preview was built from (4.29), and the removal that was
+  drafted for the preview is signed, or none. A request is made only where the node
+  can show what it asks for: not while the node lacks a rule the charter in force
+  carries, because a removal drafted there would either drop that rule or bring back
+  one that was repealed since. And none is made a second time while a proposal that
+  is exactly this removal is on record under the charter in force. The preview says
+  both beforehand, and the report says that no request was made and why. Running the
+  command again makes the request when the first run did not; it then shows the
+  request alone, asks, and is bound to the charter that was shown (4.29).
 * **Residual risk.** Until the members approve, the leaver is still on the roll. They
   count in every electorate, which makes thresholds harder to reach; their device key
   can still read, sync and vote; and their approval of their own removal cannot be
-  withdrawn, although they can follow the circle again on their machine. A member
-  whose node lacks a carried rule, which a member with limited scopes does after every
-  sync, has left on their machine and has asked for nothing: they stay on the roll
-  until they import the events file of a member who holds the rule and run the command
-  again, or a member proposes their removal. A request that could not be made for a
-  locked key is likewise made only when the owner runs the command again. A sole member
-  cannot leave. A founder who leaves the roll still holds the root key, and later
-  charter changes then depend on files carried to and from that node (4.16).
+  withdrawn, although they can follow the circle again on their machine. A member whose
+  node lacks a carried rule, which a member with limited scopes does after every sync,
+  has left on their machine and has asked for nothing: they stay on the roll until they
+  import the events file of a member who holds the rule and run the command again, or a
+  member proposes their removal. A request that was not made for a locked key, or
+  because the node changed while its owner confirmed, is likewise made only when the
+  owner runs the command again. A rule the circle installed whose files cannot be
+  changed stays in the agent after the owner left: the command says so, and each later
+  settle of that circle tries again (4.30). A sole member cannot leave. A founder who
+  leaves the roll still holds the root key, and later charter changes then depend on
+  files carried to and from that node (4.16).
 
 ### 4.25 Recorded opt-outs (STANCE)
 
@@ -802,7 +810,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   Publishing one is voluntary. It happens only with `--announce`, after a preview of the
   exact record and a confirmation, and it refuses inside an agent's session. The opt-out
   on the machine does not wait for any of that: it has already happened when the prompt
-  appears and stays if the announcement is refused.
+  appears and stays if the announcement is refused. The stance is signed only for the
+  proposal the preview named: once the key is unlocked the node looks again
+  (`governance::rule_as_shown`), and when a newer rule took the name meanwhile nothing
+  is announced. `rule repeal` is held to the same for the proposal it repeals
+  (ADR-041, "After a third review").
 * **Residual risk.** A published stance is permanent and attributable. Every member who
   may read the rule sees it, with the reason given, and so does anyone who can read an
   exported file. Publishing an opt-out is a disclosure the member chooses, and it cannot
@@ -906,13 +918,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 ### 4.29 What a voter is shown before a ballot
 
 * **Threat.** A member approves something other than what they think. An amendment's
-  title says one thing and its content does another: "Admit dave" over a roll that
-  also replaces another member's device key, a changed threshold, or a `carried` list
-  that names a rule nobody voted on. An amendment that was honest when it was proposed
-  would now drop a rule passed since, or bring back one repealed since. The charter or
-  the rules in force change on the node while its owner reads a preview, so that the
-  yes signs something other than what was shown. Text another member wrote, or a
-  rationale the agent chose, imitates PeerHarness's own lines in a preview.
+  title says one thing and its content does another: "Admit dave" over a roll that also
+  replaces another member's device key, a changed threshold, or a `carried` list that
+  names a rule nobody voted on. An amendment that was honest when it was proposed would
+  now drop a rule passed since, or bring back one repealed since. The charter or the
+  rules in force change on the node while its owner reads a preview or types a
+  passphrase, so that the yes signs something other than what was shown. Text another
+  member wrote, or a rationale the agent chose, imitates PeerHarness's own lines in a
+  preview.
 * **Mitigation.** In the terminal, `proposal vote` and `proposal show` describe an
   amendment from signed content only (ADR-041, `apps/peerharness/src/amendment.rs`):
   the proposal's `next` against the charter the proposal names. Members admitted and
@@ -942,17 +955,21 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   the draft would leave that rule out. `circle leave` is not refused, since leaving
   never waits: it changes the owner's machine and makes no request to change the roll
   from such a node (4.24). A yes counts for what was shown (ADR-041, "After a second
-  review"). After the owner's answer and before the key is used, a command that drafts
+  review" and "After a third review"). After the owner's answer and after the key is
+  unlocked, with no prompt between the check and the signature, a command that drafts
   an amendment checks that the charter and the rules in force on the node are still
-  what its preview was built from (`governance::as_drafted`), and the proposal is
-  signed under the digest of the charter that was shown (`governance::propose_under`);
-  otherwise nothing is proposed. `proposal vote` reads what an amendment changes again
-  after the answer and signs an approval only when it still says what was shown
-  (`amendment::Changes::same_as`), and for a ballot asked in a window only when the
-  amendment is still a sole admission of the same member under the same charter. A
-  rationale typed for `proposal vote` is one line of at
-  most 200 characters without control characters, invisible characters, blanks that
-  are not spaces or characters the preview would rewrite. Text other members wrote (a
+  what its preview was built from (`governance::as_drafted`, which takes the unlocked
+  key so that it cannot be called earlier), and the proposal is signed under the
+  digest of the charter that was shown (`governance::propose_under`); otherwise
+  nothing is proposed. `governance::propose`, which signs under whatever charter is
+  current, returns an error for an amendment. The first run of `circle leave` is held
+  to the same (4.24). `proposal vote` reads what an amendment changes again in the
+  same place (`proposal::approval_as_shown`) and signs an approval only when it still
+  says what was shown (`amendment::Changes::same_as`), and for a ballot asked in a
+  window only when the amendment is still a sole admission of the same member under
+  the same charter. A rationale typed for `proposal vote` is one line of at most 200
+  characters without control characters, invisible characters, blanks that are not
+  spaces or characters the preview would rewrite. Text other members wrote (a
   rationale, a summary, an opt-out's reason, the text of a rule in `proposal show` and
   of a carried rule) is printed line by line behind a mark, so no line of it passes
   for one of PeerHarness's own.
@@ -973,12 +990,20 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   not cover the rule is in that state after every sync. That file is not filtered by
   scope (4.4): the way out gives such a member the rule's records and text, which is
   what the scope withholds, and it is needed again after each change to the charter
-  that carries a new such rule. The check after the yes leaves an instant between its
-  read and the signature. A charter that arrives in it leaves a proposal that names the
-  earlier charter and can no longer pass; a rule that passes in it is not caught by the
-  check, and the ballot the other voters are shown names it. The check was not run at a prompt in a
-  terminal with a second process changing the node: the tests use a stand-in window
-  that imports a file before it answers. A ballot on a rule in a terminal
+  that carries a new such rule. The check after the yes comes after the key is
+  unlocked, and what is left between its read and the signature is the time between
+  two calls in one process, with no prompt in it. Until a third review the passphrase
+  prompt of a key kept in an encrypted file lay in that gap, and an amendment and a
+  deciding approval were signed through it (ADR-041). A charter that arrives in what
+  is left is refused by `propose_under`, or leaves a proposal that names the earlier
+  charter and can no longer pass. A rule that passes in it is not caught by the check:
+  for a draft, the ballot the other voters are shown names it, and for an approval
+  nothing more is shown to anyone. No automated test holds a prompt open: the tests
+  use a stand-in window that imports a file before it answers. The order at a prompt
+  in a terminal and at a passphrase prompt was run by hand on a pseudo-terminal, on
+  Linux, with a second process importing a file (ADR-041, "After a third review").
+  Whether the macOS keychain asks when the key is unlocked was not looked at. A ballot
+  on a rule in a terminal
   shows the proposal's title and neither the text nor a finding (4.10). In the window
   for a sole admission the proposer's title still stands in the second line, above the
   lines read from the amendment. Rule text is printed without a mark in the previews of
@@ -1009,29 +1034,40 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   the name while the prompt or the window waited is not installed on that yes: both
   commands then refuse, and `rule opt-in` leaves the opt-out in place. `skills
   uninstall` refuses a copy that a vote installed and its owner follows, and names the
-  opt-out; the one exception is the owner's own skill that holds the rule in the
-  user's skills directory, which is the way out of the hold. A rule named `peerharness-notes` is never
-  installed, and `note`, `review`, `keep` and `proposal create` refuse the name. A
-  repeal, a lapsed rule and an opt-out remove only a file that a vote of that circle
-  installed and that still has exactly the recorded text. A hold is local, like an
-  opt-out: it never changes the tally or the rule set, and nothing is sent because of
-  it.
+  opt-out, in the user's skills directory and in a project. The one exception is the
+  owner's own skill that holds the rule in the directory the command acts on, which
+  is the way out of the hold. In a project a copy the owner installed themselves, of
+  a rule that lives elsewhere, is theirs to remove. A rule named `peerharness-notes`
+  is never installed, and `note`, `review`, `keep` and `proposal create` refuse the
+  name. A repeal, a lapsed rule and an opt-out remove only a file that a vote of that
+  circle installed and that still has exactly the recorded text. When such a file
+  cannot be removed, the record that a vote installed it is kept, the command says
+  that the rule could not be removed and is still installed, and each later settle
+  tries again; while the old copy of a rule whose scope was moved cannot be removed,
+  the rule is not installed in the new place (ADR-042, "After a third review"). A
+  hold is local, like an opt-out: it never changes the tally or the rule set, and
+  nothing is sent because of it.
 * **Residual risk.** A held rule is in force for the circle and not on that member's
   machine, and the others cannot see that. Its owner is told by the command that
-  settled, by `rule list`, and once per run by a daemon that syncs on a timer; `status`,
-  the inbox and the end-of-turn line do not mention it. The first installer of a name on a machine
-  keeps it: of two circles' rules with one name and different texts, the second is
-  held. A copy the owner keeps after a vote installed the identical text still counts
-  as the vote's, so a repeal or an opt-out removes it. A library skill named
-  `peerharness-notes` that an earlier version saved can still be installed by its
-  owner with `skills install`, which asks them. On a node where an earlier version let
-  a vote overwrite PeerHarness's own skill, the vote's text is removed and the skill
-  comes back only when the owner runs `peerharness setup` or `watch claude --install`
-  again. `skills uninstall` asks nobody and is not refused inside a session (ADR-042,
-  Not done): an agent that runs it on the skill that holds a rule takes the owner's
-  skill out, and the next settle installs the circle's text. What changed is that a
-  session is no longer handed that command. None of this stops a process running as
-  the owner from writing to the skills directory itself (4.17).
+  settled, by `rule list`, and once per run by a running daemon, whether one of its own
+  exchanges found the hold or a peer's push created it; `status`, the inbox and the
+  end-of-turn line do not mention it. A hold that goes away and comes back while a
+  daemon runs is not printed a second time, and nothing of a hold reaches `--notify`. A
+  skill that cannot be removed stays in the agent until its files can be changed and the
+  circle is settled again, and `skills uninstall` refuses it while its rule is in force
+  and not opted out. The first installer of a name on a machine keeps it: of two
+  circles' rules with one name and different texts, the second is held. A copy the owner
+  keeps after a vote installed the identical text still counts as the vote's, so a
+  repeal or an opt-out removes it. A library skill named `peerharness-notes` that an
+  earlier version saved can still be installed by its owner with `skills install`, which
+  asks them. On a node where an earlier version let a vote overwrite PeerHarness's own
+  skill, the vote's text is removed and the skill comes back only when the owner runs
+  `peerharness setup` or `watch claude --install` again. `skills uninstall` asks nobody
+  and is not refused inside a session (ADR-042, Not done): an agent that runs it on the
+  skill that holds a rule takes the owner's skill out, and the next settle installs the
+  circle's text. What changed is that a session is no longer handed that command. None
+  of this stops a process running as the owner from writing to the skills directory
+  itself (4.17).
 
 ## 5. Privacy limitations
 
@@ -1129,13 +1165,13 @@ directory and QUIC on loopback.
 | 4.19 (the install script) | `apps/peerharness/tests/install_script.rs` (against a release in a temporary folder: a matching checksum installs one file that runs; a changed archive, a missing checksum and a version that is not a tag install nothing) |
 | 4.21, 4.22 (joining from a node, the removal notice) | `apps/peerharness/tests/network.rs` (separate processes over QUIC: a new member joins from a member's node, the wrong root fingerprint is refused and stores nothing, a device on no roll is offered nothing; a removed member's node is shown the vote, verifies it, drops the circle's rule, and can neither sync nor rejoin afterwards); `apps/peerharness/src/peer.rs` (`a_member_voted_off_is_told_of_the_vote_and_nothing_else`: the exact set of records, no later charter, every other request refused, a never-member and a revoked device refused) |
 | 4.23 (questions and answers) | `apps/peerharness/src/governance.rs` (`questions_and_answers_are_authorized_by_the_roll`: a device on no roll, a member outside its scopes, a revoked device, an answer without its question or in another scope; `the_local_guard_keeps_noise_out_of_the_inbox`: duplicate, muted, blocked, over quota); `apps/peerharness/tests/circle_life.rs` (`a_question_is_asked_and_answered_by_members_of_the_roll`) |
-| 4.24 (leaving, amendments, devices, the owner's mode) | `apps/peerharness/tests/circle_life.rs` (`a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`: two devices of one member are one approval, the amend threshold, leaving acts locally at once and changes the roll only by vote; a second `leave` names the request on record, and is refused inside a session); `apps/peerharness/tests/amendment_ballots.rs` (`leaving_changes_the_machine_first_and_a_second_run_makes_the_request`: with a passphrase that does not unlock the key the circle's rule is removed and nothing is signed, the second run makes the request, a third signs nothing; `leaving_from_a_node_that_lacks_a_carried_rule_brings_no_repealed_rule_back`: no request from such a node, and after a full import a request that changes the roll and nothing else; `a_removal_a_member_proposed_is_not_asked_for_a_second_time`) |
+| 4.24 (leaving, amendments, devices, the owner's mode) | `apps/peerharness/tests/circle_life.rs` (`a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`: two devices of one member are one approval, the amend threshold, leaving acts locally at once and changes the roll only by vote; a second `leave` names the request on record, and is refused inside a session); `apps/peerharness/tests/amendment_ballots.rs` (`leaving_changes_the_machine_first_and_a_second_run_makes_the_request`: with a passphrase that does not unlock the key the circle's rule is removed and nothing is signed, the second run makes the request, a third signs nothing; `leaving_from_a_node_that_lacks_a_carried_rule_brings_no_repealed_rule_back`: no request from such a node, and after a full import a request that changes the roll and nothing else; `a_removal_a_member_proposed_is_not_asked_for_a_second_time`; `leaving_again_after_an_undo_makes_no_second_request`: after `--undo` a first run finds the request on record, says so in its preview and succeeds with a passphrase that unlocks nothing; `a_first_leave_names_a_members_removal_that_is_on_record_and_signs_nothing`; `a_removal_that_would_also_drop_a_rule_is_not_reported_as_the_request_to_leave`; `leaving_when_already_off_the_roll_reports_like_every_other_leave`); `apps/peerharness/src/commands/circle.rs` (unit tests: `a_first_leave_decides_about_its_request_before_it_asks`, `a_leave_request_is_signed_only_as_it_was_previewed`, `a_removal_that_changes_anything_else_is_not_the_request_to_leave`) |
 | 4.15 (placing a scope's rules in one project) | `apps/peerharness/tests/circle_life.rs` (`the_rules_of_a_scope_can_live_in_one_project`: only a person can place a scope; repeals and opt-outs act on the copy in the project; nobody else's machine changes) |
 | 4.27 (discovery on the local network) | `crates/ph-network/tests/discovery.rs` (`discovery_is_off_by_default_and_then_nothing_is_reported` always runs; five tests that need multicast are `#[ignore]`d); `apps/peerharness/tests/network.rs` (`members_find_each_other_on_the_local_network`, `#[ignore]`d for the same reason) |
 | 4.28 (internet mode) | `crates/ph-network/tests/internet.rs` (a private hub on loopback that answers like the public servers: off by default and then no further protocol is spoken; with the mode on the node serves nobody; a peer is found by its id, through a relay and at its own address; addresses from a lying server are filtered, bounded and never dialed; rate and connection limits hold for relayed peers; an exchange larger than a relay carries fails and says so; shutdown ends reservations and lookups; three tests against the public network are `#[ignore]`d), `internet_logs.rs` (no address in the log); `crates/ph-network/src/internet.rs` and `config.rs` (unit tests: which addresses count as public, the gate that keeps the node from dialing a peer the application named, the bounds, a loopback listener refused); `apps/peerharness/tests/network.rs` (`members_find_each_other_by_device_key_over_a_dht`, separate processes against that hub: a join by peer id, a sync that looks up the roll, a device on no roll is not looked up for a sync and is told nothing when it finds the node itself; `internet_mode_refuses_a_loopback_listener`) |
-| 4.25 (recorded opt-outs) | `apps/peerharness/src/governance.rs` (`a_stance_is_a_record_by_a_member_of_the_roll_and_counts_for_nothing`); `apps/peerharness/tests/circle_life.rs` (`an_opt_out_can_be_put_on_the_circles_record`: voluntary, refused for an agent while the opt-out itself stands, open to a member admitted after the rule passed); `crates/ph-protocol/tests/vectors.rs` (the STANCE vector) |
-| 4.29 (what a voter is shown) | `apps/peerharness/tests/amendment_ballots.rs` (separate nodes, stock commands, in a terminal: `a_ballot_on_a_device_names_the_device_and_whose_it_becomes`, `a_ballot_on_the_rules_of_the_vote_names_the_old_and_the_new`, `the_last_voter_is_told_which_rule_a_pending_admission_would_drop`, `the_last_voter_is_told_which_rule_a_pending_admission_would_bring_back`, `an_amendment_is_not_a_way_to_approve_a_rule_nobody_here_could_read`: the approval refused and nothing signed; `a_node_that_lacks_a_carried_rule_says_so_and_approves_no_amendment_that_drops_it`: a node that joined without a carried rule, the amendment signed with a member's key as a modified client signs it, the approval refused with and without `--yes`, a reject accepted; `an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window`, debug builds; `a_node_that_lacks_a_carried_rule_drafts_no_amendment_and_can_still_leave`: `invite`, `remove`, `amend` and `device` refused with nothing stored, `leave` accepted with no request made; `a_yes_to_a_change_of_one_charter_is_not_signed_as_a_change_of_the_next` and `an_approval_is_not_signed_for_what_an_amendment_changes_since_it_was_shown`, debug builds: a stand-in window imports a newer charter, or a rule that passed, before it answers Proceed, and nothing is signed); `apps/peerharness/src/amendment.rs` (unit tests of the description, among them `an_admission_that_also_replaces_another_members_device_says_so`, `a_rules_text_cannot_pass_for_a_line_of_the_description`, `a_dropped_rule_this_node_does_not_hold_is_said_and_blocks_an_approval`, `a_kept_rule_this_node_does_not_hold_is_said_and_blocks_an_approval`, `two_readings_are_the_same_only_when_they_say_the_same` and `a_listed_proposal_with_the_name_of_a_rule_in_force_replaces_it_or_stays_behind`); `apps/peerharness/src/governance.rs` (`a_mislabelled_amendment_is_described_by_what_it_signs`, `a_carried_rule_nobody_voted_on_is_named_and_must_be_readable`, `an_amendment_that_drops_a_carried_rule_this_node_lacks_is_not_shown_as_changing_nothing`, `a_carried_proposal_with_the_name_of_a_rule_in_force_is_described_by_its_outcome`: hand-signed events through `ingest`; `a_change_to_the_charter_is_signed_only_under_the_charter_it_was_drafted_from`, `a_draft_is_put_to_the_vote_only_while_the_node_would_still_draft_it`); `apps/peerharness/tests/ballot_previews.rs` (the rationale test above); `apps/peerharness/src/output.rs` (`every_line_of_a_members_text_carries_the_mark`) |
-| 4.30 (a passed rule and the owner's own skills) | `apps/peerharness/tests/vote_and_own_skills.rs` (three separate nodes: `a_voted_rule_named_like_peerharness_own_skill_is_never_installed`, with a proposal signed the way a modified client can; `a_vote_neither_replaces_nor_removes_a_rule_the_owner_kept_for_themselves`; `no_rule_can_take_the_name_of_peerharness_own_skill`; `a_yes_to_one_text_does_not_install_another_that_took_its_name_meanwhile`, debug builds: a stand-in window imports a newer rule of the same name before it answers, the command is refused and nothing is installed; `the_way_out_of_a_hold_is_one_that_works`: an edited copy and a rule opted back into, step by step; `a_hold_in_a_project_does_not_let_the_voted_copy_elsewhere_be_taken_out`: with the rule held in a project, `skills uninstall --scope user` of the copy a vote installed is refused, as the person and in a session); `apps/peerharness/src/governance.rs` (`a_vote_never_replaces_or_removes_a_skill_it_did_not_install`, `a_record_of_an_install_covers_only_the_text_it_names`, `a_copy_the_owner_installed_stays_hers_when_the_scope_moves_to_it`, `nothing_a_vote_passed_is_installed_under_the_name_of_peerharness_own_skill`, `a_confirmation_counts_only_for_the_proposal_that_was_shown`, `the_way_out_of_a_hold_is_told_to_the_person_and_not_to_a_session`); `apps/peerharness/src/commands/net.rs` (`a_daemon_tells_a_hold_once_when_it_is_new`); `apps/peerharness/src/agent_notes.rs` (`the_name_of_the_skill_is_reserved`) |
+| 4.25 (recorded opt-outs) | `apps/peerharness/src/governance.rs` (`a_stance_is_a_record_by_a_member_of_the_roll_and_counts_for_nothing`, `a_repeal_and_a_stance_are_signed_only_for_the_rule_that_was_shown`); `apps/peerharness/tests/circle_life.rs` (`an_opt_out_can_be_put_on_the_circles_record`: voluntary, refused for an agent while the opt-out itself stands, open to a member admitted after the rule passed); `crates/ph-protocol/tests/vectors.rs` (the STANCE vector) |
+| 4.29 (what a voter is shown) | `apps/peerharness/tests/amendment_ballots.rs` (separate nodes, stock commands, in a terminal: `a_ballot_on_a_device_names_the_device_and_whose_it_becomes`, `a_ballot_on_the_rules_of_the_vote_names_the_old_and_the_new`, `the_last_voter_is_told_which_rule_a_pending_admission_would_drop`, `the_last_voter_is_told_which_rule_a_pending_admission_would_bring_back`, `an_amendment_is_not_a_way_to_approve_a_rule_nobody_here_could_read`: the approval refused and nothing signed; `a_node_that_lacks_a_carried_rule_says_so_and_approves_no_amendment_that_drops_it`: a node that joined without a carried rule, the amendment signed with a member's key as a modified client signs it, the approval refused with and without `--yes`, a reject accepted; `an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window`, debug builds: no window for the amendment that leaves the rule out nor for an honest admission that keeps it; `a_node_that_lacks_a_carried_rule_drafts_no_amendment_and_can_still_leave`: `invite`, `remove`, `amend` and `device` refused with nothing stored, `leave` accepted with no request made; `a_yes_to_a_change_of_one_charter_is_not_signed_as_a_change_of_the_next` and `an_approval_is_not_signed_for_what_an_amendment_changes_since_it_was_shown`, debug builds: a stand-in window imports a newer charter, or a rule that passed, before it answers Proceed, and nothing is signed); `apps/peerharness/src/amendment.rs` (unit tests of the description, among them `an_admission_that_also_replaces_another_members_device_says_so`, `a_rules_text_cannot_pass_for_a_line_of_the_description`, `a_dropped_rule_this_node_does_not_hold_is_said_and_blocks_an_approval`, `a_kept_rule_this_node_does_not_hold_is_said_and_blocks_an_approval`, `two_readings_are_the_same_only_when_they_say_the_same` and `a_listed_proposal_with_the_name_of_a_rule_in_force_replaces_it_or_stays_behind`); `apps/peerharness/src/governance.rs` (`a_mislabelled_amendment_is_described_by_what_it_signs`, `a_carried_rule_nobody_voted_on_is_named_and_must_be_readable`, `an_amendment_that_drops_a_carried_rule_this_node_lacks_is_not_shown_as_changing_nothing`, `a_carried_proposal_with_the_name_of_a_rule_in_force_is_described_by_its_outcome`: hand-signed events through `ingest`; `a_change_to_the_charter_is_signed_only_under_the_charter_it_was_drafted_from`, which also shows that `propose` signs no amendment, `a_draft_is_put_to_the_vote_only_while_the_node_would_still_draft_it`, `a_repeal_and_a_stance_are_signed_only_for_the_rule_that_was_shown`); `apps/peerharness/tests/ballot_previews.rs` (the rationale test above); `apps/peerharness/src/output.rs` (`every_line_of_a_members_text_carries_the_mark`) |
+| 4.30 (a passed rule and the owner's own skills) | `apps/peerharness/tests/vote_and_own_skills.rs` (three separate nodes: `a_voted_rule_named_like_peerharness_own_skill_is_never_installed`, with a proposal signed the way a modified client can; `a_vote_neither_replaces_nor_removes_a_rule_the_owner_kept_for_themselves`; `no_rule_can_take_the_name_of_peerharness_own_skill`; `a_yes_to_one_text_does_not_install_another_that_took_its_name_meanwhile`, debug builds: a stand-in window imports a newer rule of the same name before it answers, the command is refused and nothing is installed; `the_way_out_of_a_hold_is_one_that_works`: an edited copy and a rule opted back into, step by step; `a_hold_in_a_project_does_not_let_the_voted_copy_elsewhere_be_taken_out`: with the rule held in a project, `skills uninstall --scope user` of the copy a vote installed is refused, as the person and in a session; `a_voted_copy_in_a_project_is_not_taken_out_by_skills_uninstall`: refused with and without `--scope`, in a session too, while a copy the owner installed in another project is theirs to remove; `the_way_out_of_a_hold_does_not_take_out_another_circles_rule_unasked`); `apps/peerharness/src/governance.rs` (`a_skill_that_cannot_be_removed_stays_on_record_and_is_tried_again`, `a_vote_never_replaces_or_removes_a_skill_it_did_not_install`, `a_record_of_an_install_covers_only_the_text_it_names`, `a_copy_the_owner_installed_stays_hers_when_the_scope_moves_to_it`, `nothing_a_vote_passed_is_installed_under_the_name_of_peerharness_own_skill`, `a_confirmation_counts_only_for_the_proposal_that_was_shown`, `the_way_out_of_a_hold_is_told_to_the_person_and_not_to_a_session`); `apps/peerharness/src/commands/net.rs` (`a_daemon_tells_a_hold_once_when_it_is_new`, `a_daemon_prints_a_hold_with_one_report_and_no_later_one`); `apps/peerharness/tests/network.rs` (`a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once`, three processes over QUIC on loopback); `apps/peerharness/src/commands/proposal.rs` (`adopt_says_what_was_installed_when_the_rule_changed_after_settling`); `apps/peerharness/src/agent_notes.rs` (`the_name_of_the_skill_is_reserved`) |
 
 Not covered by an automated test: 4.15 (untrusted repository content) beyond the
 project-scope symlink checks in `crates/ph-skills/tests/install.rs`, 4.18 (other local
@@ -1161,9 +1197,16 @@ confirmation is counted (a unit test), and at a real prompt it was run by hand o
 and a hold caused by
 another circle's rule was followed through the binary by hand only (ADR-042, "After
 a second review"). That a held rule is reported once per exchange has unit tests only
-(`apps/peerharness/src/runtime.rs`), and so has what a daemon keeps so that it prints
-a hold once (`apps/peerharness/src/commands/net.rs`); two daemons over QUIC were run
-by hand for it. Of 4.24 and 4.29, the check that a request to change the charter and
-an approval of an amendment still match what was shown is tested with a stand-in
-window that imports a file before it answers, and by unit tests; nobody ran it at a
-prompt in a terminal while a second process changed the node.
+(`apps/peerharness/src/runtime.rs`). What a daemon prints for a hold has unit tests
+(`apps/peerharness/src/commands/net.rs`), and for a hold that a peer's push created a
+test with separate processes (`apps/peerharness/tests/network.rs`); for a hold that
+the daemon's own timed exchange finds, two daemons over QUIC were run by hand. Of
+4.30, the second look of `proposal adopt` after a rule took the name while the rules
+were being applied was not reproduced, and a skill whose files cannot be changed was
+run through the binary by hand only. Of 4.24 and 4.29, the check that a request to
+change the charter and an approval of an amendment still match what was shown is
+tested with a stand-in window that imports a file before it answers, and by unit
+tests. The same check for a repeal and for an announced stance (4.25) has a unit
+test only. No test holds a prompt in a terminal or a passphrase prompt open while a
+second process changes the node: that was run by hand on a pseudo-terminal, on Linux
+(ADR-041, "After a third review").
