@@ -532,6 +532,73 @@ fn setup_says_which_keystore_an_existing_node_uses_and_warns_about_plaintext() {
     assert_eq!(report["keystore"], "file");
 }
 
+/// An `init` that is interrupted (Ctrl-C at the passphrase prompt) leaves a config file
+/// and a database that holds no identity. `setup` used to take the two files for a
+/// node, skip its first step and fail with "this home has no device identity yet: run
+/// `peerharness init`", every time. It asks the database now, and completes the home.
+#[test]
+fn setup_completes_a_home_that_an_interrupted_init_left() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+
+    // The half-made home: a config file as `init` writes it, and a database with its
+    // tables and nothing in them. No key was made.
+    let elsewhere = tmp.path().join("another-home");
+    let made = m
+        .cmd(&[
+            "init",
+            "--keystore",
+            "insecure-dev",
+            "--insecure-dev-keystore",
+        ])
+        .env("PEERHARNESS_HOME", &elsewhere)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{}", text(&made));
+    std::fs::create_dir_all(&m.home).unwrap();
+    std::fs::set_permissions(&m.home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::copy(elsewhere.join("config.toml"), m.home.join("config.toml")).unwrap();
+    drop(ph_store::Store::open(m.home.join("peerharness.db")).unwrap());
+    let status = m.cmd(&["status"]).output().unwrap();
+    assert_eq!(status.status.code(), Some(2), "{}", text(&status));
+    assert!(
+        text(&status).contains("this home has no device identity yet"),
+        "{}",
+        text(&status)
+    );
+
+    // `setup` makes the node and goes on to its other steps.
+    let out = m.setup(&["--yes"]).output().unwrap();
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("1. Your node: created."), "{said}");
+    assert!(said.contains("2. Claude Code: connected."), "{said}");
+    assert!(!said.contains("no device identity yet"), "{said}");
+    let status = json(&m.cmd(&["--json", "status"]).output().unwrap());
+    let key = status["device_key"].as_str().unwrap().to_owned();
+    assert!(key.starts_with("ed25519:"), "{status}");
+    assert_ne!(
+        json(
+            &m.cmd(&["--json", "status"])
+                .env("PEERHARNESS_HOME", &elsewhere)
+                .output()
+                .unwrap()
+        )["device_key"],
+        key.as_str(),
+        "a key of its own, not the other home's"
+    );
+
+    // A second run finds the node, as on any home.
+    let again = m.setup(&["--yes"]).output().unwrap();
+    let said = text(&again);
+    assert!(again.status.success(), "{said}");
+    assert!(said.contains("1. Your node: already there."), "{said}");
+    assert_eq!(
+        json(&m.cmd(&["--json", "status"]).output().unwrap())["device_key"],
+        key.as_str()
+    );
+}
+
 /// `reset` leaves the registration with Claude Code in place, and names the command
 /// that takes it out: the one `setup` showed when it made the registration.
 #[test]

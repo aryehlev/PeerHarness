@@ -191,8 +191,11 @@ fn is_missing(path: &std::path::Path) -> bool {
     )
 }
 
-/// Whether the database of `home` holds a device identity now.
-fn has_identity(home: &Home) -> bool {
+/// Whether the database of `home` holds a device identity now. A home with a config
+/// file and a database and no identity is what an interrupted `init` leaves (Ctrl-C at
+/// the passphrase prompt): `init` completes it, and `setup` asks this to know that it
+/// has to.
+pub(crate) fn has_identity(home: &Home) -> bool {
     home.db_path().is_file()
         && Store::open(home.db_path())
             .ok()

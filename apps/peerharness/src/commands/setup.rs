@@ -3,7 +3,8 @@
 //!
 //! It runs what three commands ran, in this order, and nothing they did not do:
 //!
-//! 1. `init`, when this home has no node yet;
+//! 1. `init`, when this home has no node yet: no device identity in its database,
+//!    which includes a home that an interrupted `init` left half made;
 //! 2. `watch claude --install`, with the confirmation windows where this machine can
 //!    show one and the owner did not pass `--no-dialogs`. Its preview and its
 //!    confirmation are the ones of that command;
@@ -68,8 +69,10 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
     human_only("setting PeerHarness up")?;
     let mut t = Text::new();
 
-    // 1. The node.
-    let created = !ctx.home.is_initialized();
+    // 1. The node. Whether there is one is asked of the database, not only of the
+    // files: an `init` that was interrupted leaves a config file and a database without
+    // an identity, and that home has no node yet. `init` completes it.
+    let created = !(ctx.home.is_initialized() && super::init::has_identity(&ctx.home));
     let node = if created {
         let made = super::init::run(ctx, a.init)?;
         t.line("1. Your node: created.");
