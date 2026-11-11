@@ -59,10 +59,20 @@ governance (section 10, ADR-012 onwards).
   their own (`net::pushed_report`): a rule installed or removed and a charter issued
   when it happens, a rule that waits for the owner once per proposal, a skill that
   could not be removed once per name. A batch that finds the queue full is dropped.
-  Every other command that starts the transport prints nothing for a push.
+  Every other command that starts the transport prints nothing for a push. One
+  exchange settles its circles more than once, and its report adds those settles up
+  (`runtime::Changes::absorb`): a rule that waits, is held or could not be removed
+  is listed once, and a skill that could not be removed leaves the list only when a
+  later settle of the same exchange removed it.
 * Not built: a delivery loop, an outbox drain, gossip. Events reach a peer when someone
   syncs. Nothing in the CLI writes the `outbox` table yet.
 * Local-only CLI commands open the store, and the keystore when they need it, directly.
+  A command and this home's daemon are two processes, each with its own connection
+  to the one database file. A command that signs on the strength of a check it made
+  after its owner's answer runs that check and the signatures in one write
+  transaction (`governance::atomically`, 10.8), so the daemon cannot store a pushed
+  event between them. While the transaction is open the daemon's writes wait, up to
+  the busy timeout, and its reads are answered.
 * Hooks (`peerharness hook <event>`) never need the private key. They write a bounded,
   redacted observation straight into SQLite with a short busy timeout, fall back to the
   spool file, always exit 0, and print nothing to stdout for `UserPromptSubmit` (stdout
@@ -503,7 +513,12 @@ columns listed are the minimum):
 * `notifications(id PK, topic, shown_at)`, used to enforce at most 2 unsolicited notifications per day and the per-topic cooldown.
 
 State transitions run inside transactions. Inserting an event returns `Inserted` or
-`Duplicate` and never errors on a duplicate.
+`Duplicate` and never errors on a duplicate. `Store::transaction` begins with `BEGIN
+IMMEDIATE` at the outermost level, which takes the write lock, and is a savepoint
+when it is nested. `Store::transaction_with` is the same transaction for a closure
+with an error type of its caller's, so that steps of the application between the
+repository calls can fail and roll everything back. Which steps go into one is the
+caller's decision: the store makes no authorization decision here either.
 
 ## 9. Candidate lifecycle (ph-core)
 
@@ -801,19 +816,52 @@ key is unlocked, which is where a passphrase is asked for. It reads the rule set
 again and refuses when the digest of the current charter, `RuleSet::carried_ids` or
 `RuleSet::missing_carried` differ from what the draft was built from.
 `governance::propose_under` then signs the proposal under the digest of the charter
-that was shown and refuses when the current charter is another one;
-`governance::propose` is for `adopt` and `repeal` proposals and returns an error for
-an amendment. `proposal vote` on an amendment does the same for an approval: with
-the key unlocked it reads `amendment_changes` again (`proposal::approval_as_shown`,
-which takes the key in the same way) and signs only when the two readings say the
-same (`amendment::Changes::same_as`), and for a ballot asked in a window only when
-`proposal::sole_admission` still gives the same entry under the same charter. A
-repeal and an announced stance name a proposal that was read before the preview.
-`rule repeal` and `--announce` look again in the same place
+that was shown and refuses when the current charter is another one. It signs every
+proposal that a command previewed: an amendment, and also a rule (`proposal create`)
+and a repeal (`rule repeal`), whose previews state who votes and how many approvals
+it takes, both read from that charter. `governance::propose` signs under whatever
+charter is current, returns an error for an amendment, and is called only by
+`peerharness demo` and by tests. `proposal create` asks
+`governance::charter_as_shown` before it saves anything. So does `question send`
+before it signs: its preview states how many members can read the question, counted
+on that charter's roll. `proposal vote` on an amendment checks an approval in the
+same way: with the key unlocked it reads `amendment_changes` again
+(`proposal::approval_as_shown`, which takes the key in the same way) and signs only
+when the two readings say the same (`amendment::Changes::same_as`), and for a ballot
+asked in a window only when `proposal::sole_admission` still gives the same entry
+under the same charter. A repeal and an announced stance name a proposal that was
+read before the preview. `rule repeal` and `--announce` look again in the same place
 (`governance::rule_as_shown`) and sign nothing when that proposal is no longer the
-rule of its name. All of this is display and refusals in the application.
-`check_successor` and `Passed::carried` are unchanged: an amendment that passes still
-makes the rule set exactly its `carried` list.
+rule of its name.
+
+**One transaction.** Each of these checks, except the one of `question send`, runs in
+one write transaction of the store with the signatures it allows
+(`governance::atomically`, over `Store::transaction_with`, section 8). A process with
+a connection of its own, a running daemon or an import in another terminal, cannot
+commit between the check and a signature, and an error in a later step takes back
+what an earlier one stored: no proposal stays without its proposer's approval.
+`atomically` takes the unlocked key as a parameter, as `as_drafted` does, so that the
+key is unlocked before the transaction begins. What is inside:
+
+* for an amendment (`circle::put_amendment`, which `circle invite`, `remove`, `amend`
+  and `device` share): `as_drafted`, `propose_under` and the proposer's approval;
+* for `circle leave` (`circle::request_as_previewed`): the same, with the look at
+  what is on record between the check and the proposal (10.9, "Leaving");
+* for an approval of an amendment: `approval_as_shown` and the ballot;
+* for `rule repeal`: `rule_as_shown` and `propose_under`;
+* for `--announce`: `rule_as_shown` and the stance;
+* for `proposal create`: `charter_as_shown`, the library entry, the candidate's walk
+  to `Proposed`, `propose_under` and the candidate's link to the proposal.
+
+What is never inside: a prompt, a window, standard input, the network, and settling,
+which follows the commit. Every other ballot is cast outside a transaction, and
+`question send` checks and then signs without one. The bundle file that `proposal
+create` writes is not taken back by a rollback: it can stay, named by no row. While a
+transaction is open other writers wait, up to their busy timeout, and readers do not.
+
+All of this is display and refusals in the application. `check_successor` and
+`Passed::carried` are unchanged: an amendment that passes still makes the rule set
+exactly its `carried` list.
 
 When the amendment has passed, the holder of the circle root key issues the next
 charter (`CircleAuthority::issue_next_charter`) and publishes it in a `CHARTER` event.
@@ -938,17 +986,25 @@ what one rule in force means on this machine, in this order:
   step 3 of `settle` alone and uses no key. Only where the preview announced a
   request is the key then unlocked, the node checked with `as_drafted` against what
   the preview was built from, and that very draft signed through `propose_under` and
-  approved (`circle::request_removal`, `circle::sign_removal`). Nothing is drafted
+  approved (`circle::request_removal`). The check, the signatures and one look
+  between them are a single transaction (`circle::request_as_previewed`, 10.8), and
+  `circle::sign_removal` turns its outcome into the report. Nothing is drafted
   anew after the answer. No request is made when the device key does not unlock,
   when the node changed meanwhile, when exactly this removal arrived on record
-  meanwhile (`sign_removal` reads `removals_on_record` again after `as_drafted`),
-  when the proposal is refused or when the member is off the roll: the report says so
-  (`requested`, `reason`). A second `circle leave` on a machine that left
-  (`circle::leave_again`) first runs `governance::apply_on` again, which removes
-  what the first run could not and uses no key. It then makes the request when none
-  is on record, after a preview and a confirmation of its own, and is checked like
-  every other draft. A node that is voted off learns of it from a peer (section 7, the
-  removal notice) or from a file.
+  meanwhile (`request_as_previewed` reads `removals_on_record` again after
+  `as_drafted`), when the proposal is refused or when the member is off the roll: the
+  report says so (`requested`, `reason`). A second `circle leave` on a machine that
+  left (`circle::leave_again`) first runs `governance::apply_on` again, which
+  removes what the first run could not and uses no key. It then makes the request
+  when none is on record, after a preview and a confirmation of its own, and signs
+  it through `request_as_previewed` as the first run does: a node that changed
+  meanwhile is refused, and when exactly this removal arrived on record meanwhile
+  nothing is signed and the report is the one for a request on record. `circle
+  leave --undo` makes no request and withdraws none. Its preview
+  (`circle::follow_again_preview`) says what is on record: the request, another
+  member's proposal that takes the owner off the roll and is not the request, or
+  nothing. A node that is voted off learns of it from a peer (section 7, the removal
+  notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step). `rule
   list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force. `rule
@@ -978,7 +1034,9 @@ what one rule in force means on this machine, in this order:
   records there. In the user's directory it is for every copy with that text, also one
   the owner installed while the rule is placed in a project. `proposal create` unlocks
   the device key directly after the confirmation, before it saves the rule to the
-  library and marks the candidate as proposed.
+  library and marks the candidate as proposed. It saves, marks and signs in one
+  transaction, after a look at whether the charter in force is still the one its
+  preview counted the voters on (10.8).
   `circle invite`, `remove`, `leave`, `amend` (the thresholds, binding or advisory)
   and `device add` / `remove` propose amendments. `circle revoke` is the emergency of
   10.8. Not written yet: asking once before switching to `follow` when an amendment

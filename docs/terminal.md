@@ -128,8 +128,10 @@ is not.
 the commands it read in the skill. Other agents that speak MCP can use it too; only
 Claude Code was tried. The tool that joins a circle takes a member's peer id or
 address and never a file: joining from a file is `peerharness circle join <file>` in
-your own terminal. The tool that votes takes a reason of one line of at most 200
-characters, the limit of `proposal vote`.
+your own terminal. Inside a session `circle join` itself reads no argument as a file
+when it is a peer id or an address, also when a file of that name exists. The tool
+that votes takes a reason of one line of at most 200 characters, the limit of
+`proposal vote`.
 
 ### Without windows
 
@@ -213,7 +215,10 @@ current members with the same threshold, from the second member on.
 found in it. A rule with a high-risk finding is asked in your terminal only. After
 your yes it unlocks your key before it saves anything: if the key does not unlock,
 the command fails (exit 1), your note is not marked as proposed and nothing is saved
-to your library.
+to your library. The preview ends with how many approvals the rule needs ("It passes
+with <need> of <n> member approval(s)"), counted on the charter in force when it is
+shown. The rule is proposed under that charter or not at all (below, under "A yes
+counts for what you were shown").
 
 `proposal vote` on a rule refuses an approval until the rule's text is on your node:
 read it with `proposal show`. In a terminal the ballot itself shows the proposal's
@@ -310,9 +315,26 @@ you anything between that look and the signature:
   ends with "nothing was announced: the rule changed while this was being confirmed,
   and what you were shown is no longer the rule in force. Run the command again to
   see the rule as it is now."
+* `proposal create` and `rule repeal` stop with the first of these messages when a
+  newer charter arrived. Their preview counted the voters on the charter it read,
+  and a newer one can have another electorate and need another number of approvals.
+  Run the command again to see the count as it is now. After a refused `proposal
+  create` your note is not marked as proposed and nothing was saved to your library.
+* `question send` stops with "the circle's charter changed on this node while this
+  was being confirmed, so the members who can read the question may no longer be the
+  ones you were shown. Nothing was shared and nothing was signed. Run the command
+  again to see who would read it now." Its preview says how many members can read
+  the question, counted on the charter it read.
 
 Each of these exits 3. `circle leave` signs its request under the same check
 ([Leaving a circle](#leaving-a-circle)).
+
+The look and what it lets the command sign are also one transaction of your node's
+database, so a sync by a daemon you left running, or an import in another terminal,
+cannot store anything between the two. Your answer and your passphrase are asked for
+before that transaction and never inside it. What follows from a vote (a result, a
+new charter, your skills brought in line) is done after it. `question send` is the
+one command above that looks and then signs without a transaction.
 
 `--announce` ends in the same way when your key does not unlock. What was done on
 your machine is reported, and the command exits 3 with "nothing was announced: the
@@ -561,11 +583,15 @@ changed, the command says so: "rule <name> could not be removed: its files could
 be changed. It is still installed. It is tried again each time this circle is settled
 on this machine (an `events import`, or a sync with one of its members)." While the
 old copy of a rule whose scope you moved cannot be removed, the rule is not installed
-in the new place. For a circle you left, running `circle leave` again tries too,
-which the line does not say. Once the files can be changed you can also take the
-leftover out yourself with `skills uninstall`, unless you still follow the rule. The
-record that a vote installed that copy goes with it, so the same text installed by
-you afterwards is yours, and no later vote removes it.
+in the new place. Two circles can each have installed a rule of one name, in two
+places. When a sync removes one copy and then cannot remove the other, it prints the
+line for the one that stayed. When it comes to the copy that stays first and removes
+the other afterwards, the line is missing from that report, and the next sync or
+import that settles that circle prints it. For a circle you left, running
+`circle leave` again tries too, which the line does not say. Once the files can be
+changed you can also take the leftover out yourself with `skills uninstall`, unless
+you still follow the rule. The record that a vote installed that copy goes with it,
+so the same text installed by you afterwards is yours, and no later vote removes it.
 
 A copy that a vote installed and that you then edited is never deleted. When it
 should go it is left in place, and the command says so once: "rule <name>: the copy
@@ -651,10 +677,13 @@ it tries again to remove a rule the circle installed that the first run could no
 remove, and prints what it did before anything else: "removed rule <name>", or the
 line for a rule that still cannot be removed or for a copy you edited. Then it shows
 the request as it would be now and asks, and it is refused (exit 3) if your node
-changes again while you answer. While your node still lacks a rule, it says again
-that no request was made. If you are off the roll by then, or your request is on
-record, it says so and signs nothing, and where your approval is not on that
-proposal it names the command that gives it. With a request on record it says
+changes again while you answer. It also looks once more at what is on record, as the
+first run does: if exactly your removal arrived while you answered, it signs no
+second one, exits 0 and prints the report for a request on record. While your node
+still lacks a rule, it says again that no request was made. If you are off the roll
+by then, or your request is on record, it says so and signs nothing, and where your
+approval is not on that proposal it names the command that gives it. With a request
+on record it says
 "Nothing was changed and nothing was signed.", or "Nothing else was changed, and
 nothing was signed." when a rule was removed. In `--json` every second run that ends
 with a report has `removed_rules`, `not_removed_rules` and `kept_edited_rules`; one
@@ -670,8 +699,11 @@ also takes you off the roll, and changes more than that: `peerharness proposal s
 
 `peerharness circle leave --circle team --undo` follows the circle again on your
 machine. Its preview says whether a request to take you off the roll is on record. A
-request that was made stays on record, and leaving again makes no second one while
-that request is still the one your node would make. Inside a coding agent's session
+proposal of another member that takes you off the roll and is not your request is
+named there too, with the line above ("Proposal <id> on record also takes you off
+the roll, and changes more than that"). A request that was made stays on record, and
+leaving again makes no second one while that request is still the one your node
+would make. Inside a coding agent's session
 leaving is refused, the second run too, before anything on the machine is changed.
 
 ## Take it out again

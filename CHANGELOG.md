@@ -21,7 +21,9 @@ database schema it writes.
 A check of 0.4.0 before any tag found defects, and the changes below fix some of them
 (ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). A review of those fixes
 found more, and so did a second, a third and a fourth review. A fifth found three
-things that a command did not say. What was changed for them is in the same lists. Several change what a command prints, asks or accepts.
+things that a command did not say. After the branch was opened as a pull request, an
+automated review of the pull request named more. What was changed for them is in the
+same lists. Several change what a command prints, asks or accepts.
 
 **What a voter is shown**
 
@@ -97,6 +99,32 @@ things that a command did not say. What was changed for them is in the same list
   "nothing was announced: the rule changed while this was being confirmed, and what
   you were shown is no longer the rule in force. Run the command again to see the
   rule as it is now."
+* `proposal create` and `rule repeal` are signed under the charter their preview
+  counted the voters on, or not at all. The preview says "It passes with <need> of
+  <n> member approval(s)". If a sync or an import stored a newer charter while you
+  read or typed your passphrase, the command is refused (exit 3) with the same "the
+  circle's charter or the rules in force changed on this node while this was being
+  confirmed" as above, and running it again shows the count as it is now. After a
+  refused `proposal create` your note and your library are as they were. Before,
+  the proposal was signed under the newer charter, with an electorate and a count
+  you had not been shown.
+* `question send` is refused in the same case (exit 3): "the circle's charter changed
+  on this node while this was being confirmed, so the members who can read the
+  question may no longer be the ones you were shown. Nothing was shared and nothing
+  was signed. Run the command again to see who would read it now." Its preview says
+  how many members can read the question, counted on the charter it read. Before,
+  the question was shared under the newer roll.
+* The check after your answer and what it lets a command sign are one transaction of
+  your node's database. A running daemon's sync and an import in another terminal
+  cannot store anything between the two. This holds for `circle invite`, `remove`,
+  `amend`, `device` and `leave`, for an approval of an amendment, for `rule repeal`,
+  for `--announce` and for `proposal create`. Your answer and your passphrase are
+  asked for before the transaction, never inside it, and what follows from a vote
+  (a result, a new charter, your skills) is done after it. `question send` checks
+  and then signs without one. In the ordinary case nothing looks different. When a
+  later step fails, less is left behind: a proposal is not stored without its
+  proposer's approval, and `proposal create` leaves no library entry and no note
+  marked as proposed for a proposal that was refused.
 * `circle leave` changes your machine before it uses a key: the circle is marked as
   left and the rules it installed are removed, also when the device key does not
   unlock. What it does about the request to take you off the roll is decided before
@@ -115,7 +143,11 @@ things that a command did not say. What was changed for them is in the same list
   line for a rule that still cannot be removed or for a copy you edited). Then it
   makes the request when the first run did not, after its own preview and
   confirmation. Inside a session it is refused before anything is removed. If you
-  are off the roll, or your request is on record, it says so and signs nothing.
+  are off the roll, or your request is on record, it says so and signs nothing. It
+  looks at what is on record once more after your answer and after the key is
+  unlocked, as the first run does: if exactly your removal arrived meanwhile, it
+  signs no second one, exits 0 and prints the report for a request on record
+  (reason `request_on_record`). Before, it signed a second, identical request.
 * A request is on record when a proposal under the charter in force is exactly the
   removal your node would ask for now: your own, or a member's `circle remove`. A
   first `circle leave` looks for one as well, so leaving again after `--undo` makes
@@ -135,7 +167,10 @@ things that a command did not say. What was changed for them is in the same list
   `not_removed_rules` and `kept_edited_rules` like the first.
 * `circle leave --undo` says in its preview whether a request to take you off the
   roll is on record, and names it. It no longer says that one stays on record when
-  none was made.
+  none was made. A proposal of another member that takes you off the roll and is
+  not your request is named as well ("Proposal <id> on record also takes you off
+  the roll, and changes more than that"), where the preview said that no request is
+  on record.
 
 **When your key does not unlock**
 
@@ -208,7 +243,13 @@ things that a command did not say. What was changed for them is in the same list
   be removed, the rule is not installed in the new place. A second `circle leave`
   tries the removal again too. When you take such a leftover out yourself with
   `skills uninstall`, the record that a vote installed it goes with it: the same
-  text installed by you afterwards is yours, and no later vote removes it.
+  text installed by you afterwards is yours, and no later vote removes it. Two
+  circles can each have installed a rule of one name, in two places. The report of
+  a sync that removed the one copy and then could not remove the other now has the
+  line for the one that stayed. Before, the earlier removal took that line out of
+  the report. When the copy that stays is settled before the other one is removed,
+  the line is still missing from that report. Either way the next settle of that
+  circle names the copy.
 * A copy that a vote installed and that you edited is still never deleted, and is no
   longer left without a word. The commands that print removed rules say once: "rule
   <name>: the copy a vote installed was edited on this machine and was left in
@@ -267,7 +308,10 @@ things that a command did not say. What was changed for them is in the same list
 * A note written inside a session is recorded as reported by the agent, with or
   without `--from-agent`, and counts against the 20 notes that may wait.
 * The `join_circle` tool of `peerharness mcp` takes a peer id or an address, never a
-  path to a file.
+  path to a file. Inside a session `circle join` itself reads no argument as a file
+  when it is a peer id or an address, also when a file of that name exists. A peer
+  id without `--internet` is the usage error it was (exit 2). In your own terminal
+  a path that exists is still the file it names.
 * `circle join <peer id or address>` inside a session is refused before it goes to
   the network when the join could not be put in a window: where the windows for the
   steps about a circle are not allowed, or the machine can show none. Before, the
