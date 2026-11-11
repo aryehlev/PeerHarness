@@ -21,10 +21,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Context, Result};
 use ph_core::{CircleId, DeviceKey, Digest, EventId, Scope, Timestamp};
 use ph_governance::{
-    authorize_incoming, carried_diff, check_answer_reference, check_repeal_reference,
-    check_successor, check_supersedes_reference, normalize_question_text, rules_in_force, tally,
-    verify_result, DecisionRecords, GuardDecision, Passed, ProposalView, QuestionContext,
-    QuestionGuard, Reference, ResultView, RuleSet, Tally, VoteView,
+    authorize_incoming, carried_diff, check_answer_reference, check_successor,
+    normalize_question_text, rules_in_force, tally, verify_result, DecisionRecords, GuardDecision,
+    Passed, ProposalView, QuestionContext, QuestionGuard, Reference, ResultView, RuleSet, Tally,
+    VoteView,
 };
 use ph_identity::CircleAuthority;
 use ph_protocol::{
@@ -337,29 +337,16 @@ pub fn ingest(
     let circle = verified.circle_id;
     let env: &SignedEnvelope = &verified;
     match &verified.body {
-        EventBody::Proposal(b) => {
-            let lookup = |id: &EventId| -> Option<SignedEnvelope> {
-                store
-                    .event(id)
-                    .ok()
-                    .flatten()
-                    .and_then(|e| e.envelope().ok())
-            };
-            let superseded = b
-                .as_adopt()
-                .and_then(|a| a.supersedes)
-                .and_then(|id| lookup(&id));
-            if let Reference::Invalid(_) = check_supersedes_reference(env, superseded.as_ref()) {
-                return Ok(Ingest::Rejected("bad_supersedes"));
-            }
-            let target = ProposalView::from_verified(&verified)
-                .ok()
-                .and_then(|p| p.repeal_target())
-                .and_then(|id| lookup(&id));
-            if let Reference::Invalid(_) = check_repeal_reference(env, target.as_ref()) {
-                return Ok(Ingest::Rejected("bad_repeal_target"));
-            }
-        }
+        // A proposal is stored whatever its `supersedes` or its repeal `target` names
+        // (protocol 12.5, ADR-050). Whether this node already holds the event it names
+        // must not decide whether the proposal is kept: a member who sent the two in
+        // one order to some nodes and in the other order to the rest would leave them
+        // with different records, and so with different rules. A `supersedes` that
+        // names anything but an `adopt` proposal for the same skill records no lineage
+        // (`ph_governance::supersede_links`), and a repeal takes a rule out of force
+        // only if it has that rule's scope (`ph_governance::rules_in_force`). Both are
+        // read from the stored records, in whatever order they came.
+        EventBody::Proposal(_) => {}
         EventBody::Result(b) => {
             let result =
                 ResultView::from_verified(&verified).map_err(|_| anyhow!("not a result"))?;
@@ -2301,6 +2288,169 @@ pub(crate) mod tests {
         .to_canonical_json()
         .unwrap()
         .into_bytes()
+    }
+
+    /// Another node of the circle `store` holds: the same circle and the same charter,
+    /// and nothing else.
+    fn twin(store: &Store, circle: &CircleId, now: Timestamp) -> Store {
+        let other = Store::open_in_memory().unwrap();
+        other
+            .set_identity(&ph_store::IdentityMetadata {
+                device_key: device(2),
+                keystore_backend: "insecure-dev".into(),
+                keystore_ref: "test".into(),
+                created_at: now,
+            })
+            .unwrap();
+        let row = store.circle(circle).unwrap().unwrap();
+        other
+            .insert_circle(&CircleRow {
+                is_founder: false,
+                ..row
+            })
+            .unwrap();
+        other
+            .insert_charter(&current_charter(store, circle).unwrap(), now)
+            .unwrap();
+        other
+    }
+
+    /// A proposal in `scope`, signed by `seed`'s device under the node's current
+    /// charter: what a modified client can send.
+    fn scoped_proposal(
+        store: &Store,
+        seed: u8,
+        circle: &CircleId,
+        scope: &str,
+        action: ph_protocol::ProposalAction,
+        now: Timestamp,
+    ) -> Vec<u8> {
+        let charter = current_charter(store, circle).unwrap().digest().unwrap();
+        EnvelopeBuilder::new(
+            *circle,
+            Scope::new(scope).unwrap(),
+            EventBody::Proposal(ProposalBody {
+                charter,
+                title: "A proposal".into(),
+                summary: String::new(),
+                action,
+            }),
+        )
+        .sign(&key(seed), now)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    fn adopt_action(name: &str, supersedes: Option<EventId>) -> ph_protocol::ProposalAction {
+        ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+            skill_name: name.into(),
+            description: "Prefer pnpm over npm.".into(),
+            bundle_digest: Digest::sha256(name.as_bytes()),
+            bundle_size: 230,
+            related_question: None,
+            supersedes,
+        })
+    }
+
+    /// What a node keeps never depends on the order its records came in (ADR-050).
+    ///
+    /// A proposal used to be refused for good when the proposal its `supersedes` named
+    /// was already there and was for another skill, and kept when that one came later.
+    /// A member who sent the two in one order to some nodes and in the other order to
+    /// one node left that node without the proposal: it never saw the rule that then
+    /// passed, and no later exchange gave it to it.
+    #[test]
+    fn a_proposal_is_kept_whatever_its_supersedes_names_and_whenever_that_came() {
+        let (store, circle, now) = node();
+        let other = proposal(
+            &store,
+            2,
+            &circle,
+            "X",
+            adopt_action("other-skill", None),
+            now,
+        );
+        let rule = proposal(
+            &store,
+            2,
+            &circle,
+            "Prefer pnpm over npm.",
+            adopt_action("prefer-pnpm-over-npm", Some(id_of(&other))),
+            now,
+        );
+        let mut kept = Vec::new();
+        for order in [[&rule, &other], [&other, &rule]] {
+            let node = twin(&store, &circle, now);
+            for raw in order {
+                assert_eq!(ingest(&node, raw, None, now).unwrap(), Ingest::Stored);
+            }
+            // It can be voted on, and it passes, on both.
+            let view = proposal_view(&node, &id_of(&rule)).unwrap();
+            for seed in [1, 2] {
+                assert_eq!(
+                    ingest(&node, &ballot(seed, &view, now), None, now).unwrap(),
+                    Ingest::Stored
+                );
+            }
+            let (_, rules, _) = rule_set(&node, &circle).unwrap();
+            kept.push(rules.carried_ids());
+        }
+        assert_eq!(kept[0], [id_of(&rule)]);
+        assert_eq!(kept[0], kept[1], "the two nodes hold the same rules");
+    }
+
+    /// A repeal is kept like any other proposal, in whatever order it and the proposal
+    /// it names arrive, and it takes a rule out of force only if it has that rule's
+    /// scope (ADR-050). The scope used to be checked when the repeal arrived, and only
+    /// if its target was there by then: a repeal that came first was kept and counted,
+    /// so another scope's electorate could repeal a rule on a node that got the two in
+    /// that order.
+    #[test]
+    fn a_repeal_from_another_scope_is_kept_in_any_order_and_repeals_nothing() {
+        let (store, circle, now) = node();
+        // The rule is adopted in `team/backend`. The repeal is put to scope `*`.
+        let rule = scoped_proposal(
+            &store,
+            2,
+            &circle,
+            "team/backend",
+            adopt_action("prefer-pnpm-over-npm", None),
+            now,
+        );
+        let from_elsewhere = scoped_proposal(
+            &store,
+            2,
+            &circle,
+            "*",
+            ph_protocol::ProposalAction::Repeal {
+                target: id_of(&rule),
+            },
+            now,
+        );
+        for order in [[&rule, &from_elsewhere], [&from_elsewhere, &rule]] {
+            let node = twin(&store, &circle, now);
+            for raw in order {
+                assert_eq!(ingest(&node, raw, None, now).unwrap(), Ingest::Stored);
+            }
+            for raw in [&rule, &from_elsewhere] {
+                let view = proposal_view(&node, &id_of(raw)).unwrap();
+                for seed in [1, 2] {
+                    assert_eq!(
+                        ingest(&node, &ballot(seed, &view, now), None, now).unwrap(),
+                        Ingest::Stored
+                    );
+                }
+                assert!(count(&node, &view).unwrap().1.passed());
+            }
+            let (_, rules, _) = rule_set(&node, &circle).unwrap();
+            assert_eq!(
+                rules.carried_ids(),
+                [id_of(&rule)],
+                "a repeal of another scope took the rule out of force"
+            );
+        }
     }
 
     /// What a voter on device `me` is shown about the amendment `raw`.

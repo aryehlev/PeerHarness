@@ -3252,3 +3252,67 @@ repository shows is uploaded in the repository's settings ("Social preview"):
 
 **From now on.** When an answer on the page changes, its copy in the structured data
 changes with it, and `llms.txt` where it says the same.
+
+## ADR-050: What a second audit found, and what was changed for it
+On 2026-11-11, after 0.4.0, the owner asked for the repository to be broken before it
+was promoted. Eight AI coding agents each took one area (the protocol parser, the
+counting of votes, the life of a circle, the network, skills, consent and windows, keys
+and the store, hooks and learning) and attacked the tree as it was at `d71d62c`, with
+temporary homes and a debug build. The lead agent checked each claim before it counted:
+by reading the code, and by running the reproduction again. What follows is what was
+confirmed and what was changed. Each part names the test that holds it. No one who is
+not an AI agent has reviewed any of it.
+
+### A proposal is kept whatever it names, and a repeal counts only in its rule's scope
+
+**Found.** `ingest` refused a PROPOSAL for good when the event its `supersedes` named was
+stored and was for another skill, and kept it when that event was not stored yet. The
+same held for a repeal and its `target`. So whether a node kept a proposal depended on
+which of two records arrived first, and the protocol said so (12.5: "the reference is
+checked only when the PROPOSAL arrives").
+
+A member could use it with their own key and nothing else. They sign a throwaway
+proposal X for one skill and the real proposal P for another, with `supersedes: X`.
+They send P before X to the nodes that should keep it and X before P to one node. That
+node refuses P for good: the rule passes for everyone else, is installed for everyone
+else, and this node shows no such proposal and no rule, also after it imports a
+complete export of another member. It was reproduced with four nodes and stock
+commands: three showed "passed: 3 of 4" and the fourth "0 rule(s) in force".
+
+The repeal had a second fault behind the first. `rules_in_force` took the target of
+every passed repeal out of force and did not look at scopes: the rule that a repeal
+must have its target's scope stood only in that check on arrival. A repeal that came
+before its target was kept and counted, so on such a node the electorate of another
+scope could repeal a rule.
+
+**Decision.** Nothing about a PROPOSAL is checked against other stored events when it
+arrives. A proposal is kept whatever its `supersedes` or its repeal `target` names. The
+reference rules are applied where a reference is used, on the records the node holds:
+`supersede_links` already ignored a link to another skill, and `rules_in_force` now
+takes a rule out of force only for a passed repeal of that rule's scope. `R` in
+architecture 10.7 and protocol 14.4 is a set of pairs for that reason.
+
+A node that had refused such a proposal under 0.4.0 keeps it the next time it is
+offered: the refusal was never recorded.
+
+**Rejected.** Deferring a proposal until the event it names is there, and refusing it
+then. It would be the same on every node that receives both, but a member whose scopes
+do not cover the named event never receives it, so for that member the proposal would
+wait for ever, and a fetch cursor does not move past an event that waits (ADR-028).
+Any member could then stall the exchange of others with one proposal that names an id
+nobody holds.
+
+**Not changed.** An ANSWER whose question is not stored still waits, and one whose
+question is in another scope is still refused: an answer is stored only after its
+question, in every order. A 0.4.0 node still refuses what this one keeps. Stock
+commands never write a `supersedes`, and `rule repeal` always uses its target's
+scope, so the two versions differ only on proposals a modified client made.
+
+**Tests.** `a_repeal_from_another_scope_takes_nothing_out_of_force`
+(`crates/ph-governance/tests/ruleset.rs`);
+`a_proposal_is_kept_whatever_its_supersedes_names_and_whenever_that_came` and
+`a_repeal_from_another_scope_is_kept_in_any_order_and_repeals_nothing`
+(`apps/peerharness/src/governance.rs`). By hand: the node of the reproduction that
+had refused the proposal imported the same file with the new build, kept it and
+installed the rule.
+

@@ -523,11 +523,14 @@ Members of every kind:
 * `related_question`: optional QUESTION event id.
 * `supersedes`: optional earlier `adopt` PROPOSAL event id. Lineage only: approvals never
   move to the superseding proposal. Reference rule: it names an `adopt` PROPOSAL in the
-  same circle with the same `skill_name`.
+  same circle with the same `skill_name`. A `supersedes` that names anything else
+  records no lineage, and the proposal is kept and counted like any other (section
+  12.5).
 
 `repeal` (take a rule out of force). Required: `target`, the event id of the `adopt`
-PROPOSAL whose rule is to be repealed. Reference rule (checked once the target is
-stored): the target is an `adopt` PROPOSAL in the same circle with the **same scope**.
+PROPOSAL whose rule is to be repealed. Reference rule: the target is an `adopt`
+PROPOSAL in the same circle with the **same scope**. A repeal whose target is anything
+else is kept, can be voted on and takes nothing out of force (sections 12.5 and 14.4).
 
 `amend` (replace the charter). Required: `next`, the complete proposed charter content
 (section 9.6): `rules`, `roll` and `carried`. It MUST satisfy the content structure
@@ -1470,8 +1473,9 @@ the current charter if it is a legitimate successor, or is kept as history if th
 the node holds names it (section 14.5). A STANCE has none.
 
 In the reference node (`apps/peerharness/src/governance.rs`, `ingest`) the check in
-step 5 covers `supersedes`, the repeal `target` and an ANSWER's `question_id` (a VOTE's,
-a RESULT's and a STANCE's proposal is already resolved in step 4). An ANSWER whose
+step 5 covers an ANSWER's `question_id` (a VOTE's, a RESULT's and a STANCE's proposal is
+already resolved in step 4; a PROPOSAL's `supersedes` and repeal `target` are not
+checked when it arrives, section 12.5). An ANSWER whose
 QUESTION is not stored is rejected as retryable (`missing_question`); one whose QUESTION
 is in another circle or has another scope is rejected for good. Before step 6 a QUESTION
 authored by another device also passes the local guard of section 14.8: a blocked
@@ -1485,11 +1489,18 @@ Pushing a stored event again is harmless: it is a `duplicate`.
 An ANSWER, a VOTE, a RESULT, a STANCE, an `adopt` PROPOSAL with `supersedes` and a
 `repeal` PROPOSAL reference another event. If the referenced event is not stored yet,
 the reference is *missing*. A VOTE, RESULT, STANCE or ANSWER is then rejected as
-retryable (section 12.4). A PROPOSAL whose `supersedes` or repeal `target` is missing is
-kept; the reference is checked only when the PROPOSAL arrives, and it has no effect
-until the referenced event is there. If the referenced event is stored but inconsistent
-(wrong type, kind, circle, scope or skill name, as listed in section 8), the event is
-rejected.
+retryable (section 12.4). If the referenced event is stored but inconsistent (wrong
+type, circle or scope, as listed in section 8), the ANSWER is rejected.
+
+A PROPOSAL is different: it is kept whatever its `supersedes` or its repeal `target`
+names, and whether or not the event it names is stored. A receiver MUST NOT make
+keeping a PROPOSAL depend on what else it holds. If it did, a member who sent a proposal
+and the event it names in one order to some nodes and in the other order to the rest
+would leave them with different records, and so with different rules in force. The
+reference rules of section 8 are applied where the reference is used, on the records the
+node holds at that moment: a `supersedes` that does not name an `adopt` PROPOSAL of the
+same circle and `skill_name` records no lineage (14.7), and a repeal takes a rule out of
+force only if it has that rule's scope (14.4).
 
 A RESULT also references the ballots it lists and a CHARTER references the RESULT that
 justifies it. Those are resolved when the result or charter is verified (sections 14.3
@@ -2014,11 +2025,16 @@ The rules in force are then a pure function of `c` and the proposals that count 
 
 ```text
 A = { adopt proposals that count under c }          (carried, or passed by vote)
-R = { target of every repeal proposal that counts under c }
+R = { (target, scope) of every repeal proposal that counts under c }
 for each skill name s:
     winner(s) = the proposal in A with skill_name s and the greatest (created_at, event_id)
-    s is in force, with winner(s)'s bundle, iff winner(s) is not in R
+    s is in force, with winner(s)'s bundle, iff (winner(s), scope of winner(s)) is not in R
 ```
+
+A repeal therefore counts only against a rule of its own envelope scope: the electorate
+that adopted a rule is the one that repeals it. A repeal that names a proposal of
+another scope, a proposal that is not an `adopt`, or nothing the node holds, takes
+nothing out of force.
 
 `created_at` here is the proposal's own signed `created_at` and `event_id` is compared
 as a string. A newer rule of the same name replaces the older one. Repealing the winner
@@ -2176,7 +2192,8 @@ of the owner. An owner can instead place the rules of a scope in one project dir
 `adopt` proposals in the same circle and scope with the same `skill_name` and different
 bundle digests are alternatives that coexist. Each is counted on its own ballots; if
 more than one reaches its threshold, 14.4 decides which is in force. `supersedes`
-records lineage only; it moves no approvals and is not a veto.
+records lineage only; it moves no approvals and is not a veto. A `supersedes` that names
+an event of another kind, another circle or another `skill_name` is ignored.
 
 ### 14.8 Received questions
 

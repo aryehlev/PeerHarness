@@ -30,6 +30,15 @@ database schema it writes.
   notice to IndexNow each time it is published. The repository has a description and
   topics on GitHub (ADR-049).
 
+* Fixes after a second audit of 0.4.0, made with AI coding agents (ADR-050):
+  * **A member could keep a passed rule from one node.** Whether a node kept a
+    proposal depended on whether the proposal its `supersedes` named had arrived
+    first, so a member who chose the order could leave one node without a rule that
+    passed for everyone else. A proposal is now kept whatever it names, and a repeal
+    takes a rule out of force only if it has that rule's scope, which is checked in
+    the rule set and no longer on arrival. A node that had refused such a proposal
+    keeps it at its next exchange. Protocol sections 8.4, 12.5 and 14.4 say so.
+
 ## 0.4.0 (2026-11-11)
 
 * `peerharness keep <candidate>` saves a noted rule to your library and installs it for

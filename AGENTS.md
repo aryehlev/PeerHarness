@@ -282,6 +282,13 @@ stop, leave the feature disabled, and document the blocker.
   and never depend on arrival order. Do not add `now`, expiry or "latest wins" to them.
   PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION and STANCE never expire, and a revocation
   is never refused for its date (ADR-015, ADR-017).
+* What a node keeps never depends on the order its records came in (ADR-050). `ingest`
+  checks nothing about a PROPOSAL against other stored events: not its `supersedes`,
+  not a repeal's `target`. A reference rule is applied where the reference is used, on
+  the records the node holds (`supersede_links`, and `rules_in_force`, where a repeal
+  counts only against a rule of its own scope). Do not add a check on arrival whose
+  answer changes with what is already stored, other than "a record it depends on is
+  missing", which waits and is tried again.
 * A STANCE is a record of what a member says about a rule. Never read one in a tally, a
   result, the rule set or an installation decision (ADR-029).
 * A RESULT and a root-signed CHARTER carry no authority. Nothing takes effect before

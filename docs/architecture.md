@@ -683,8 +683,11 @@ one flat object:
 
 A member that belongs to another kind is a schema error, as is a missing member of the
 proposal's own kind. An `amend` proposal has envelope scope `*` and its `next` passes
-the structure rules of 10.2. A `repeal` must have the scope of its target, so that the
-electorate that adopted a rule is the one that repeals it (`check_repeal_reference`).
+the structure rules of 10.2. A `repeal` takes a rule out of force only if it has the
+scope of its target, so that the electorate that adopted a rule is the one that repeals
+it. That is part of the rule set (`rules_in_force`, 10.7) and not of what a node
+stores: a proposal is kept whatever its `supersedes` or its `target` names, because
+what a node keeps must not depend on the order its records came in (ADR-050).
 The author must be a device of a member in the proposal's electorate.
 
 A proposal can pass only while the charter it names is the current one. When the charter
@@ -750,15 +753,22 @@ proposals that count under it, with no dependence on arrival order:
 
 ```text
 A = charter.carried  ∪  { adopt proposals passed under the current charter }
-R = { target of every repeal proposal passed under the current charter }
+R = { (target, scope) of every repeal proposal passed under the current charter }
 for each skill name s:
     winner(s) = the proposal in A named s with the greatest (created_at, event_id)
-    s is in force, with winner(s)'s bundle, iff winner(s) ∉ R
+    s is in force, with winner(s)'s bundle, iff (winner(s), its scope) ∉ R
 ```
 
 So a newer passed rule of the same name replaces the older one, and repealing the
 winner leaves that name with no rule (an older one does not come back). At most one rule
-per skill name is in force.
+per skill name is in force. A repeal counts only against a rule of its own scope: one
+that names a proposal of another scope, or anything that is not an `adopt` proposal,
+takes nothing out of force.
+
+The function can only be independent of arrival order if the records it reads are.
+So a node keeps a proposal whatever it names (`supersedes`, a repeal's `target`) and
+whether or not it holds the event named: nothing about a PROPOSAL is checked against
+other stored events when it arrives (ADR-050).
 
 A proposal enters this computation only as a `Passed` value, which has exactly two
 constructors: `Passed::by_vote` (a tally of this proposal that has reached its
