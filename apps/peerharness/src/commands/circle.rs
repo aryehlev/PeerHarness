@@ -7,6 +7,11 @@
 //! With one member that approval is the majority, so the change passes at once; with
 //! more, the other members have to approve too.
 //!
+//! An amendment carries the rules in force forward by listing them. A node that lacks a
+//! rule the charter in force carries cannot list it, so `invite`, `remove`, `amend` and
+//! `device` draft nothing there ([`holds_every_carried_rule`]). `leave` never waits: it
+//! lists what the charter carries by id.
+//!
 //! Two commands act on this machine alone. `mode` is the owner's standing choice about
 //! rules that pass. `revoke` is the founder's emergency brake for a lost device: it cuts
 //! one device key off and leaves the roll as the members voted it.
@@ -21,7 +26,7 @@ use anyhow::{anyhow, Context, Result};
 use ph_core::{CircleId, DeviceKey, Scope};
 use ph_governance::{
     add_device, admit_member, change_rules, remove_device, remove_member, threshold_for,
-    ProposalView, Tally,
+    ProposalView, RuleSet, Tally,
 };
 use ph_identity::{accept_credential, CircleAuthority};
 use ph_protocol::{
@@ -284,6 +289,7 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     let id = circle.circle_id;
     let now = node.now();
     let (current, rules, _) = governance::rule_set(&node.store, &id)?;
+    holds_every_carried_rule(&rules)?;
     let entry = RollEntry::new(&args.member, vec![device], scopes);
     let next = admit_member(&current.content, &rules, entry)
         .map_err(|e| usage(format!("cannot propose that admission: {e}")))?;
@@ -479,6 +485,28 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     ))
 }
 
+/// Refuses to draft an amendment on a node that does not hold every rule the charter in
+/// force carries.
+///
+/// An amendment's `carried` list is filled from the rules in force on the node that
+/// drafts it. A carried proposal that never reached this node (a join that did not
+/// finish, a rule in a scope this node is not sent) is not among them, so the draft
+/// would leave it out, and approving it would take that rule out of force for everyone
+/// under a preview that says nothing about rules.
+fn holds_every_carried_rule(rules: &RuleSet) -> Result<()> {
+    let missing = rules.missing_carried().len();
+    if missing == 0 {
+        return Ok(());
+    }
+    Err(refused(format!(
+        "the charter in force carries {missing} rule(s) that this node does not hold, so a \
+         change to the charter drafted here would leave them out and take them out of force \
+         for everyone. Nothing was proposed. Import the events file of a member who holds \
+         them first (`peerharness events import`); `peerharness rule list` shows what is \
+         missing."
+    )))
+}
+
 /// What a window adds to the preview of an admission, whether the owner proposes it or
 /// votes on it. In a terminal the person typed or read the device key themselves; in a
 /// window all they have is what the window says.
@@ -605,6 +633,7 @@ fn remove(ctx: &Ctx, args: CircleRemoveArgs) -> Result<Report> {
     let node = ctx.open_node()?;
     let circle = find_circle(&node, Some(&args.circle))?;
     let (current, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+    holds_every_carried_rule(&rules)?;
     let next = remove_member(&current.content, &rules, &args.member)
         .map_err(|e| usage(format!("cannot propose that removal: {e}")))?;
     let preview = format!(
@@ -692,12 +721,18 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         ));
     };
     let member = entry.member.clone();
-    let next = remove_member(&current.content, &rules, &member).map_err(|_| {
+    let mut next = remove_member(&current.content, &rules, &member).map_err(|_| {
         usage(
             "you are the only member, so there is nobody to leave. To delete this node and \
              the circle with it: `peerharness reset`.",
         )
     })?;
+    // Leaving never waits, so it is not refused where this node lacks a rule the
+    // charter carries. The request is to change the roll: it lists those rules by the
+    // ids the charter in force lists, next to the rules in force here, so that it
+    // drops none of them.
+    next.carried.extend(rules.missing_carried().iter().copied());
+    next.normalize();
     let installed = node.store.rule_installs(&id)?.len();
     let mut preview = format!(
         "Leaving {circle}:\n  \
@@ -758,6 +793,7 @@ fn amend(ctx: &Ctx, args: CircleAmendArgs) -> Result<Report> {
     let node = ctx.open_node()?;
     let circle = find_circle(&node, Some(&args.circle))?;
     let (current, in_force, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+    holds_every_carried_rule(&in_force)?;
     let old = current.content.rules;
     let mut new = old;
     if let Some(p) = &args.pass {
@@ -831,6 +867,7 @@ fn device(ctx: &Ctx, args: CircleDeviceArgs, add: bool) -> Result<Report> {
         usage("the device must be an `ed25519:` key (its owner sees it with `peerharness status`)")
     })?;
     let (current, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+    holds_every_carried_rule(&rules)?;
     let member = match &args.member {
         Some(m) => m.clone(),
         None => current

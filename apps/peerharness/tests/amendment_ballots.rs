@@ -10,9 +10,10 @@
 //!
 //! Every amendment here is made with the stock commands, with one exception. What a
 //! modified client can sign under a harmless title is covered by the unit tests of
-//! `amendment.rs` and `governance.rs`. The exception is the last part: the amendment
-//! that drops a rule its voter's node does not hold is signed here with a member's own
-//! device key, the way a modified client signs it.
+//! `amendment.rs` and `governance.rs`. The exception is the last part: a node that lacks
+//! a rule the charter in force carries no longer drafts an amendment at all, so the
+//! amendment that drops that rule is signed here with a member's own device key, the
+//! way a modified client, or a version before this one, signs it.
 //!
 //! One test turns confirmation windows on. Every command of every node therefore gets
 //! `PEERHARNESS_TEST_WINDOW_BIN`, a script that records that it was started and
@@ -630,12 +631,14 @@ fn current_charter(export: &str) -> Charter {
 struct Incomplete {
     alice: Node,
     dave: Node,
+    erin: Node,
     /// The rule the charter carries: its proposal id and its skill name.
     rule: String,
     skill: String,
     /// An amendment that admits Erin and carries no rule, signed with Carol's device
-    /// key: its proposal id.
+    /// key: its proposal id, and a file with it that `events import` reads.
     drops_the_rule: String,
+    file: String,
 }
 
 /// Alice, Bob and Carol pass a rule. Dave is admitted by a charter that carries it, and
@@ -645,8 +648,8 @@ struct Incomplete {
 /// `rule list` says that a carried rule has not arrived.
 ///
 /// Then an amendment arrives that admits Erin and whose `carried` list is empty: what
-/// a node in Dave's state drafts, and what a modified client can sign at any time.
-/// Approved, it takes the rule out of force for everyone.
+/// a node in Dave's state drafted before it refused to, and what a modified client can
+/// sign at any time. Approved, it takes the rule out of force for everyone.
 fn a_node_that_lacks_a_carried_rule(root: &Path) -> Incomplete {
     let (alice, bob, carol) = trio(root);
     let dave = Node::new(root, "dave");
@@ -736,9 +739,11 @@ fn a_node_that_lacks_a_carried_rule(root: &Path) -> Incomplete {
     Incomplete {
         alice,
         dave,
+        erin,
         rule,
         skill,
         drops_the_rule: proposal.event_id.to_string(),
+        file,
     }
 }
 
@@ -879,4 +884,91 @@ fn an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window() {
     let shown = dave.run(&["proposal", "show", id]);
     assert_eq!(shown["approvals"], serde_json::json!([]));
     assert_eq!(shown["dissent"], serde_json::json!([]));
+}
+
+/// Where such amendments came from with nobody attacking: the node that lacks the rule
+/// drafted one, because an amendment carries "the rules in force" of the node that
+/// drafts it. It no longer drafts any. Leaving is the exception, because leaving never
+/// waits: the request lists the rule by the id the charter lists, and drops nothing.
+#[test]
+fn a_node_that_lacks_a_carried_rule_drafts_no_amendment_and_can_still_leave() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let c = a_node_that_lacks_a_carried_rule(root);
+    let (alice, dave, erin) = (&c.alice, &c.dave, &c.erin);
+    let proposals = |node: &Node| {
+        node.run(&["proposal", "list"])["proposals"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    let before = proposals(dave);
+
+    // --- Every command that would draft a change to the charter is refused, with
+    // `--yes` too, and stores nothing.
+    let erin_key = erin.device_key();
+    let dave_key = dave.device_key();
+    for args in [
+        vec![
+            "circle", "invite", &erin_key, "--circle", "team", "--member", "erin", "--yes",
+        ],
+        vec!["circle", "remove", "bob", "--circle", "team", "--yes"],
+        vec!["circle", "amend", "--circle", "team", "--advisory", "--yes"],
+        vec![
+            "circle", "device", "add", &erin_key, "--circle", "team", "--yes",
+        ],
+        vec![
+            "circle", "device", "remove", &dave_key, "--circle", "team", "--yes",
+        ],
+    ] {
+        let (code, text) = dave.reads(&args);
+        assert_eq!(code, 3, "{args:?}: {text}");
+        assert!(
+            text.contains("the charter in force carries 1 rule(s) that this node does not hold"),
+            "{args:?}: {text}"
+        );
+        assert!(text.contains("Nothing was proposed."), "{args:?}: {text}");
+        assert!(text.contains("`peerharness events import`"), "{text}");
+        // Refused before anything is previewed: no preview claims what would change.
+        assert!(!text.contains("This puts an amendment"), "{args:?}: {text}");
+    }
+    assert_eq!(proposals(dave), before, "nothing was stored");
+
+    // --- Leaving is not refused, and changes his machine first. What it asks the
+    // circle for changes the roll and nothing else: on Alice's complete node the
+    // amendment carries exactly the rules in force.
+    let left = dave.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(left["left"], true, "{left}");
+    let removal = left["proposal_id"].as_str().unwrap().to_owned();
+    alice.run(&[
+        "events",
+        "import",
+        &dave.export(&root.join("dave-left.jsonl")),
+    ]);
+    let json = alice.run(&["proposal", "show", &removal]);
+    let amendment = &json["amendment"];
+    assert_eq!(amendment["roll"]["removed"][0]["member"], "dave");
+    assert_eq!(
+        amendment["rules_in_force"],
+        serde_json::json!({ "dropped": [], "added": [] }),
+        "{amendment}"
+    );
+    let preview = alice.ballot_preview(&removal, "approve");
+    assert!(
+        preview.contains("the rules in force stay as they are (1 in force)"),
+        "{preview}"
+    );
+    assert_eq!(alice.rules(), [c.skill.as_str()]);
+
+    // --- A node that holds the rule drafts as before, and carries it.
+    let admission = invite(alice, erin, "erin");
+    let json = alice.run(&["proposal", "show", &admission]);
+    assert_eq!(
+        json["amendment"]["rules_in_force"],
+        serde_json::json!({ "dropped": [], "added": [] })
+    );
+    // The amendment a modified client signed is on Alice's node too, and unchanged by
+    // any of this: a file anyone may carry.
+    assert_eq!(alice.run(&["events", "import", &c.file])["stored"], 0);
+    assert_eq!(alice.approvals(&c.drops_the_rule), serde_json::json!([]));
 }
