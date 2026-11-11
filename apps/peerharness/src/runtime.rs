@@ -189,6 +189,13 @@ pub struct Changes {
     /// Skills a vote installed that were to be removed and could not be
     /// (`governance::Applied::not_removed`).
     pub not_removed: Vec<String>,
+    /// The entries of `removed` and of `not_removed`, each with the circle whose settle
+    /// found it. A name alone does not say which copy is meant: two circles can each
+    /// have installed a rule of one name, in two places. [`Changes::absorb`] reads
+    /// these to take a failure back only when the same circle removed that skill
+    /// later. Reports print the names.
+    pub removed_in: Vec<(CircleId, String)>,
+    pub not_removed_in: Vec<(CircleId, String)>,
     /// Copies a vote installed that were to be removed and were left in place because
     /// they were edited on this machine (`governance::Applied::kept_edited`).
     pub kept_edited: Vec<governance::KeptEdited>,
@@ -227,27 +234,35 @@ impl Changes {
         self.installed.extend(other.installed);
         // A circle is settled more than once in one exchange, and a rule that waits, is
         // held or cannot be removed is found each time: it is reported once. A skill
-        // that an earlier settle could not remove and this later one did is not
-        // reported as left behind.
+        // that an earlier settle could not remove and a later settle of the same circle
+        // did remove is not reported as left behind.
         //
-        // Only a later settle takes a failure back. `other` is one batch, and a batch
-        // holds every circle that was settled together (`settle_circles`): two circles
-        // can each have installed a rule of one name, in two places, and when one copy
-        // goes and the other cannot be removed, both are in the same batch and both are
-        // said. An earlier removal takes nothing back either.
-        //
-        // The lists hold names, and a name carries no place and no circle. So a later
-        // batch that removed some copy of a name still takes back an earlier failure
-        // to remove another copy of that name, unless the same later batch failed on
-        // it again. That line is then missing from this report. The record of the copy
-        // stays (`rule_installs`), so the next settle of its circle finds and names it.
+        // Only the same circle takes a failure back. Two circles can each have
+        // installed a rule of one name, in two places: when one circle's copy goes and
+        // the other's cannot be removed, both are said, whichever was settled first.
+        // An entry that names no circle (`not_removed_in` has none for it) is never
+        // taken back.
+        let had_a_circle: Vec<String> = self
+            .not_removed_in
+            .iter()
+            .map(|(_, skill)| skill.clone())
+            .collect();
+        self.not_removed_in
+            .retain(|copy| !other.removed_in.contains(copy));
+        for copy in other.not_removed_in {
+            if !self.not_removed_in.contains(&copy) {
+                self.not_removed_in.push(copy);
+            }
+        }
+        let still_stuck = |skill: &String| self.not_removed_in.iter().any(|(_, s)| s == skill);
         self.not_removed
-            .retain(|skill| !other.removed.contains(skill));
+            .retain(|skill| !had_a_circle.contains(skill) || still_stuck(skill));
         for skill in other.not_removed {
             if !self.not_removed.contains(&skill) {
                 self.not_removed.push(skill);
             }
         }
+        self.removed_in.extend(other.removed_in);
         self.removed.extend(other.removed);
         for kept in other.kept_edited {
             if !self.kept_edited.contains(&kept) {
@@ -308,6 +323,12 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                     changes.signed += 1;
                 }
                 changes.installed.extend(settled.applied.installed);
+                for skill in &settled.applied.removed {
+                    changes.removed_in.push((*id, skill.clone()));
+                }
+                for skill in &settled.applied.not_removed {
+                    changes.not_removed_in.push((*id, skill.clone()));
+                }
                 changes.removed.extend(settled.applied.removed);
                 changes.not_removed.extend(settled.applied.not_removed);
                 changes.kept_edited.extend(settled.applied.kept_edited);
@@ -1572,45 +1593,81 @@ mod tests {
     }
 
     /// A skill that could not be removed is said, unless a later settle of the same
-    /// exchange removed it. One batch holds every circle that was settled together, and
-    /// two circles can each have installed a rule of one name in two places: when one
-    /// copy goes and the other cannot be removed, the batch names the skill in both
-    /// lists. The failure used to be dropped there, as if the removal of the one copy
-    /// had been a later, successful try at the other.
+    /// circle removed it. Two circles can each have installed a rule of one name, in
+    /// two places. When one circle's copy goes and the other's cannot be removed, both
+    /// are said, in either order of the two settles: the failure used to be dropped
+    /// when the circle whose copy stayed was settled first, and a daemon then never
+    /// said it.
     #[test]
-    fn a_failed_removal_is_taken_back_only_by_a_later_settle() {
-        let batch = |removed: &[&str], not_removed: &[&str]| Changes {
-            removed: removed.iter().map(|s| (*s).to_owned()).collect(),
-            not_removed: not_removed.iter().map(|s| (*s).to_owned()).collect(),
-            ..Changes::default()
+    fn a_failed_removal_is_taken_back_only_by_the_same_circle() {
+        let circle = |seed: u8| {
+            let root = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+            CircleId::derive(&DeviceKey::from_signing_key(&root))
+        };
+        let (team, other) = (circle(1), circle(2));
+        let settled = |circle: CircleId, removed: &[&str], not_removed: &[&str]| {
+            let names =
+                |list: &[&str]| -> Vec<String> { list.iter().map(|s| (*s).to_owned()).collect() };
+            let of = |list: &[&str]| -> Vec<(CircleId, String)> {
+                list.iter().map(|s| (circle, (*s).to_owned())).collect()
+            };
+            Changes {
+                removed: names(removed),
+                not_removed: names(not_removed),
+                removed_in: of(removed),
+                not_removed_in: of(not_removed),
+                ..Changes::default()
+            }
         };
 
-        // The same batch keeps both.
+        // The circle whose copy stays is settled first, the other removes its own.
         let mut report = Changes::default();
-        report.absorb(batch(&["style"], &["style"]));
+        report.absorb(settled(team, &[], &["style"]));
+        report.absorb(settled(other, &["style"], &[]));
         assert_eq!(report.removed, ["style"]);
         assert_eq!(report.not_removed, ["style"]);
         assert!(report.says_something());
-        // The next settle of the exchange finds the copy again: it is said once.
-        report.absorb(batch(&[], &["style"]));
+        // The other order.
+        let mut report = Changes::default();
+        report.absorb(settled(other, &["style"], &[]));
+        report.absorb(settled(team, &[], &["style"]));
+        assert_eq!(report.removed, ["style"]);
         assert_eq!(report.not_removed, ["style"]);
-        // A later batch that removed one copy and failed on the other again keeps it.
-        report.absorb(batch(&["style"], &["style"]));
+        // The next settle of the exchange finds the copy again: it is said once.
+        report.absorb(settled(team, &[], &["style"]));
         assert_eq!(report.not_removed, ["style"]);
 
-        // A later batch that removed the name takes the earlier failure back, and
-        // leaves a failure about another name alone.
+        // A later settle of the same circle that removed the skill takes the failure
+        // back, and leaves a failure about another name alone.
         let mut report = Changes::default();
-        report.absorb(batch(&[], &["style", "naming"]));
-        report.absorb(batch(&["style"], &[]));
+        report.absorb(settled(team, &[], &["style", "naming"]));
+        report.absorb(settled(team, &["style"], &[]));
         assert_eq!(report.removed, ["style"]);
         assert_eq!(report.not_removed, ["naming"]);
 
         // An earlier removal takes back nothing that failed after it.
         let mut report = Changes::default();
-        report.absorb(batch(&["style"], &[]));
-        report.absorb(batch(&[], &["style"]));
+        report.absorb(settled(team, &["style"], &[]));
+        report.absorb(settled(team, &[], &["style"]));
         assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["style"]);
+
+        // Both circles fail on the name and one of them removes it later: the other's
+        // failure stays.
+        let mut report = Changes::default();
+        report.absorb(settled(team, &[], &["style"]));
+        report.absorb(settled(other, &[], &["style"]));
+        report.absorb(settled(team, &["style"], &[]));
+        assert_eq!(report.not_removed, ["style"]);
+        report.absorb(settled(other, &["style"], &[]));
+        assert!(report.not_removed.is_empty());
+
+        // An entry that names no circle is never taken back.
+        let mut report = Changes {
+            not_removed: vec!["style".to_owned()],
+            ..Changes::default()
+        };
+        report.absorb(settled(team, &["style"], &[]));
         assert_eq!(report.not_removed, ["style"]);
     }
 
