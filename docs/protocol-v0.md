@@ -2331,6 +2331,14 @@ against the circle's day either.
   writes: a frame is read only in the form of section 11.3. The binaries up to 0.4.0
   also read a frame written as an array of its members, and a variant written as an
   object with a `null` in it. Nothing was decided differently for such a frame.
+* One change in place is about what a receiver keeps, and changed no object: a
+  PROPOSAL is kept whatever its `supersedes` or its repeal `target` names, and a repeal
+  takes a rule out of force only in that rule's scope (sections 12.5 and 14.4). The
+  binaries up to 0.4.0 refuse a PROPOSAL whose `supersedes` or `target` names a stored
+  event that the reference rules of section 8 do not allow. The two therefore hold
+  different records
+  only for a proposal that the stock commands do not write: they write no
+  `supersedes`, and a repeal with its target's scope.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.

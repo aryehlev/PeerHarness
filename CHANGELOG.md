@@ -168,6 +168,13 @@ database schema it writes.
   * The security model listed the programs PeerHarness starts wrongly, and read as if
     an advisory provider could be called. No command calls one. `doctor` says so.
 
+  The protocol stays `0.1` and the database schema is unchanged. Two things a node
+  does with what it receives changed in place and changed no object: a proposal is
+  kept whatever it names, and a frame is read in one form only (protocol document,
+  section 15). What was left as it is stands in ADR-051 and, where it is a limit for
+  whoever uses PeerHarness, in [docs/limits.md](docs/limits.md). How each fix was
+  checked is in [docs/checked.md](docs/checked.md).
+
 ## 0.4.0 (2026-11-11)
 
 * `peerharness keep <candidate>` saves a noted rule to your library and installs it for

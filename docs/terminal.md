@@ -124,6 +124,17 @@ allowed:
   key-file parameters of the tests (`--kdf-profile fast-insecure-test`), whether a
   flag asks for it or a `config.toml` that is already in the home. A plain `init`
   works there.
+* `peerharness observe import` and `peerharness observe demo`, which store text as
+  prompts you typed. Inside a session `note` is the one way to write something down.
+
+Two things are narrower inside a session and are not refused. A circle's name, given
+to `circle create` or to `circle join --name`, is one word there: letters and digits,
+with `.`, `_` and `-` after the first. The name is local to your machine and later
+windows show it among PeerHarness's own words; in your terminal you name a circle as
+you like, and
+the preview of a join shows the name before you answer. And `inbox` or `review` run
+by your agent do not count as you having seen a note: the line at the end of a turn
+still tells you that it waits.
 
 A note written inside a session is labelled "reported by your agent" in your inbox,
 whether or not the agent passed `--from-agent`, and at most 20 such notes wait at a
@@ -531,6 +542,11 @@ peerharness circle leave --circle team              # stop following now, and as
 # the ones it already cast included, so a result that needed one of them is open again.
 peerharness circle revoke <member or device key> --circle team
 ```
+
+A revocation cannot be taken back, and a device key that no member has can be revoked
+like any other. The preview says so when no member on the roll has the device, so that
+a mistyped key is noticed before the yes. `circle invite` shows the scopes of the new
+member beside the device (`--scope`, or `*` for all).
 
 What a revocation does to results that had passed, and what can go wrong with an
 import afterwards, is under [Known limits](limits.md).

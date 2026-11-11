@@ -2,17 +2,21 @@
 
 This page says how each part of PeerHarness was checked. It has the summary, then
 the table that says, part by part, what a test covers, what was run by
-hand and what was never tried, and at its end what followed the pre-launch check and
-the runs of the whole suite.
+hand and what was never tried, then what followed the pre-launch check and the runs
+of the whole suite, and at its end the second audit.
 
 *Tested* means an automated test covers it. *By hand* means a run during development
-that [decisions.md](decisions.md), the README's history or the pre-launch check
-records, on the version named. *Not tried* means no run is recorded.
+that [decisions.md](decisions.md), the README's history, the pre-launch check or
+the second audit records, on the version named. *Not tried* means no run is recorded.
 
 The pre-launch check is a check of the 0.4.0 tree as it was before the fixes, made
 with AI coding agents on 2026-11-10, which [decisions.md](decisions.md) calls the
 launch audit. Its report is not in the repository. What this page and the ADRs say it ran is
 all that is published of it.
+
+The second audit is a later check, of 0.4.0 as it was released, made with AI coding
+agents on 2026-11-11 ([ADR-051](decisions.md)). What it ran, and what was run again
+after its fixes, is in [the last section](#the-second-audit).
 
 ## In short
 
@@ -38,13 +42,18 @@ all that is published of it.
   with a debug build of this tree, on a pseudo-terminal: when the records of a rule
   that passed arrive on a node while its owner answers a prompt or types a
   passphrase, nothing is signed for a change to the charter, an approval of one, a
-  repeal or an announced opt-out.
+  repeal or an announced opt-out. On macOS 14.2 (arm64), with debug builds of 0.4.0
+  and of this tree and a stand-in window: the scripts with which the second audit
+  showed each fault, run again after the fix
+  ([the last section](#the-second-audit)).
 * **Not tried.** Clicking the buttons of the real window. The setup prompt of the
   README through an agent. A real agent noting, keeping, proposing, voting or joining.
   Internet mode between two different routers, over IPv6 or on Linux. `--lan` on
   Linux. The aarch64 Linux binary. The x86_64 macOS binary since v0.2.0. Of the
   release binaries of 0.4.0, the three that are not the aarch64 macOS one. A session
-  of Codex, opencode, Pi, Antigravity or DeepSeek Harness with a model. Windows is not supported.
+  of Codex, opencode, Pi, Antigravity or DeepSeek Harness with a model. A real window
+  for a text that the measure of ADR-051 lets through or refuses. `reset` on a node
+  whose keys are in the OS keychain. Windows is not supported.
 
 ## Part by part
 
@@ -65,12 +74,12 @@ section of [security-model.md](security-model.md#test-coverage).
 | Exchange across the internet (`--internet`) | tested against a private stand-in network. By hand on the real network on 2026-11-10, before v0.1.0, from one machine with both ends behind the same router. Not tried: two different routers, IPv6, Linux |
 | Finding members on a local network (`--lan`) | worked on macOS when it was built, before v0.1.0. Its tests need real multicast and do not run in CI, and no run of them is recorded. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
-| Deciding in a window from inside Claude Code | macOS only. Tested with a stand-in window: keeping a rule, proposing, voting, inviting and joining. By hand on macOS 14.2, before v0.1.0: the real window opened, closed unanswered and refused a text that does not fit. Not tried: clicking its buttons. Joining in a window fits a circle of up to about five members on a laptop screen |
+| Deciding in a window from inside Claude Code | macOS only. Tested with a stand-in window: keeping a rule, proposing, voting, inviting and joining. By hand on macOS 14.2, before v0.1.0: the real window opened, closed unanswered and refused a text that does not fit. Whether a text fits is measured by the window's own script before anything is shown ([ADR-051](decisions.md)): tested on macOS with the real `osascript`, the height of a screen given and the script ended where the dialog would begin. Not tried: clicking its buttons, and a real window for a text the measure lets through or refuses. Joining in a window fits a circle of up to about five members on a laptop screen |
 | The same steps as tools (`peerharness mcp`) | tested with a scripted client, a stand-in window and a stand-in network. By hand before v0.2.0, with Claude Code 2.1.322 on macOS, a stand-in window and a private network in place of the public one ([ADR-038](decisions.md)): asked in plain words, it read the device key, founded a circle, invited someone and kept the node reachable. Three runs, not a measure of how often an agent gets it right. No run with a real agent of noting, keeping, proposing, voting or joining is recorded. Other MCP clients: not tried |
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | `--notify` is macOS only. Tested with separate processes and a stand-in notification. By hand, once: macOS accepted the real notification, and whether the banner shows depends on your notification settings for Script Editor. The timer of `--sync-every` has no test beyond its argument |
 | Setting up (`peerharness setup`, and the prompt in [Set it up](../README.md#set-it-up)) | tested with a stand-in for Claude Code's `claude` command: it creates the node, connects the agent, registers the tools, changes nothing on a second run and is refused inside an agent's session. Without windows it ends with what works from the terminal, tested on Linux. A home whose settings allow windows, run where none can be shown: it says what still runs and how to turn that off, tested on Linux. A home that an interrupted `init` left, with a configuration file and a database without an identity: `setup` completes it, tested with a home made that way. The interruption itself, Ctrl-C at the passphrase prompt, was run by hand on a pseudo-terminal on Linux, before that fix. By hand: the three `claude mcp` commands it relies on, against Claude Code 2.1.322 with a throwaway configuration. Not tried: the prompt through an agent |
 | The other coding agents: Codex, opencode, Pi, Antigravity, DeepSeek Harness ([ADR-050](decisions.md)) | tested, for each of the five through the binary (`apps/peerharness/tests/other_agents.rs`): `setup` connects the agent it finds and no other, the tools entry is written where the agent reads it (DeepSeek Harness's is shown), a kept rule and PeerHarness's own skill are copied byte for byte where it reads skills (none for opencode), `skills uninstall` takes the copy out, a skill of the owner's own there and an entry of their own are left, a file with comments is not rewritten, and `--remove` takes out what was put in. Connecting, `keep` and `setup` are refused under each agent's variable. A debug build finds no agent outside `PEERHARNESS_AGENTS_HOME`. Unit tests for the copies (`ph_skills::mirror`) and for the edits of TOML and JSON (`ph_observer::agent_config`). By hand on 2026-11-12, on macOS 14.2, with a debug build and every agent in a throwaway home: **Codex 0.167.1** lists the server from the appended block, and its model's prompt input (`codex debug prompt-input`) lists both copied skills; the server answered `initialize` and `tools/list` with the twelve tools in the environment Codex gives an MCP server. **opencode 1.1.50** connected to the server (`opencode mcp list`) and lists both skills from Claude Code's directory (`opencode debug skill`). **Pi 1.5.2** connected to it with twelve tools exposed directly (`pi mcp list`) and lists both skills (RPC `get_commands`). **Antigravity 1.5.6** (`agy`, installed into the throwaway home) lists the server from its configuration (`agy mcp list`), and starts the servers configured there; both skills were copied to `~/.gemini/config/skills`, the directory its program names, but with no session (`agy acp` needs a Google login) it was not seen listing them. The environment it gives an MCP server carries no mark of Antigravity, which does not matter for the tools (the server marks its own commands); its program contains the literal `ANTIGRAVITY_AGENT=1` beside `TERM=dumb` and `PAGER=cat`, which is what its shell tool would set, but that was not seen. **DeepSeek Harness 0.2.2-rc.1** composed the entry PeerHarness shows (`dsh --dump-config`) and started a server given in that shape. The environment opencode and Pi give the programs they start carries `OPENCODE=1`, and `PI_CODING_AGENT=true` with `AI_AGENT=pi`; with exactly those marks, `keep`, `setup`, `watch codex --remove` and `rule opt-in` were refused with exit 3 and nothing changed. Not tried: any agent's session with a model, so the marks in its agent's own shell (Codex's `CODEX_CI`, DeepSeek Harness's `DSH_SHELL`) are read from their source, and Antigravity's `ANTIGRAVITY_AGENT` from its program, not seen; opencode 2.x |
-| Taking it out (`reset`) | tested: it explains first, deletes only when a person confirms, refuses a home that is a link, and afterwards lists the folder of each skill that is still installed |
+| Taking it out (`reset`) | tested: it explains first, deletes only when a person confirms, refuses a home that is a link, and afterwards lists the folder of each skill that is still installed. It deletes what PeerHarness put into its home and nothing else, refuses the user's home directory under every spelling, and deletes a node whose database cannot be read ([ADR-051](decisions.md)). By hand on macOS: a home in a folder that also held `src`, `.git` and a note, which stayed. Not tried: a node whose keys are in the OS keychain |
 | The install script and the release binaries | the script is tested against a stand-in release: a matching checksum installs, a changed archive does not. In the pre-launch check, on 2026-11-10, the script installed the v0.3.0 x86_64 Linux binary in a container: the checksum matched, and the binary ran `demo` and two processes voting over QUIC on loopback. The aarch64 Linux binary has not been run. On 2026-11-11, after v0.4.0 was published, the script installed the v0.4.0 aarch64 macOS binary into a temporary folder on macOS 14.2 (Apple Silicon): the checksum matched, and the binary ran `demo` to its end. For the x86_64 macOS binary the last run on record is of v0.2.0. The three other binaries of 0.4.0 have not been run |
 | The two-process demo script (`demo/two-peers.sh`) | tested on Linux with the binary of this tree named by `PEERHARNESS_BIN` and a `cargo` that fails if it is called; the test asserts that the step that reads the rule prints its name and description. By hand in the second review: the script with the v0.3.0 x86_64 Linux release binary, and the filter of that step against that binary and a build of this tree, with the same nine lines from both. The release binaries of 0.4.0 had not been run with this script when this page was tagged |
 | Windows | not supported |
@@ -142,3 +151,70 @@ connection that the stand-in network forgets when it closes, and the third revie
 saw its file fail 2 times in 18 runs. The control now waits for a question the
 stand-in network keeps. After that change the file was run 25 times in a row on
 Linux, 10 of them under load, and passed each time.
+
+## The second audit
+
+On 2026-11-11, after 0.4.0 was released, eight AI coding agents each attacked one
+area of the tree as it was at commit `d71d62c`: the protocol parser, the counting of
+votes, the life of a circle, the network, skills, consent and windows, keys and the
+store, hooks and learning. They ran on macOS 14.2 (arm64) with debug builds, in
+temporary homes, with a stand-in window and on loopback only. A claim counted only
+after the agent that led the audit had read the code for it and run its reproduction
+again. What was confirmed, what was changed and what was left is
+[ADR-051](decisions.md). Like the pre-launch check and the five reviews, the audit
+and the fixes were made with AI coding agents, and no one who is not one has reviewed
+them. It is not a security audit by a third party.
+
+Each fix has a test, which ADR-051 names. Where the audit had shown a fault with a
+script, the script was run again with a build of the fixed tree, on the same machine.
+Those runs are by hand: their outputs are not in the repository.
+
+| What was found in 0.4.0 | Tested | By hand, after the fix |
+|---|---|---|
+| A member could send two proposals in two orders and leave one node without a rule that passed; a repeal from another scope could count | unit tests of both orders, and of the rule set | the node that had refused the proposal imported the same file again, kept it and installed the rule |
+| A rule could carry syntax that Claude Code runs as a command when the skill loads | tests, and a property that holds the detector against a model of Claude Code's two patterns | the sentence of the audit, given to `note`: 0.4.0 stored it and `keep` installed it; this tree refuses it at `note`, and at `keep` for the note 0.4.0 had stored |
+| `reset --confirm` deleted everything in a home, also files that were not PeerHarness's | tested | a home in a folder with `src`, `.git` and a note. Not tried: the OS keychain |
+| A request that panicked stopped a daemon's node and left its process running | a unit test | none |
+| A window could be taller than the screen | on macOS, with the real `osascript` and no dialog shown | none: no window was opened |
+| A member's text could add lines to the inbox, the list of questions and the list of rules | tested | the three scripts of the audit |
+| A rule could stay installed with no record that a vote installed it | a unit test | an adoption while another connection held the database for nine seconds |
+| An opt-out in one team removed a copy that another team's rule still needed | unit tests | the script of the audit |
+| The same event, signed twice by its author, was rewritten in a shared directory at every sync | a unit test | two nodes and a git repository: after one conflict, three rounds of sync by each wrote nothing |
+| A large file in a shared directory was read into memory | a test with a sparse file of 1 GiB | a file of 2 GiB: 15.5 MiB at the peak for `events sync` |
+| Files that are no records stopped `events sync` for a team | tested | 65 such files: the sync and the import end with exit code 0 and report them |
+| A frame was read in forms the protocol does not have | tested; the golden vectors did not change | none |
+| A plaintext keystore and the weak key-file profile were warned about only at `init`, or not at all | tested | the two scripts of the audit |
+| A `circle create` that failed left a root key behind | tested, with six runs at once | one root key where the script had left nine |
+| `init` in a folder whose path holds a tab or a line break left a home that could not be used | tested | the script of the audit. Not tried: a path longer than 1024 bytes |
+| One member's hundred questions hid everyone else's | tested | three nodes: the next member's question is shown |
+| A `Stop` hook that met a busy database lost lines of the spool | tested | 200 lines with the database held by `sqlite3` and the hook killed after three seconds: all 200 were stored afterwards, where 0.4.0 kept 8 |
+| Connecting Claude Code rewrote numbers elsewhere in its settings file | tested | a line of ten such numbers came back character for character |
+| An agent that read the inbox kept its owner from being told about a note | tested, under two marks of a session | the hook prints its line after the agent's `inbox` |
+| More than 20 notes of an agent could wait, and a session could add observations as the owner's | tested | 60 notes at the same moment left exactly 20, four runs out of four; the import is refused |
+| An invitation did not show the scopes it gave | tested, in the terminal and with a stand-in window | the window says the scopes that the roll then holds |
+| A circle's name could put a sentence into later windows | tested, with six names that are refused | the join under such a name is refused and no window is asked |
+| `proposal show` printed a rule nobody had voted on into an agent's session | tested | the session gets one line in place of the text |
+| `setup` handed the passphrase of the key file to the `claude` command | tested with a stand-in `claude` | none. Not tested: the same for `osascript` and `kill` |
+| `circle revoke` took a key that no member has without a word | tested | none |
+
+Three more changes were to what a command or a document says, and have a test where a
+command says it: what `circle members` and a ballot say about an advisory team, what
+`rule list` says about a team its owner left, and the list of programs PeerHarness
+starts in the security model.
+
+Not changed, and listed in ADR-051 under "Seen in passing and not changed" or in
+[limits.md](limits.md): votes cast at the same moment can leave several RESULT
+records for one proposal, which count as one; an import retries the lines it could
+not place yet in whole passes; a process inside a session can hand the hook a prompt
+it made up.
+
+The whole suite was run on 2026-11-12 on a Mac (macOS 14.2, arm64, Rust
+1.93.0-nightly), on the tree of commit `59ba4c7`, which holds every fix and `main` as
+it was at `774d855`: 1033 tests passed, none failed, and the same 10 were skipped.
+`cargo fmt --all --check` passed on that tree, and so did `cargo clippy` with `-D
+warnings` under that toolchain and under stable (1.91.0), and `cargo +1.89 check`.
+Each commit before it was checked with `cargo fmt`, `cargo clippy` and the tests of
+the files it touches, and the suite was run once in between, before the last five
+commits of fixes: 1025 passed and none failed. No run of the suite was made on Linux outside CI.
+`cargo deny` and `cargo audit` are not installed on that Mac and were not run there:
+the fixes add no crate and `Cargo.lock` did not change, and CI runs both.
