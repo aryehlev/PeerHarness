@@ -205,18 +205,14 @@ rule alone.
   while its session is open. There is no background service yet.
 * **Internet mode** shows your node's public key and IP address to servers run by
   volunteers.
-* **Not tried yet:** clicking the buttons of the real window, a real agent noting,
-  keeping, proposing, voting or joining, and internet mode between two different
-  routers. The tests run these against stand-ins.
 
-The full list is in [docs/limits.md](docs/limits.md), and how each part was checked
-is in [docs/checked.md](docs/checked.md).
+The full list is in [docs/limits.md](docs/limits.md).
 
 ## Documentation
 
 * [docs/terminal.md](docs/terminal.md): every step as a command, the other ways to exchange, and how to take it out again
 * [docs/limits.md](docs/limits.md): what it does not do, or not yet
-* [docs/checked.md](docs/checked.md): how each part was checked, and what was never tried
+* [docs/checked.md](docs/checked.md): how each part was checked
 * [docs/security-model.md](docs/security-model.md): threats, guarantees and limits
 * [docs/architecture.md](docs/architecture.md): the internal contract every crate follows
 * [docs/protocol-v0.md](docs/protocol-v0.md): the wire format, for a second implementation

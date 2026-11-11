@@ -169,8 +169,7 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    published release of a public repository.
 7. Say what was checked on the published release, and what was not: in
    `docs/checked.md` (its summary and the row about the install script and the
-   release binaries), and in the README's "Limits" where that changes what is listed
-   there as not tried. Open that pull request right away: it is part of the
+   release binaries). That account stays there and does not go into the README. Open that pull request right away: it is part of the
    release, not a follow-up.
 8. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
    and tag again. Never replace the assets of a published release; publish a new patch

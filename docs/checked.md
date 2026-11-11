@@ -1,7 +1,7 @@
 # What was checked, and how
 
-The [README](../README.md#limits) names what was never tried. This page has the
-summary, then the table that says, part by part, what a test covers, what was run by
+This page says how each part of PeerHarness was checked. It has the summary, then
+the table that says, part by part, what a test covers, what was run by
 hand and what was never tried, and at its end what followed the pre-launch check and
 the runs of the whole suite.
 

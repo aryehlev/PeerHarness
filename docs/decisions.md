@@ -3099,7 +3099,9 @@ What it held beyond that moved, without a change of content:
 The README's own list keeps what a person should know before the first run: what
 the agent guard does not stop, that a rule is text an agent acts on, that joining
 installs rules that were not shown, the founder's revocation, the open ballot, when a node
-is reachable, what internet mode shows, and what was never tried.
+is reachable and what internet mode shows. What was tested, run by hand and never
+tried is not in the README: the owner took it out, and it stays in
+`docs/checked.md`.
 
 **Rejected.** Cutting limits instead of moving them: a limit that is written nowhere
 is not stated, and the brief asks for an honest README. Folding the long lists away
