@@ -3744,3 +3744,51 @@ a command that signs on a plaintext node prints the warning with no `-v`, a plai
 `init` over a config file with the test profile warns, `circle create` after the
 profile was written into the config file warns, and the flag inside a session is
 refused.
+
+### A circle that is not founded leaves no root key
+
+**Found.** `circle create` wrote the circle's root key to the keystore first. The
+name was checked afterwards, by the insert into the database, and so was whether
+another circle had taken the name meanwhile. When either failed the key stayed: a
+root key of no circle. Three refused names left three keys, and six runs at once
+under one name left five. No command listed such a key and `reset` did not name it.
+
+**Decision.** The name is checked before a key exists (`ph_store::check_circle_name`,
+the check `insert_circle` makes). When founding fails after the key was written, the
+key is deleted again, unless the store holds the circle by then: in that case the key
+is the circle's, and the only one there will ever be. When the store cannot be
+asked, the key stays.
+
+**Not changed.** The key is still written before the circle is stored: the circle's
+id is derived from the key. Keys that 0.4.0 left in a keystore are not looked for.
+In a key-file keystore they are the files `keys/circle-root-<id>.key` whose id no
+circle of `circle list` has.
+
+**Tests.** `a_circle_that_is_not_founded_leaves_no_root_key`
+(`apps/peerharness/tests/first_run.rs`): three names that are refused, six runs at
+once of which one founds the circle, and the one key left is that circle's. The
+audit's script, run again, ends with one root key where it ended with nine.
+
+### A home whose path cannot be recorded gets nothing
+
+**Found.** The database records where the device key is, and for a key file that is
+its path. The store refuses a reference with a control character. `init` in a home
+whose path held a tab or a line break wrote the config file, the database and the
+key file, and failed at the last step with "invalid keystore reference: control
+character". Everything stayed, since a key was in the keystore by then, and every
+later `init` adopted the key and failed in the same place. The home could not be
+used and did not say why.
+
+**Decision.** `init` asks the keystore for the reference before a key exists and
+checks it with the store's own rule (`ph_store::check_keystore_ref`). A reference
+that cannot be recorded ends the run with a message that names the cause, and what
+the run had made until then is removed, as for every `init` that fails before the
+key.
+
+**Not tested.** A path longer than 1024 bytes, which the same check refuses: macOS
+does not make one.
+
+**Tests.** `a_home_whose_path_cannot_be_recorded_gets_nothing`
+(`apps/peerharness/tests/first_run.rs`): a tab and a line break in the path, twice
+each, a folder that already held its owner's file, and a path with a space, a quote
+and a letter outside ASCII, which works. The audit's script was run again.

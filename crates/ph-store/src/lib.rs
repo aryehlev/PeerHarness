@@ -79,12 +79,12 @@ pub use candidates::{
     CandidateId, CandidateRow, MAX_CANDIDATE_EVIDENCE, MAX_CANDIDATE_TEXT_BYTES,
     MAX_SKILL_DRAFT_BYTES,
 };
-pub use circles::{CircleRow, ADOPTION_MODES};
+pub use circles::{check_circle_name, CircleRow, ADOPTION_MODES};
 pub use error::{Result, StoreError};
 pub use events::{
     EventFilter, InsertOutcome, MissingEvents, MissingQuery, StoredEvent, DEFAULT_SYNC_MAX_BYTES,
 };
-pub use identity::{IdentityMetadata, MAX_KEYSTORE_REF_BYTES};
+pub use identity::{check_keystore_ref, IdentityMetadata, MAX_KEYSTORE_REF_BYTES};
 pub use membership::{
     IssuedInviteRow, MembershipRow, RevocationInsert, RevocationRow, UpsertOutcome,
 };

@@ -640,6 +640,98 @@ fn a_failing_init_never_takes_apart_what_another_init_made() {
     assert!(made > 0, "no round ever made a node");
 }
 
+/// A home whose path cannot be recorded is refused before a key is written (ADR-050).
+/// The path of a key file is stored in the database, which takes no control character.
+/// That used to be found out after the key file, the config file and the database
+/// were there: the run failed, left all three, and every later `init` in that home
+/// failed in the same place.
+#[test]
+fn a_home_whose_path_cannot_be_recorded_gets_nothing() {
+    let tmp = TempDir::new().unwrap();
+    for (name, folder) in [("tab", "ho\tme"), ("line", "ho\nme")] {
+        let mut node = Node::bare(tmp.path(), name);
+        node.home = tmp.path().join(name).join(folder);
+        // Twice: the first run leaves nothing that the second trips over.
+        for _ in 0..2 {
+            let (code, said) = node.fails(&["init", "--keystore", "file"]);
+            assert_eq!(code, 2, "{said}");
+            assert!(said.contains("control character"), "{said}");
+            assert!(said.contains("Nothing was created"), "{said}");
+            assert!(!node.home.exists(), "{name}: {said}");
+        }
+    }
+
+    // A folder that was there keeps what its owner had in it, and gets nothing else.
+    let mut used = Node::bare(tmp.path(), "used");
+    used.home = tmp.path().join("used").join("ho\tme");
+    std::fs::create_dir_all(&used.home).unwrap();
+    std::fs::write(used.home.join("notes.txt"), "mine").unwrap();
+    let (code, said) = used.fails(&["init", "--keystore", "file"]);
+    assert_eq!(code, 2, "{said}");
+    let left: Vec<_> = std::fs::read_dir(&used.home)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["notes.txt"], "{said}");
+
+    // A path with a space, a quote and a letter outside ASCII is a path like any other.
+    let mut fine = Node::bare(tmp.path(), "fine");
+    fine.home = tmp.path().join("fine").join("my home 'é\"");
+    fine.ok(&["init", "--keystore", "file"]);
+    assert!(fine.ok(&["status"]).contains("keystore"));
+}
+
+/// A circle that was not founded leaves no root key (ADR-050). The key used to be
+/// written to the keystore before the name was checked and before the circle was
+/// stored, and it stayed when either failed: a key of no circle, which `reset` could
+/// not name.
+#[test]
+fn a_circle_that_is_not_founded_leaves_no_root_key() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let root_keys = || -> Vec<String> {
+        std::fs::read_dir(node.home.join("keys"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("circle-root-"))
+            .collect()
+    };
+
+    // --- A name the store does not take: refused before a key exists.
+    let long = "x".repeat(100);
+    for name in [long.as_str(), "te\tam", ""] {
+        let (code, said) = node.fails(&["circle", "create", name, "--member", "alice"]);
+        assert_eq!(code, 2, "{name:?}: {said}");
+        assert!(said.contains("circle name"), "{said}");
+        assert!(root_keys().is_empty(), "{name:?}: {:?}", root_keys());
+    }
+
+    // --- Six at once under one name. Each makes a key of its own before the store
+    // decides, and one of them founds the circle: the others take their key out.
+    let won = std::thread::scope(|scope| {
+        let runs: Vec<_> = (0..6)
+            .map(|_| scope.spawn(|| node.out(&["circle", "create", "same", "--member", "alice"])))
+            .collect();
+        runs.into_iter()
+            .map(|run| run.join().unwrap())
+            .filter(|out| out.status.success())
+            .count()
+    });
+    assert_eq!(won, 1);
+    // The one key that is left is the circle's.
+    let circle = node.json(&["circle", "members", "--circle", "same"])["circle_id"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("sha256:")
+        .to_owned();
+    assert_eq!(root_keys(), [format!("circle-root-{circle}.key")]);
+
+    // --- A name that is taken: refused, and still one key.
+    let (_, said) = node.fails(&["circle", "create", "same", "--member", "alice"]);
+    assert!(said.contains("already exists"), "{said}");
+    assert_eq!(root_keys().len(), 1);
+}
+
 #[test]
 fn circle_invite_has_no_option_that_does_nothing() {
     let tmp = TempDir::new().unwrap();

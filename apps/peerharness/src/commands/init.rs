@@ -164,6 +164,19 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
 
         let store = Store::open(home.db_path()).context("cannot create the database")?;
         let ks = open_configured_keystore(home, &cfg, backend)?;
+        // Where the key will be is recorded in the database, and a key file's
+        // reference is its path. It is checked before a key exists (ADR-050): a home
+        // whose path holds a tab or a line break, or is too long, used to be found out
+        // after the key was written, and every later `init` failed in the same place.
+        let keystore_ref = ks.locator(DeviceIdentity::LABEL)?;
+        if ph_store::check_keystore_ref(&keystore_ref).is_err() {
+            return Err(usage(
+                "the path of this home cannot be recorded for the key file: it holds a \
+                 control character (a tab, a line break) or is longer than 1024 bytes. \
+                 Nothing was created. Choose another folder with --home or \
+                 PEERHARNESS_HOME",
+            ));
+        }
         let dev = if DeviceIdentity::exists(&*ks)? {
             key_in_keystore.set(true);
             // A previous init stored the key but not the metadata: adopt it.

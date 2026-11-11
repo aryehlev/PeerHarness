@@ -102,6 +102,12 @@ database schema it writes.
     A config file that named `fast-insecure-test` made `init`, and later `circle
     create`, encrypt key files weakly with no warning, and a session could pass the
     flag. Both now warn, and `init` refuses the profile inside an agent's session.
+  * `circle create` no longer leaves a root key in the keystore when it fails. A
+    name that is refused is refused before a key is written, and a key is taken out
+    again when the team could not be stored.
+  * `init` in a folder whose path holds a tab or a line break is refused before
+    anything is written. It used to write a key file and a database, fail, and fail
+    again at every later run.
 
 ## 0.4.0 (2026-11-11)
 

@@ -215,23 +215,43 @@ fn create(ctx: &Ctx, name: &str, member: Option<&str>) -> Result<Report> {
             "a circle named {name:?} already exists here"
         )));
     }
+    // Before a key exists (ADR-050): a name the store would refuse used to be found
+    // out after the circle's root key was in the keystore, where it stayed.
+    ph_store::check_circle_name(name).map_err(|e| usage(e.to_string()))?;
     let now = node.now();
     let device = node.device()?;
+    let keystore = node.keystore()?;
     let (authority, circle_id) =
-        CircleAuthority::create(node.keystore()?).context("cannot create the circle root key")?;
-    let founder = RollEntry::new(&handle, vec![device.public()], vec![Scope::all()]);
-    let charter = governance::found_circle(
-        &node.store,
-        &authority,
-        name,
-        founder,
-        Some(authority.keystore_label()),
-        now,
-    )?;
-    // The founder's own credential, for the network transport later on.
-    let credential = authority.issue_founder_credential(device.public(), now)?;
-    let proof = accept_credential(&credential, device, now)?;
-    node.store.upsert_membership_proof(&proof, true, now)?;
+        CircleAuthority::create(keystore).context("cannot create the circle root key")?;
+    let founded = (|| -> Result<Charter> {
+        let founder = RollEntry::new(&handle, vec![device.public()], vec![Scope::all()]);
+        let charter = governance::found_circle(
+            &node.store,
+            &authority,
+            name,
+            founder,
+            Some(authority.keystore_label()),
+            now,
+        )?;
+        // The founder's own credential, for the network transport later on.
+        let credential = authority.issue_founder_credential(device.public(), now)?;
+        let proof = accept_credential(&credential, device, now)?;
+        node.store.upsert_membership_proof(&proof, true, now)?;
+        Ok(charter)
+    })();
+    let charter = match founded {
+        Ok(charter) => charter,
+        Err(e) => {
+            // A key with no circle is of no use to anyone, and `reset` could not name
+            // it. It is taken out again, unless the circle did get stored: then the
+            // key is that circle's, and the only one there will ever be. When the
+            // store cannot be asked, the key stays.
+            if matches!(node.store.circle(&circle_id), Ok(None)) {
+                let _ = keystore.delete(&authority.keystore_label());
+            }
+            return Err(e);
+        }
+    };
 
     let mut t = Text::new();
     t.line(format!("Founded the circle {}.", safe(name)));
