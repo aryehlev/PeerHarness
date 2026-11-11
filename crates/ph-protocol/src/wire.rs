@@ -15,8 +15,9 @@
 //! `fetch_bundle`. Response types: `hello`, `authenticated`, `push_result`, `events`,
 //! `bundle`, `error`. Unknown members are rejected. [`Request::to_bytes`] emits JCS
 //! canonical JSON; [`Request::from_bytes`] parses strictly (512 KiB, depth
-//! [`MAX_FRAME_DEPTH`], duplicate keys) and enforces every collection bound with
-//! `validate()`.
+//! [`MAX_FRAME_DEPTH`], duplicate keys), takes a frame only in the form `to_bytes`
+//! writes (an object with its members by name, never an array of them) and enforces
+//! every collection bound with `validate()`.
 //!
 //! Framing (4-byte big-endian length prefix) is done by `ph-network`.
 //!
@@ -286,9 +287,30 @@ fn encode<T: Serialize>(t: &T) -> Result<Vec<u8>, ProtocolError> {
     Ok(bytes)
 }
 
-fn decode<T: DeserializeOwned>(bytes: &[u8], object: &'static str) -> Result<T, ProtocolError> {
+/// Parses one frame body: one JSON object, in exactly the form [`encode`] writes.
+///
+/// The derived deserializers take more than that form. A struct is also read from an
+/// array of its members in order (`["hello",["0.1"]]`), and a variant without fields
+/// from an object (`{"unauthorized":null}`), which is an explicit `null` besides.
+/// Neither is a frame of this protocol, and a second way to write a frame is a way
+/// for two implementations to read one frame differently. So the typed value is
+/// written out again and has to be the value that was read (ADR-050): an array where
+/// an object belongs, another spelling of a variant and an empty list that is
+/// transmitted where the member is omitted are all refused. Events inside a frame
+/// are raw values here and have their own strict check.
+fn decode<T: DeserializeOwned + Serialize>(
+    bytes: &[u8],
+    object: &'static str,
+) -> Result<T, ProtocolError> {
     let v = jcs::parse_strict(bytes, ParseLimits::FRAME)?;
-    serde_json::from_value(v).map_err(|_| ProtocolError::Schema { object })
+    if !v.is_object() {
+        return Err(ProtocolError::Schema { object });
+    }
+    let typed = T::deserialize(&v).map_err(|_| ProtocolError::Schema { object })?;
+    if jcs::to_value(&typed)? != v {
+        return Err(ProtocolError::Schema { object });
+    }
+    Ok(typed)
 }
 
 impl Request {

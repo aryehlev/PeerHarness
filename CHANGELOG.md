@@ -90,6 +90,10 @@ database schema it writes.
     and when a directory holds more than may be read the command says how many
     files it did not read. An import gives a reason for everything it refused
     (`rejection_codes` with `--json`).
+  * A frame from a peer is read only in the form the protocol gives it. A frame
+    written as an array of its members, or with a variant spelled as an object with
+    a `null` in it, was read as if it were the real one, and is refused now. No
+    frame a released binary sends is affected (protocol section 11.3).
 
 ## 0.4.0 (2026-11-11)
 

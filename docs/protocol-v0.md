@@ -1091,6 +1091,15 @@ Every frame body is one JSON object tagged by a `"type"` member whose value is t
 snake_case message name. The message fields are siblings of `"type"`. Unknown members
 are rejected.
 
+A frame has this one form, and a receiver MUST refuse every other: an array of the
+members in place of an object (`["hello",["0.1"]]`), for the frame or for an object
+inside it, another spelling of a value (`{"unauthorized":null}` for `"unauthorized"`),
+and a member that its sender is to omit (an empty `circles`, section 11.5). The
+reference implementation writes the frame it decoded out again and requires the result
+to be the value it read. Member order and whitespace are not form. The events inside
+`push_events` and `events` are checked one by one (section 7.4), so that one bad event
+does not cost the frame.
+
 | request `type` | response `type` on success |
 |---|---|
 | `hello` | `hello` |
@@ -2312,6 +2321,10 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   `fetch_events` that carries `after` with `bad_request`; and fails to read an
   `authenticated` that carries `circles`. A session between such a node and a current
   one therefore fails as soon as one of these members is sent.
+* One change in place narrowed what a receiver takes and changed no frame a sender
+  writes: a frame is read only in the form of section 11.3. The binaries up to 0.4.0
+  also read a frame written as an array of its members, and a variant written as an
+  object with a `null` in it. Nothing was decided differently for such a frame.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.
@@ -2502,7 +2515,7 @@ or different:
   envelopes nest two levels inside them. Each embedded envelope is still limited to 8.
 * **Strictness.** Besides rejecting unknown members at every level, the source rejects
   explicit `null` for optional members and requires an exact re-serialization round
-  trip.
+  trip, of an envelope and of a frame (section 11.3).
 * **Size checks.** The 64 KiB envelope limit applies to the received bytes and to the
   canonical transmitted form (with `signature` and `event_id`).
 * **MEMBERSHIP events.** The envelope scope must be `*` or covered by a credential

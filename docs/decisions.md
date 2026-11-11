@@ -3669,3 +3669,34 @@ genuine records is read up to there, and says so.
 (`apps/peerharness/src/carrier.rs`). The audit's script, run again: with the 65
 files in place `events sync` and `events import` end with exit code 0, report
 "refused (not_a_record): 65" and write and import what there is.
+
+### A frame is read in one form only
+
+**Found.** `wire::decode` parsed a frame strictly and then handed it to the derived
+deserializers, which take more than the protocol's form. `["hello",["0.1"]]` was a
+`hello`, `["fetch_events","sha256:…",[],5]` a `fetch_events`, and
+`{"type":"error","code":{"unauthorized":null}}` an error answer, with an explicit
+`null` in it. The same held inside a frame: a result of `push_events` or a file of a
+bundle written as an array. The protocol document said "every frame body is one JSON
+object" and that the source "requires an exact re-serialization round trip". That
+was true of an envelope and not of a frame. No such frame was authorized or answered
+differently from the frame it stood for. It was a second way to write every frame,
+which a second implementation would have read differently or not at all.
+
+**Decision.** `decode` takes an object only, writes the typed value out again and
+requires it to be the value that was read. That refuses the array forms at every
+level, the other spelling of a variant, and a list that is sent empty where its
+sender is to omit it (`"circles":[]`). Section 11.3 of the protocol says what a
+receiver refuses, and section 15 says that the binaries up to 0.4.0 read more.
+
+**Rejected.** Hand-written deserializers for each type that refuse a sequence: the
+round trip is one check for every type a frame holds now and later, and it is the
+check an envelope already has.
+
+**Not changed.** What a sender writes: every frame of a released binary is read as
+before. The events inside a frame stay raw values that are checked one by one.
+
+**Tests.** `a_frame_in_any_form_but_the_encoders_is_refused`
+(`crates/ph-protocol/tests/adversarial.rs`): the frames the audit found accepted,
+each beside the form the encoder writes, and a proof inside `authenticate` written
+as an array. The golden vectors did not change.
