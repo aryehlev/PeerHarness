@@ -271,12 +271,67 @@ fn stop(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// Width the script lays the text out in to measure it, in points. A dialog's text
+/// column is a little under 300 points wide ([`ROW_WIDTH`]): a narrower column never
+/// gives a lower text.
+const MEASURE_WIDTH: u32 = 280;
+
+/// The opening of every script: AppKit, for the screens and for laying out text.
+const SCRIPT_HEAD: &str = "use framework \"Foundation\"\n\
+                           use framework \"AppKit\"\n\
+                           use scripting additions\n";
+
+/// AppleScript lines that set `least` to the usable height of the smallest screen
+/// attached, in points.
+const SMALLEST_SCREEN: &str = "\tset least to 100000\n\
+     \trepeat with s in (current application's NSScreen's screens() as list)\n\
+     \t\tset f to s's visibleFrame()\n\
+     \t\ttry\n\
+     \t\t\tset h to (item 2 of item 2 of f) as real\n\
+     \t\ton error\n\
+     \t\t\tset h to (height of |size| of f) as real\n\
+     \t\tend try\n\
+     \t\tif h < least then set least to h\n\
+     \tend repeat\n";
+
+/// AppleScript lines that return `too-tall` when a dialog with `text` would be higher
+/// than `least` points. They show nothing.
+///
+/// The height is taken twice and the larger one counts. `rows` is this module's
+/// estimate ([`rows`]). The other is AppKit's own layout of the text, in the bold
+/// system font a dialog uses and in a column a little narrower than a dialog's
+/// ([`MEASURE_WIDTH`]). The estimate alone was not enough (ADR-050): it gives every
+/// character at most 18 points of a row 16 points high, and a script whose glyphs
+/// come from a fallback font can be several times wider and higher than that. Such a
+/// text was estimated to fit, was shown, and was cut off by the screen.
+fn too_tall_check(text: &str, rows: usize) -> String {
+    format!(
+        "\tset str to current application's NSString's stringWithString:{text}\n\
+         \tset fnt to current application's NSFont's boldSystemFontOfSize:13\n\
+         \tset attrs to current application's NSDictionary's \
+         dictionaryWithObject:fnt forKey:(current application's NSFontAttributeName)\n\
+         \tset box to str's boundingRectWithSize:{{width:{MEASURE_WIDTH}, height:1000000}} \
+         options:3 attributes:attrs\n\
+         \ttry\n\
+         \t\tset tall to (item 2 of item 2 of box) as real\n\
+         \ton error\n\
+         \t\tset tall to (height of |size| of box) as real\n\
+         \tend try\n\
+         \tset needed to {estimated}\n\
+         \tif tall + {CHROME_HEIGHT} > needed then set needed to tall + {CHROME_HEIGHT}\n\
+         \tif needed > least then return \"too-tall\"\n",
+        text = applescript_literal(text),
+        estimated = rows * ROW_HEIGHT + CHROME_HEIGHT,
+    )
+}
+
 /// The AppleScript that shows `text` and prints one word for the answer.
 ///
-/// Before showing anything it compares the height the text needs (`rows` rows) with the
-/// usable height of the smallest screen attached, and prints `too-tall` when the dialog
-/// would not fit: a dialog taller than its screen is cut off, and the person would
-/// confirm a text they saw part of.
+/// Before showing anything it compares the height the text needs with the usable
+/// height of the smallest screen attached ([`too_tall_check`]), and prints `too-tall`
+/// when the dialog would not fit: a dialog taller than its screen is cut off, and the
+/// person would confirm a text they saw part of. If the text cannot be measured, the
+/// script prints `failed` and shows nothing.
 ///
 /// "Cancel" is the default button and the cancel button, so the return key and the
 /// escape key both decline (AppleScript reports that as error -128). The script prints
@@ -284,20 +339,10 @@ fn stop(child: &mut Child) {
 /// a screen, prints `failed`.
 fn applescript(text: &str, rows: usize) -> String {
     format!(
-        "use framework \"AppKit\"\n\
-         use scripting additions\n\
+        "{SCRIPT_HEAD}\
          try\n\
-         \tset least to 100000\n\
-         \trepeat with s in (current application's NSScreen's screens() as list)\n\
-         \t\tset f to s's visibleFrame()\n\
-         \t\ttry\n\
-         \t\t\tset h to (item 2 of item 2 of f) as real\n\
-         \t\ton error\n\
-         \t\t\tset h to (height of |size| of f) as real\n\
-         \t\tend try\n\
-         \t\tif h < least then set least to h\n\
-         \tend repeat\n\
-         \tif {needed} > least then return \"too-tall\"\n\
+         {SMALLEST_SCREEN}\
+         {check}\
          \tactivate\n\
          \tset r to display dialog {text} with title {title} \
          buttons {{{cancel}, {proceed}}} default button {cancel} cancel button {cancel} \
@@ -309,7 +354,7 @@ fn applescript(text: &str, rows: usize) -> String {
          if gave up of r then return \"gave-up\"\n\
          if button returned of r is {proceed} then return \"proceed\"\n\
          return \"declined\"\n",
-        needed = rows * ROW_HEIGHT + CHROME_HEIGHT,
+        check = too_tall_check(text, rows),
         text = applescript_literal(text),
         title = applescript_literal(TITLE),
         cancel = applescript_literal(CANCEL),
@@ -418,12 +463,141 @@ mod tests {
     #[test]
     fn the_script_checks_the_screen_before_it_shows_anything() {
         let script = applescript("hello", 10);
-        // 10 rows of 16 points and the rest of the dialog.
-        assert!(script.contains("if 288 > least then return \"too-tall\""));
+        // 10 rows of 16 points and the rest of the dialog, or what AppKit measured
+        // with the rest of the dialog, whichever is more.
+        assert!(script.contains("set needed to 288\n"));
+        assert!(script.contains("if tall + 128 > needed then set needed to tall + 128\n"));
+        assert!(script.contains("if needed > least then return \"too-tall\""));
+        let measured = script.find("boundingRectWithSize").unwrap();
         let check = script.find("too-tall").unwrap();
         let shown = script.find("display dialog").unwrap();
-        assert!(check < shown);
+        assert!(measured < check && check < shown);
+        // Nothing that shows a window stands before the check.
+        assert!(!script[..check].contains("activate"));
         assert_eq!(parse(true, "too-tall\n"), Answer::TooTall);
+    }
+
+    /// Runs `script` with the real `osascript` and returns what it printed. Only for
+    /// scripts that show nothing.
+    #[cfg(target_os = "macos")]
+    fn osascript(script: &str) -> String {
+        assert!(!script.contains("display dialog") && !script.contains("activate"));
+        let mut child = Command::new(OSASCRIPT)
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// The whole script, as it is given to `osascript` for a window, is AppleScript
+    /// that compiles. `osacompile` compiles and runs nothing, so no window is shown.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_whole_script_compiles() {
+        let dir = tempfile::tempdir().unwrap();
+        for text in ["hello", "two\nlines \"quoted\" \\ and \u{1242B}"] {
+            let mut child = Command::new("/usr/bin/osacompile")
+                .arg("-o")
+                .arg(dir.path().join("window.scpt"))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(applescript(text, rows(text)).as_bytes())
+                .unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    /// What the check of the real script says about `text` on a screen `least` points
+    /// high: `too-tall`, or `fits` where the script would go on to show the dialog.
+    /// No window is shown: the script ends where the dialog would begin.
+    #[cfg(target_os = "macos")]
+    fn checked(text: &str, least: usize) -> String {
+        osascript(&format!(
+            "{SCRIPT_HEAD}\tset least to {least}\n{}\treturn \"fits\"\n",
+            too_tall_check(text, rows(text))
+        ))
+    }
+
+    /// The height AppKit gives `text`, in points, as the script measures it.
+    #[cfg(target_os = "macos")]
+    fn measured(text: &str) -> f64 {
+        osascript(&format!(
+            "{SCRIPT_HEAD}\tset least to 1000000\n{}\treturn (tall as text)\n",
+            too_tall_check(text, rows(text))
+        ))
+        .replace(',', ".")
+        .parse()
+        .unwrap()
+    }
+
+    /// The check of the real script, run by the real `osascript`, with the height of
+    /// the screen given. It refuses what the estimate alone let through (ADR-050).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_script_measures_the_text_and_refuses_what_the_estimate_let_through() {
+        // The dialogs that were measured on macOS 14: what AppKit says is never below
+        // what they needed.
+        let prose = "Measuring this window, it closes by itself. "
+            .repeat(10)
+            .trim_end()
+            .to_owned();
+        for (text, rows_measured) in [(prose.clone(), 10.0), ("M".repeat(220), 9.0)] {
+            let tall = measured(&text);
+            assert!(
+                tall >= rows_measured * 16.0,
+                "{tall} points, {rows_measured} rows measured"
+            );
+        }
+
+        // A short text fits a small screen, and a long one does not: the check runs.
+        assert_eq!(checked("hello", 400), "fits");
+        assert_eq!(checked(&prose, 200), "too-tall");
+        assert_eq!(checked(&"line\n".repeat(40), 700), "too-tall");
+
+        // A script whose glyphs come from a fallback font: cuneiform, which the
+        // estimate counts as 18 points of a row a glyph. Where the machine has a font
+        // for it, the lines are far higher than a row, and the screen that the
+        // estimate says is high enough is not.
+        let wide = "\u{1242B}".repeat(120);
+        let estimated = rows(&wide) * ROW_HEIGHT;
+        let tall = measured(&wide);
+        if measured("\u{1242B}") > ROW_HEIGHT as f64 {
+            assert!(
+                tall > 2.0 * estimated as f64,
+                "{tall} points measured, {estimated} estimated"
+            );
+            let screen = estimated + CHROME_HEIGHT + 50;
+            assert_eq!(checked(&wide, screen), "too-tall");
+        }
+        // Either way the check never asks for less than the estimate does.
+        assert_eq!(checked(&wide, estimated + CHROME_HEIGHT - 1), "too-tall");
     }
 
     #[test]

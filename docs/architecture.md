@@ -1292,7 +1292,9 @@ written down directly.
   for a click on "Proceed". Cancel, the return and escape keys, no answer within 90
   seconds, a window that cannot be shown and `--yes` all refuse with exit code 3. The
   preview is not printed into the session. A text that would not fit on the screen is
-  not shown in part: the step is refused. A rule with a high-risk scanner finding, a
+  not shown in part: the step is refused. The script that shows the window lays the
+  text out with AppKit first and compares its height with the smallest screen
+  attached, and shows nothing when that fails (ADR-050). A rule with a high-risk scanner finding, a
   ballot on anything but a rule, and every other consent step refuse inside a session
   as before. That includes `proposal create`: it shows the scanner's findings and goes
   through `consent::confirm` alone when one is high-risk (ADR-041). A rationale given

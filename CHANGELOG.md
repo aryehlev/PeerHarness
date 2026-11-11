@@ -54,6 +54,11 @@ database schema it writes.
     in one request ended the thread that serves the node, and the daemon went on
     listening while every later request failed. A request that panics now fails
     alone.
+  * **A confirmation window could be taller than the screen.** Whether a preview
+    fits was estimated from character widths, and text in a script with wide and
+    high glyphs was estimated far too low, so its end could lie below the screen. The
+    window now measures the text on the machine before it shows anything, and the
+    step is refused when it does not fit.
 
 ## 0.4.0 (2026-11-11)
 

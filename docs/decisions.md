@@ -3433,3 +3433,34 @@ but stops the node all the same.
 **Tests.** `a_request_that_panics_fails_alone_and_the_node_thread_goes_on`
 (`apps/peerharness/src/runtime.rs`).
 
+### A window measures its text before it is shown
+
+**Found.** A confirmation window shows its preview in full or the step is refused
+(ADR-033). Whether a text fits was estimated in Rust from a table of character
+widths, which gives a character at most 18 points of a row and every row 16 points
+of height. A text in a script that the system font does not have is drawn with a
+fallback font, and its glyphs can be several times wider and higher than that. 120
+cuneiform signs (U+1242B) were estimated at 8 rows, 128 points. AppKit lays them out
+at 480 points. A preview with such text was estimated to fit a screen it did not
+fit, and the person would have been asked about a text whose end was below the
+screen. A member chooses the text of a rule, so a member could put the last lines of
+a rule there.
+
+**Decision.** The script that shows the window measures the text first
+(`window::too_tall_check`): AppKit lays it out in the bold system font a dialog uses,
+in a column a little narrower than a dialog's, and the script compares that height
+and the estimate, whichever is more, with the smallest screen attached. It returns
+`too-tall` and shows nothing when the dialog would not fit, and `failed` when the
+text cannot be measured.
+
+**Not tested.** No window was shown for this, by the rule that no test and no agent
+opens one. The measure is AppKit's layout of the same text in the same font, and it
+is held against the two dialogs measured for ADR-033 that are plain text. That the
+dialog of macOS draws cuneiform at the height AppKit reports was not observed.
+
+**Tests.** `the_script_measures_the_text_and_refuses_what_the_estimate_let_through`
+runs the check of the real script with the real `osascript`, with the height of the
+screen given and the script ended where the dialog would begin.
+`the_whole_script_compiles` compiles the script as it is given to `osascript`
+(`apps/peerharness/src/window.rs`). Both run on macOS only.
+

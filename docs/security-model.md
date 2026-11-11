@@ -515,7 +515,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   rule, and installing a rule that passed. The session chooses the arguments and can
   make the window appear. Inside its session it cannot answer it: only a click on
   "Proceed" counts, "Cancel" is the default, `--yes` is ignored there, and the exact
-  preview is shown in full or the step is refused. This holds for a session that
+  preview is shown in full or the step is refused. Whether it fits is measured on the
+  machine, by laying the text out before the window is shown (ADR-050); up to 0.4.0
+  it was estimated from character widths, and a text in a script with wide and high
+  glyphs could be shown cut off. This holds for a session that
   PeerHarness recognizes. The preview that turns windows on says so to the owner: it
   guards against an agent that is trying to help, not against a process that hides that
   it is one (Residual risk, below). A rule with a high-risk finding is never decided in
