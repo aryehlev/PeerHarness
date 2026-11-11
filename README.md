@@ -381,18 +381,20 @@ check records, on the version named. *Not tried* means no run is recorded.
   before v0.1.0, from one machine with both ends behind the same router. The tools
   with Claude Code 2.1.322 on macOS, before v0.2.0, in three runs. The real
   notification on macOS, once. `--lan` worked on macOS when it was built, before
-  v0.1.0; no run of its tests is recorded. The install script with the v0.3.0 x86_64
-  Linux binary, in a container. On Linux, with a debug build of this tree, on a
+  v0.1.0; no run of its tests is recorded. The published v0.4.0, on Linux x86_64: all
+  four archives match `SHA256SUMS`, the install line above installed the x86_64 Linux
+  binary into a temporary directory, and that binary ran `demo`, kept and removed a
+  rule of one's own, and ran two processes voting over QUIC on loopback. On Linux,
+  with a debug build of this tree, on a
   pseudo-terminal: when the records of a rule that passed arrive on a node while its
   owner answers a prompt or types a passphrase, nothing is signed for a change to the
   charter, an approval of one, a repeal or an announced opt-out.
 * **Not tried.** Clicking the buttons of the real window. The setup prompt above
   through an agent. A real agent noting, keeping, proposing, voting or joining.
   Internet mode between two different routers, over IPv6 or on Linux. `--lan` on
-  Linux. The aarch64 Linux binary, and the macOS binaries since v0.2.0. The release
-  binaries of 0.4.0, which the release workflow builds from the tag: none had been
-  run when this page was tagged. MCP clients other than Claude Code. Windows is not
-  supported.
+  Linux. The aarch64 Linux binary, and the macOS binaries since v0.2.0: of the release
+  binaries of v0.4.0 only the x86_64 Linux one was run. MCP clients other than Claude
+  Code. Windows is not supported.
 
 The whole suite was run on 2026-11-10, on Linux, at commit `e6fae27` (the 0.4.0 tree before the fixes), in a
 pre-launch check made with AI coding agents: 843 tests passed, none failed, and 10
