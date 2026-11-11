@@ -152,6 +152,9 @@ database schema it writes.
     on a node was not shown when joining, and it stands inside PeerHarness's own
     sentences afterwards. Joining now shows it, and a name given inside an agent's
     session is one word.
+  * **`proposal show` printed a rule nobody had voted on into the agent's session.**
+    The text of a proposed rule now reaches a session only when that rule is installed
+    on the machine. Its owner reads it in their terminal or in the window of a ballot.
 
 ## 0.4.0 (2026-11-11)
 

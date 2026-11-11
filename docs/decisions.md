@@ -4113,3 +4113,42 @@ six names that are refused without a window being asked (several words, a Hangul
 filler and a no-break space for blanks, a leading dot, a colon), and `circle create`
 in a session and in the terminal. The audit's script was run again: the join under
 the sentence-like name is refused and no window opens.
+
+### A rule that is not installed is not printed into a session
+
+**Found.** The security model said that the text of a rule reaches an agent only
+after the rule passed. `proposal show` is not a consent step and runs inside a
+session. It printed the whole text of any rule proposal the node held, open ones
+too, and for an amendment the text of every rule it would carry into force. A member
+could write a rule, propose it, and have its text in the context of another member's
+agent as soon as that agent looked at the proposal: before any vote, and for a text
+with a high-risk finding, which no vote installs without its owner's yes.
+
+**Decision.** Inside a session `proposal show` prints a rule's text only where
+exactly that text is installed on the machine (an active installation with the same
+digest), since the agent reads it there anyway. Otherwise one line stands in its
+place and says where the owner reads it (`amendment::NOT_IN_A_SESSION`). The size,
+the number of findings and whether one is high-risk are printed as before. The
+description of an amendment leaves out the text of a carried rule in the same way
+(`Changes::describe_without_texts`). The ballot's preview and the window are not
+changed: they show the text, to the person.
+
+**Rejected.** "Passed" as the condition, which is what the sentence in the security
+model said. A rule that passed is not installed for an owner who opted out, who is
+asked each time (`ask`), or whose rule has a high-risk finding, and in those three
+cases the owner has not let the text into their agent.
+
+**Not changed.** The title, the proposer's summary, a member's reason for a `reject`
+or an opt-out are text other members wrote, and a session that runs `inbox` or
+`proposal show` reads them, each behind a mark. For a rule that came from a note the
+title is the rule's sentence. The security model now says this where it said "the
+text of a rule still reaches an agent only after the rule passed". A session that
+reads the files of PeerHarness's home directly is not stopped by any of this
+(ADR-022).
+
+**Tests.** `a_rule_that_is_not_installed_is_not_printed_into_a_session`
+(`apps/peerharness/tests/session_gates.rs`): an open rule under both marks of a
+session and in the terminal, and an installed one. The unit test
+`a_carried_rule_that_is_not_in_force_is_named_and_shown`
+(`apps/peerharness/src/amendment.rs`) covers the amendment. The audit's script was
+run again: the session gets the line in place of the text.

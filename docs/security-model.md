@@ -328,7 +328,8 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   (which never carries a rule with a high-risk finding) and before an install that asks.
   A ballot in a terminal shows the proposal's title only: `peerharness proposal show`
   prints the rule's text, the number of findings and whether one is high-risk, not the
-  findings themselves. What then happens to a rule that passed a vote is the owner's
+  findings themselves. (Inside a session it prints the text only of a rule that is
+  installed on the machine, ADR-051.) What then happens to a rule that passed a vote is the owner's
   standing choice (`ph-governance::adoption_step`): in `ask` mode nothing is installed
   without an explicit confirmation; in `follow` mode a passed rule is installed without
   asking, **except** that a high-risk scanner finding always requires the owner's
@@ -624,9 +625,14 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   so a person can be worn down into clicking "Proceed"; the text in the window is
   exact, and reading it is the person's part. An agent that can drive the screen could
   click the button; macOS asks the owner before it lets a program do that. And the
-  agent's skill then tells it to read the inbox, so single-line titles and questions
-  written by other members reach its context before any vote; the text of a rule still
-  reaches an agent only after the rule passed. With the windows for inviting and
+  agent's skill then tells it to read the inbox, so titles and questions written by
+  other members reach its context before any vote, and so do a proposer's summary and
+  the reasons members gave if the session runs `proposal show` (each line behind a
+  mark). The text of a rule reaches an agent only once it is installed for it: inside a
+  session `proposal show` prints a rule's text only where exactly that text is
+  installed on the machine, and never the text of a rule an amendment would carry in
+  (ADR-051; until then it printed the text of any proposal the node held). A title is
+  one line, and for a rule that came from a note it is the rule's sentence. With the windows for inviting and
   joining, a click decides more than a rule: whoever is admitted gets a vote and reads
   the circle's records, and joining a circle with binding rules installs its rules for
   the person's agent, the ones in force at once. An agent that was talked into

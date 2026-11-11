@@ -296,7 +296,9 @@ counts for what you were shown").
 `proposal vote` on a rule refuses an approval until the rule's text is on your node:
 read it with `proposal show`. In a terminal the ballot itself shows the proposal's
 title and not the text. `proposal show` prints the text, every line behind `| `, with
-the number of scanner findings and whether one is high-risk. It does not print the
+the number of scanner findings and whether one is high-risk. (When a coding agent
+runs it in its session, the text is left out unless that rule is installed on your
+machine already: a rule's text is for you to read first.) It does not print the
 findings: those are shown when a rule is proposed, on a ballot asked in a window, and
 before an install that asks.
 

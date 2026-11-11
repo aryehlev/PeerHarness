@@ -179,6 +179,12 @@ stop, leave the feature disabled, and document the blocker.
 * `peerharness setup` (ADR-039) is where the owner allows what their agent may start.
   It is refused inside a session as a whole, before it creates anything. Do not let a
   session run part of it.
+* Inside a session no command prints the text of a rule that is not installed on the
+  machine (ADR-051). `proposal show` leaves it out there, for a rule proposal
+  (`amendment::NOT_IN_A_SESSION`) and for a rule an amendment would carry in
+  (`Changes::describe_without_texts`). "It passed" is not the condition: an owner who
+  opted out, who is asked each time, or whose rule has a high-risk finding has not let
+  the text into their agent. A new command that shows a proposal holds to the same.
 * Inside a session no command writes a circle's records to a file: that is `events
   export`, in the person's terminal. A window that asks about a device or a circle
   takes what it shows from the signed content (the amendment, the charter), never from

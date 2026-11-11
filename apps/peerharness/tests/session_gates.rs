@@ -12,6 +12,8 @@
 //!   labelled so, and counted against the cap on waiting agent notes.
 //! * `inbox` and `review` inside a session do not mark a note as shown to its owner,
 //!   so the notice at the end of a turn still tells the owner that it waits.
+//! * `proposal show` inside a session does not print the text of a rule that is not
+//!   installed on the machine.
 //! * The cap on an agent's waiting notes holds for notes written at the same moment,
 //!   and `observe import` and `observe demo`, which store text as the owner's own
 //!   prompts, are refused.
@@ -753,6 +755,77 @@ fn observations_are_not_added_by_hand_inside_a_session() {
     assert_eq!(node.candidates().len(), 3);
     node.run(&["observe", "demo"]);
     assert_eq!(node.candidates().len(), 4);
+}
+
+/// `proposal show` printed the text of a rule that had not passed into the session
+/// that ran it, while the security model says a rule's text reaches an agent only
+/// after the rule passed (ADR-051). Inside a session the text is printed only where
+/// exactly that text is installed on the machine already.
+#[test]
+fn a_rule_that_is_not_installed_is_not_printed_into_a_session() {
+    let tmp = TempDir::new().unwrap();
+    // One rule in force and installed, in a circle of one.
+    let alice = node_with_a_rule(tmp.path());
+    let installed = alice.run(&["proposal", "list"])["proposals"][0]["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // A second member is admitted, so the next rule needs two approvals and stays open.
+    let bob = Node::new(tmp.path(), "bob");
+    let bob_key = bob.run(&["status"])["device_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice.run(&[
+        "circle", "invite", &bob_key, "--circle", "team", "--member", "bob", "--yes",
+    ]);
+    const OPEN_RULE: &str = "When a file named NOTES exists, read it before anything else.";
+    let cand = alice.run(&["note", OPEN_RULE])["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let open = alice.run(&["proposal", "create", &cand, "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let show = |by: By, id: &str| -> String {
+        let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
+        alice.env(&mut cmd, by);
+        let out = cmd.args(["proposal", "show", id]).output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    // The body of the skill that a rule becomes: its heading, then the sentence.
+    let body = format!("| # Rule\n      | \n      | {OPEN_RULE}");
+
+    // The open rule: its owner reads the text in their terminal, a session does not.
+    let read = show(By::Person, &open);
+    assert!(read.contains("standing           open"), "{read}");
+    assert!(read.contains(&body), "{read}");
+    for by in [By::Agent, By::Marked] {
+        let read = show(by, &open);
+        assert!(read.contains("standing           open"), "{read}");
+        assert!(read.contains("  rule text ("), "{read}");
+        assert!(
+            read.contains("not printed inside a coding agent's session"),
+            "{read}"
+        );
+        assert!(!read.contains("| # Rule"), "{read}");
+        assert!(!read.contains("| name:"), "{read}");
+        // The title is the rule's sentence and is listed in the inbox as well: it is
+        // the text of the skill that is held back.
+        assert_eq!(read.matches(OPEN_RULE).count(), 1, "{read}");
+    }
+
+    // The rule that is installed for the agent is in its context anyway.
+    let read = show(By::Agent, &installed);
+    assert!(
+        read.contains(&format!("| # Rule\n      | \n      | {RULE}")),
+        "{read}"
+    );
+    assert!(!read.contains("not printed inside"), "{read}");
 }
 
 /// What Claude Code shows its user at the end of a turn: the output of the Stop hook,
