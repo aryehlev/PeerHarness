@@ -479,7 +479,7 @@ fn the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not() 
     assert!(msg.contains("plaintext"), "{msg}");
     assert!(!preset.home.join("keys").exists(), "no key was written");
     assert!(!preset.home.join("peerharness.db").exists());
-    // For the person the file does not stand in for the flag (ADR-050): it used to,
+    // For the person the file does not stand in for the flag (ADR-051): it used to,
     // and a file put into a home made a plain `init` write a plaintext key.
     let (code, json, printed) = preset.out(By::Person, &["init"]);
     assert_eq!(code, 2, "{printed}");
@@ -513,7 +513,7 @@ fn the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not() 
     assert_eq!(json["keystore"], "insecure-dev");
     assert!(printed.contains("PLAINTEXT"), "{printed}");
 
-    // --- The warning is not only `init`'s (ADR-050). It used to be a line in the log
+    // --- The warning is not only `init`'s (ADR-051). It used to be a line in the log
     // from then on, which nobody sees: a command that uses the key says it where a
     // person reads, and `status`, which uses none, says it too.
     let (code, _, printed) = dev.out(
@@ -545,7 +545,7 @@ fn kdf_of(key_file: &Path) -> (u64, u64) {
     (file["m_kib"].as_u64().unwrap(), file["t"].as_u64().unwrap())
 }
 
-/// The weak parameters for key files are the tests' (ADR-050). Choosing them is the
+/// The weak parameters for key files are the tests' (ADR-051). Choosing them is the
 /// owner's decision like the plaintext keystore: a session is refused, whether a flag
 /// asks or a config file that was already there, and a person is warned in both cases
 /// and by every later command that writes or opens a key file under that profile. A

@@ -71,7 +71,7 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     });
     if kdf == Some(KdfProfile::FastInsecureTest) {
         // Before anything is created, like the plaintext keystore: how well a key file
-        // is encrypted is its owner's decision too (ADR-050).
+        // is encrypted is its owner's decision too (ADR-051).
         human_only(WEAK_KEY_FILES)?;
     }
 
@@ -136,7 +136,7 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
         if backend == KeystoreBackend::InsecureDev {
             // A config file that names the plaintext keystore asks for it as the flag
             // does: a session is refused. And it does not stand in for the flag
-            // (ADR-050): a file that was put into the home is not the owner saying so.
+            // (ADR-051): a file that was put into the home is not the owner saying so.
             human_only(PLAINTEXT_KEYS)?;
             if !a.insecure_dev_keystore {
                 return Err(usage(
@@ -165,7 +165,7 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
         let store = Store::open(home.db_path()).context("cannot create the database")?;
         let ks = open_configured_keystore(home, &cfg, backend)?;
         // Where the key will be is recorded in the database, and a key file's
-        // reference is its path. It is checked before a key exists (ADR-050): a home
+        // reference is its path. It is checked before a key exists (ADR-051): a home
         // whose path holds a tab or a line break, or is too long, used to be found out
         // after the key was written, and every later `init` failed in the same place.
         let keystore_ref = ks.locator(DeviceIdentity::LABEL)?;

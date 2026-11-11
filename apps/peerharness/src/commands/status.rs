@@ -86,7 +86,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
     } else {
         "circle"
     };
-    // A keystore that does not protect the key is said here too (ADR-050): `status`
+    // A keystore that does not protect the key is said here too (ADR-051): `status`
     // unlocks nothing, so the warning of a command that does is not printed for it.
     let keystore_warning = node
         .backend()

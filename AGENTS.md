@@ -96,7 +96,7 @@ stop, leave the feature disabled, and document the blocker.
   rationale typed for `proposal vote` is one line, checked before any preview or
   window. Where `proposal show` or an amendment's description prints several lines
   that a member wrote, every line goes behind a mark (`output::quoted`).
-* The same holds for every listing (ADR-050). A question, an answer's rationale, a
+* The same holds for every listing (ADR-051). A question, an answer's rationale, a
   stance's reason and a candidate's statement can hold several lines. In `inbox`,
   `question list` and `rule list` every line after the first goes behind a mark
   (`output::continued`), and what PeerHarness itself says about a row (who it is
@@ -174,7 +174,7 @@ stop, leave the feature disabled, and document the blocker.
   a title or any other text a member wrote.
 * Inside a session `export --local` is refused as well, on standard output as to a
   file, and `init` refuses the plaintext keystore and the weak key-file profile
-  (`fast-insecure-test`, ADR-050), whether a flag or an existing
+  (`fast-insecure-test`, ADR-051), whether a flag or an existing
   config file asks for it; a plain `init` stays allowed there (ADR-042). The
   `join_circle` tool takes a peer id or a multiaddr that names nothing on disk: a tool
   never makes `circle join` read a file. Inside a session `circle join` itself reads
@@ -219,7 +219,7 @@ stop, leave the feature disabled, and document the blocker.
   plaintext keys: `insecure-dev` requires an explicit flag and warns. A config file
   that names it does not stand in for the flag, and the warning is on standard error
   in every command that uses a key (`node::keystore_warning`), never only in the log
-  (ADR-050). The weak key-file parameters of the tests (`fast-insecure-test`) are
+  (ADR-051). The weak key-file parameters of the tests (`fast-insecure-test`) are
   held to the same: warned about wherever they are in force, at `init` and after,
   whether a flag or a config file turned them on.
 * The circle root key is separate from every device key and never leaves its keystore.
@@ -295,7 +295,7 @@ stop, leave the feature disabled, and document the blocker.
   and never depend on arrival order. Do not add `now`, expiry or "latest wins" to them.
   PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION and STANCE never expire, and a revocation
   is never refused for its date (ADR-015, ADR-017).
-* What a node keeps never depends on the order its records came in (ADR-050). `ingest`
+* What a node keeps never depends on the order its records came in (ADR-051). `ingest`
   checks nothing about a PROPOSAL against other stored events: not its `supersedes`,
   not a repeal's `target`. A reference rule is applied where the reference is used, on
   the records the node holds (`supersede_links`, and `rules_in_force`, where a repeal
@@ -334,7 +334,7 @@ stop, leave the feature disabled, and document the blocker.
   and the run that finds it names it (`Applied::left_in_place_lines`): every command
   that settles a circle prints those lines.
 * A voted copy and its row in `rule_installs` are written in one transaction of the
-  store, with the write lock taken before the copy is written (ADR-050): never
+  store, with the write lock taken before the copy is written (ADR-051): never
   install first and record after. A copy that another circle of the node would
   install now (`governance::relied_on_by`: same name, text and place, the owner
   follows that circle and has not opted out there) is not removed when one circle
@@ -353,7 +353,7 @@ stop, leave the feature disabled, and document the blocker.
 * Every bundle, local or received, is instructions only: no `allowed-tools`, no
   shell-injection syntax (`ph_skills::check_instruction_only`, ADR-018). These are hard
   refusals. Do not downgrade them to scanner warnings or add a flag that overrides them.
-  The syntax is looked for in the whole file and never line by line (ADR-050): the
+  The syntax is looked for in the whole file and never line by line (ADR-051): the
   detector must refuse at least what the agent's loader would run, so do not anchor it
   to the start of a line, to one line, or to the body.
 * Installation requires the owner's consent: an explicit confirmation, or the owner's
@@ -363,7 +363,7 @@ stop, leave the feature disabled, and document the blocker.
   managed files.
 * Changes to Claude settings are idempotent, backed up and atomic.
 * `reset` deletes only what PeerHarness itself put into its home (`Home::delete_own`,
-  `home::is_own_entry`, ADR-050). Never remove a home with everything in it: a home is
+  `home::is_own_entry`, ADR-051). Never remove a home with everything in it: a home is
   whatever folder its owner named. A file or folder PeerHarness starts to keep in its
   home is added to that list in the same change.
 

@@ -38,7 +38,7 @@
 //!
 //! * The file is parsed with key order preserved and rewritten pretty-printed with two
 //!   spaces and a trailing newline. Values are kept exactly, and a number keeps the
-//!   text it had in the file (`1e5` is not written as `100000.0`, ADR-050). Whitespace,
+//!   text it had in the file (`1e5` is not written as `100000.0`, ADR-051). Whitespace,
 //!   indentation and the escapes inside a string are not kept (JSON has no lossless
 //!   round trip through serde).
 //! * Nothing is written when nothing changes (idempotence).

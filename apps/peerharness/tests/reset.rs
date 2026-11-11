@@ -183,7 +183,7 @@ fn reset_refuses_a_home_that_is_a_link() {
 /// A home is whatever folder its owner named: `init` takes a folder that is there,
 /// with what lies in it. Version 0.4.0 removed the folder with everything in it. The
 /// account names what stays, and the reset deletes its own files and nothing else
-/// (ADR-050).
+/// (ADR-051).
 #[test]
 fn reset_deletes_only_what_peerharness_put_into_its_home() {
     let tmp = TempDir::new().unwrap();

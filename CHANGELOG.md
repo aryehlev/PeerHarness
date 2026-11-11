@@ -30,7 +30,7 @@ database schema it writes.
   notice to IndexNow each time it is published. The repository has a description and
   topics on GitHub (ADR-049).
 
-* Fixes after a second audit of 0.4.0, made with AI coding agents (ADR-050):
+* Fixes after a second audit of 0.4.0, made with AI coding agents (ADR-051):
   * **A member could keep a passed rule from one node.** Whether a node kept a
     proposal depended on whether the proposal its `supersedes` named had arrived
     first, so a member who chose the order could leave one node without a rule that

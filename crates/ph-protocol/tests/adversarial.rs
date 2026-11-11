@@ -506,7 +506,7 @@ fn real_envelopes_validate_from_inside_frames() {
 }
 
 /// A frame is one JSON object in the form the encoder writes, and in no other
-/// (ADR-050). The derived deserializers also read a struct from an array of its
+/// (ADR-051). The derived deserializers also read a struct from an array of its
 /// members and a variant without fields from an object with a `null` in it. Each of
 /// those was a second way to write a frame, and is refused, at the top and inside.
 #[test]

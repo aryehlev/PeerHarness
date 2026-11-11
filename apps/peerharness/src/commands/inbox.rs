@@ -112,7 +112,7 @@ pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
                 )
             };
             // What PeerHarness says about a row stands before the text of the row
-            // (ADR-050): a statement cannot end with a label of its own.
+            // (ADR-051): a statement cannot end with a label of its own.
             t.line(format!(
                 "  {}  ({how}, repo {})  \"{}\"",
                 c.id,

@@ -71,7 +71,7 @@ impl Node {
         }
         let backend = self.backend()?;
         let ks = open_configured_keystore(&self.home, &self.config, backend)?;
-        // Said where a person reads it, once for a process (ADR-050). The keystore
+        // Said where a person reads it, once for a process (ADR-051). The keystore
         // itself only writes a line to the log, which nobody sees without `-v`.
         if let Some(warning) = keystore_warning(backend, self.config.node.kdf_profile) {
             crate::output::warn(warning);

@@ -300,7 +300,7 @@ const SMALLEST_SCREEN: &str = "\tset least to 100000\n\
 /// The height is taken twice and the larger one counts. `rows` is this module's
 /// estimate ([`rows`]). The other is AppKit's own layout of the text, in the bold
 /// system font a dialog uses and in a column a little narrower than a dialog's
-/// ([`MEASURE_WIDTH`]). The estimate alone was not enough (ADR-050): it gives every
+/// ([`MEASURE_WIDTH`]). The estimate alone was not enough (ADR-051): it gives every
 /// character at most 18 points of a row 16 points high, and a script whose glyphs
 /// come from a fallback font can be several times wider and higher than that. Such a
 /// text was estimated to fit, was shown, and was cut off by the screen.
@@ -558,7 +558,7 @@ mod tests {
     }
 
     /// The check of the real script, run by the real `osascript`, with the height of
-    /// the screen given. It refuses what the estimate alone let through (ADR-050).
+    /// the screen given. It refuses what the estimate alone let through (ADR-051).
     #[cfg(target_os = "macos")]
     #[test]
     fn the_script_measures_the_text_and_refuses_what_the_estimate_let_through() {

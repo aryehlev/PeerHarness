@@ -329,7 +329,7 @@ fn a_bundle_may_not_carry_shell_injection_syntax() {
 
 /// Claude Code does not look for the syntax at the start of a line only: it finds a
 /// fence in the middle of a sentence, and a command may run over several lines. An
-/// audit kept exactly the first of these as a rule (ADR-050). Each must be refused.
+/// audit kept exactly the first of these as a rule (ADR-051). Each must be refused.
 #[test]
 fn shell_injection_syntax_is_refused_wherever_a_loader_would_find_it() {
     use ph_skills::{build_bundle, BundleError};

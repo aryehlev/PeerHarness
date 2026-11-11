@@ -5,7 +5,7 @@
 //! shares, typically a git repository. Each record is a file named by its own hash
 //! (`event-<hex>.json`, `bundle-<hex>.json`), so two members who add different records
 //! at the same time add different files. One event can exist in two signed forms, and
-//! then one file can hold either ([`same_record`], ADR-050).
+//! then one file can hold either ([`same_record`], ADR-051).
 //!
 //! Nothing read here is trusted. File names are only a convenience: every line goes
 //! through `governance::ingest`, which verifies it, and a file whose content does not
@@ -186,7 +186,7 @@ fn read_source_within(path: &Path, budget: u64) -> Result<Source> {
         }
     }
     names.sort();
-    // Two budgets of [`MAX_SOURCE_BYTES`] each (ADR-050): one for records, which are
+    // Two budgets of [`MAX_SOURCE_BYTES`] each (ADR-051): one for records, which are
     // kept in memory, and one for files with a record's name that hold none, which
     // are read and dropped. When either is used up, the rest of the directory is
     // counted and not read, and the run goes on with what it has. Anyone who can
@@ -239,7 +239,7 @@ fn read_source_within(path: &Path, budget: u64) -> Result<Source> {
 
 /// Whether `old` and `new` are the same record, where `new` is one this node verified.
 ///
-/// For an event that is not the same as "the same bytes" (ADR-050). An event's id is
+/// For an event that is not the same as "the same bytes" (ADR-051). An event's id is
 /// the digest of what its author signed, without the signature, and an author can
 /// sign the same bytes more than once. Two nodes can so hold one event in two signed
 /// forms, both valid. A file that carries the same event id in a form whose signature
@@ -479,7 +479,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), format!("{a}\n"));
     }
 
-    /// Files with a record's name that hold no record do not end a run (ADR-050).
+    /// Files with a record's name that hold no record do not end a run (ADR-051).
     /// They are counted as such, they do not use up what may be read of records, and
     /// when there is too much of either, the rest is counted as not read.
     #[test]
@@ -526,7 +526,7 @@ mod tests {
         assert_eq!((source.not_records, source.not_read), (9, 0));
     }
 
-    /// One event in two signed forms (ADR-050). An event's id does not cover its
+    /// One event in two signed forms (ADR-051). An event's id does not cover its
     /// signature, and its author can sign the same bytes twice. A file that holds the
     /// other valid form is the record and is left alone: two nodes that share the
     /// directory would otherwise rewrite it after each other for ever. A form whose

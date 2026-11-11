@@ -7,7 +7,7 @@
 //! the roll can never change again.
 //!
 //! It deletes PeerHarness's own files and folders and nothing else
-//! (`Home::delete_own`, ADR-050). A home is whatever folder its owner named, and that
+//! (`Home::delete_own`, ADR-051). A home is whatever folder its owner named, and that
 //! can be a folder with other work in it. What is not PeerHarness's stays, the folder
 //! stays with it, and both the account and the report say so. The home directory of
 //! the user, and any folder that holds it, is refused under every spelling.

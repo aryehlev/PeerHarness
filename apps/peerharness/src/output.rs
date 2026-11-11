@@ -153,7 +153,7 @@ pub const MEMBERS_WORDS: &str = "        | ";
 /// line after the first begins with `prefix`. The first line stands where the caller
 /// puts it. Without the mark, a second line of the text could pass for the next row of
 /// the listing: another question, another member's answer, a proposal that waits
-/// (ADR-050).
+/// (ADR-051).
 pub fn continued(text: &str, prefix: &str) -> String {
     safe(text)
         .trim_end()

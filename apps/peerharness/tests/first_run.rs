@@ -640,7 +640,7 @@ fn a_failing_init_never_takes_apart_what_another_init_made() {
     assert!(made > 0, "no round ever made a node");
 }
 
-/// A home whose path cannot be recorded is refused before a key is written (ADR-050).
+/// A home whose path cannot be recorded is refused before a key is written (ADR-051).
 /// The path of a key file is stored in the database, which takes no control character.
 /// That used to be found out after the key file, the config file and the database
 /// were there: the run failed, left all three, and every later `init` in that home
@@ -681,7 +681,7 @@ fn a_home_whose_path_cannot_be_recorded_gets_nothing() {
     assert!(fine.ok(&["status"]).contains("keystore"));
 }
 
-/// A circle that was not founded leaves no root key (ADR-050). The key used to be
+/// A circle that was not founded leaves no root key (ADR-051). The key used to be
 /// written to the keystore before the name was checked and before the circle was
 /// stored, and it stayed when either failed: a key of no circle, which `reset` could
 /// not name.

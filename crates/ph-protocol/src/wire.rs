@@ -294,7 +294,7 @@ fn encode<T: Serialize>(t: &T) -> Result<Vec<u8>, ProtocolError> {
 /// from an object (`{"unauthorized":null}`), which is an explicit `null` besides.
 /// Neither is a frame of this protocol, and a second way to write a frame is a way
 /// for two implementations to read one frame differently. So the typed value is
-/// written out again and has to be the value that was read (ADR-050): an array where
+/// written out again and has to be the value that was read (ADR-051): an array where
 /// an object belongs, another spelling of a variant and an empty list that is
 /// transmitted where the member is omitted are all refused. Events inside a frame
 /// are raw values here and have their own strict check.

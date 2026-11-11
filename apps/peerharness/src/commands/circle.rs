@@ -161,7 +161,7 @@ pub fn describe_charter(charter: &Charter, me: Option<&DeviceKey>) -> String {
     // Binding or advisory is what a member starts with when they join. After that
     // the mode is each member's own (`circle mode`), and an amendment does not change
     // it: the lines say so, because "each member is asked" was not true of a member
-    // who joined while rules were binding (ADR-050).
+    // who joined while rules were binding (ADR-051).
     t.line(if rules.binding {
         "  passed rules are binding: they are installed for every member who has not chosen \
          to be asked first (you can opt out of any rule)"
@@ -215,7 +215,7 @@ fn create(ctx: &Ctx, name: &str, member: Option<&str>) -> Result<Report> {
             "a circle named {name:?} already exists here"
         )));
     }
-    // Before a key exists (ADR-050): a name the store would refuse used to be found
+    // Before a key exists (ADR-051): a name the store would refuse used to be found
     // out after the circle's root key was in the keystore, where it stayed.
     ph_store::check_circle_name(name).map_err(|e| usage(e.to_string()))?;
     let now = node.now();

@@ -415,7 +415,7 @@ fn already_empty_containers_are_kept() {
 
 /// The file is its owner's and holds other tools' settings. A number in it comes back
 /// with the text it had: no exponent expanded, no digit rounded away, no `-0` turned
-/// into `-0.0` (ADR-050).
+/// into `-0.0` (ADR-051).
 #[test]
 fn numbers_elsewhere_in_the_file_are_written_back_as_they_were() {
     const NUMBERS: &str = "[1.0, 1e5, 1E-7, -0, 0.1234567890123456789, \

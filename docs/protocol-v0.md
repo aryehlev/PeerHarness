@@ -1039,7 +1039,7 @@ run things, so every bundle, whether built locally or received, is also refused 
 
 These are syntactic rules applied to the whole file, the frontmatter included, and not
 line by line: Claude Code finds a fence in the middle of a sentence and a command that
-runs over several lines (ADR-050). They err towards refusing. Text with two separate
+runs over several lines (ADR-051). They err towards refusing. Text with two separate
 code spans, the first of which ends in an exclamation mark, is refused, on one line or
 across the file. No vote, flag or confirmation overrides them (section
 14.6). Received skill text is otherwise untrusted prose: a risk scanner gives advisory

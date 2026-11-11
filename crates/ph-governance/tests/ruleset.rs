@@ -76,7 +76,7 @@ fn a_newer_rule_of_the_same_name_replaces_the_older_one() {
 
 /// A repeal counts only against a rule of its own scope, so that the electorate that
 /// adopted a rule is the one that repeals it. The check is part of the rule set and
-/// not of what a node stores (ADR-050): a repeal from another scope is a record like
+/// not of what a node stores (ADR-051): a repeal from another scope is a record like
 /// any other, in whatever order it arrived, and it takes nothing out of force.
 #[test]
 fn a_repeal_from_another_scope_takes_nothing_out_of_force() {

@@ -5,7 +5,7 @@
 //! object members in file order, rejects duplicate keys while parsing, and serializes
 //! back in the same order through serde_json's pretty printer.
 //!
-//! A number is kept as it stands in the file ([`Num`], ADR-050). serde_json reads one
+//! A number is kept as it stands in the file ([`Num`], ADR-051). serde_json reads one
 //! into an integer or a float and writes the shortest form of that: `1.0` stays, and
 //! `1e5` becomes `100000.0`, `12345678901234567890123` becomes
 //! `1.2345678901234568e22` and `0.1234567890123456789` loses its last digits. The file
@@ -330,7 +330,7 @@ mod tests {
         );
     }
 
-    /// A number is written back as it was read (ADR-050). Without that, each of these
+    /// A number is written back as it was read (ADR-051). Without that, each of these
     /// but the first and the last comes back as another text, and four of them as
     /// another value.
     #[test]

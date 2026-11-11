@@ -241,7 +241,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   is not stored. Both quotas count the questions that were shown, so a member who
   floods uses up their own day and a fifth of the circle's, and a question that was
   held back does not keep the same question from someone else out of the inbox
-  (ADR-050). A sync is paged by a cursor and keeps at most 8192 events aside in
+  (ADR-051). A sync is paged by a cursor and keeps at most 8192 events aside in
   memory while it waits for records they depend on. Unsolicited notifications are
   limited to 2 per day with a per-topic cooldown, and hold a count only: a member who
   floods the circle with proposals changes a number in one daily notice (ADR-035).
@@ -315,7 +315,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   ADR-018): an `allowed-tools` frontmatter key, which pre-approves tools, and
   shell-injection syntax anywhere in the file, which runs a command when the skill
   loads. Up to 0.4.0 that syntax was looked for at the start of a line and within one
-  line only, and a fence in the middle of a sentence passed (ADR-050). The
+  line only, and a fence in the middle of a sentence passed (ADR-051). The
   frontmatter parser rejects every key outside a short allowlist. Beyond that, skills
   are strictly validated and scanned by an advisory risk scanner (credential requests,
   `curl | sh`, reverse shells, exfiltration endpoints, "ignore previous instructions",
@@ -523,7 +523,7 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   make the window appear. Inside its session it cannot answer it: only a click on
   "Proceed" counts, "Cancel" is the default, `--yes` is ignored there, and the exact
   preview is shown in full or the step is refused. Whether it fits is measured on the
-  machine, by laying the text out before the window is shown (ADR-050); up to 0.4.0
+  machine, by laying the text out before the window is shown (ADR-051); up to 0.4.0
   it was estimated from character widths, and a text in a script with wide and high
   glyphs could be shown cut off. This holds for a session that
   PeerHarness recognizes. The preview that turns windows on says so to the owner: it

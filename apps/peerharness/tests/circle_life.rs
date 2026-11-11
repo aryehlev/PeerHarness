@@ -554,7 +554,7 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
     assert_eq!(carol.roll(), ["alice", "bob", "carol"], "still on the roll");
     assert_eq!(left["requested"], true);
     // She is still on the roll, and `rule list` does not take that for being bound:
-    // it said "[not installed]" for each rule, as if one were missing (ADR-050).
+    // it said "[not installed]" for each rule, as if one were missing (ADR-051).
     let listed = carol.run(&["rule", "list"]);
     for rule in listed["rules"].as_array().unwrap() {
         assert_eq!(rule["left_circle"], true, "{rule}");
@@ -977,7 +977,7 @@ fn the_rules_of_a_scope_can_live_in_one_project() {
 /// it after the first stands behind a mark, and what PeerHarness itself says about the
 /// row (who it is from, the counts) stands before the text. Version 0.4.0 printed the
 /// text as it came, so a member could add rows of their own to another member's
-/// inbox: a proposal that waits, with the command that approves it (ADR-050).
+/// inbox: a proposal that waits, with the command that approves it (ADR-051).
 #[test]
 fn a_members_words_cannot_pass_for_a_line_of_a_listing() {
     let tmp = TempDir::new().unwrap();

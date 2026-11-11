@@ -297,7 +297,7 @@ fn stale_claims_are_recovered_and_fresh_ones_left_alone() {
 }
 
 /// What was claimed is deleted when its caller says it is stored, and not before
-/// (ADR-050). A caller that could not store it drops the claim: the lines stay on
+/// (ADR-051). A caller that could not store it drops the claim: the lines stay on
 /// disk and a later drain reads them again. The spool used to be deleted as soon as
 /// it was read.
 #[test]

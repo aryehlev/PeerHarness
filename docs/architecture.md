@@ -687,7 +687,7 @@ the structure rules of 10.2. A `repeal` takes a rule out of force only if it has
 scope of its target, so that the electorate that adopted a rule is the one that repeals
 it. That is part of the rule set (`rules_in_force`, 10.7) and not of what a node
 stores: a proposal is kept whatever its `supersedes` or its `target` names, because
-what a node keeps must not depend on the order its records came in (ADR-050).
+what a node keeps must not depend on the order its records came in (ADR-051).
 The author must be a device of a member in the proposal's electorate.
 
 A proposal can pass only while the charter it names is the current one. When the charter
@@ -768,7 +768,7 @@ takes nothing out of force.
 The function can only be independent of arrival order if the records it reads are.
 So a node keeps a proposal whatever it names (`supersedes`, a repeal's `target`) and
 whether or not it holds the event named: nothing about a PROPOSAL is checked against
-other stored events when it arrives (ADR-050).
+other stored events when it arrives (ADR-051).
 
 A proposal enters this computation only as a `Passed` value, which has exactly two
 constructors: `Passed::by_vote` (a tally of this proposal that has reached its
@@ -1069,7 +1069,7 @@ switch them off.
    (`has_shell_injection`): an exclamation mark directly followed by a backtick with
    another backtick anywhere after it, on that line or a later one, or three backticks
    or three tildes directly followed by an exclamation mark, wherever on a line they
-   stand (ADR-050). Any file other than `SKILL.md`
+   stand (ADR-051). Any file other than `SKILL.md`
    and any frontmatter key outside the allowlist of section 11 is refused as before.
 3. **No vote on a rule grants access.** Who may read a circle's records is the roll,
    with the scopes in each member's entry (section 7). It changes only by an amendment
@@ -1201,7 +1201,7 @@ The golden vectors tell a similar story end to end, including a charter change:
   Claude Code's shell-injection syntax nowhere in the file, body or frontmatter
   (`has_shell_injection`). These are syntactic rules, not scanner heuristics, they
   refuse more than Claude Code would run, and no flag overrides them (ADR-018,
-  ADR-050).
+  ADR-051).
 * Received bundles reject any path other than exactly `SKILL.md`, as well as `..`,
   absolute paths, backslashes, hidden files, duplicates, symlinks and extra files.
 * The risk scanner gives advisory warnings (credential requests, `curl | sh`, remote
@@ -1294,7 +1294,7 @@ written down directly.
   preview is not printed into the session. A text that would not fit on the screen is
   not shown in part: the step is refused. The script that shows the window lays the
   text out with AppKit first and compares its height with the smallest screen
-  attached, and shows nothing when that fails (ADR-050). A rule with a high-risk scanner finding, a
+  attached, and shows nothing when that fails (ADR-051). A rule with a high-risk scanner finding, a
   ballot on anything but a rule, and every other consent step refuse inside a session
   as before. That includes `proposal create`: it shows the scanner's findings and goes
   through `consent::confirm` alone when one is high-risk (ADR-041). A rationale given

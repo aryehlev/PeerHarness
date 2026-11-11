@@ -106,7 +106,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
         let places = node.store.rule_places(&c.circle_id)?;
         // An owner who left the circle on this machine is bound by none of its rules,
         // whatever the roll still says: `apply_rules` installs nothing for them, and
-        // this listing says the same (ADR-050).
+        // this listing says the same (ADR-051).
         let left = node.store.circle_left_at(&c.circle_id)?.is_some();
         if left {
             t.line(format!(
@@ -193,7 +193,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
             )?;
             // One line a member, the name first and the member's own words last, and
             // every further line of those behind a mark: a reason cannot add a name
-            // to the list or a line to the listing (ADR-050).
+            // to the list or a line to the listing (ADR-051).
             let out_of_it: Vec<String> = recorded
                 .iter()
                 .filter(|s| s.stance == Stance::OptedOut)

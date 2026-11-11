@@ -315,7 +315,7 @@ fn list(ctx: &Ctx) -> Result<Report> {
     for q in &asked {
         let list = answers(&node, q)?;
         // What PeerHarness says about a row stands before the member's words, here
-        // and below (ADR-050): a text cannot end with counts or a sender of its own.
+        // and below (ADR-051): a text cannot end with counts or a sender of its own.
         t.line(format!(
             "  {}  [{} agree, {} disagree, {} unsure]  {}",
             short_id(&q.event_id),
@@ -400,7 +400,7 @@ fn answer_question(
     }
     // The question is another member's text, and it can hold several lines: every
     // one of them stands behind a mark, so that none can pass for a line of this
-    // preview (ADR-050).
+    // preview (ADR-051).
     let mut preview = format!(
         "You are about to share this answer with the members of {} (scope {}):\n  \
          {} to this question:\n{}",

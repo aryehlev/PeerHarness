@@ -74,7 +74,7 @@ type Job = JobFor<Node>;
 
 /// The loop of the node thread: runs the jobs as they come, each on its own.
 ///
-/// A job that panics fails alone (ADR-050). Its caller is told that its job was
+/// A job that panics fails alone (ADR-051). Its caller is told that its job was
 /// dropped, and the next job is served. Without this one panic ended the thread, and a
 /// daemon went on listening while every request it took failed: its owner saw a
 /// running daemon that synced nothing. A job works on the node through `&C` and the

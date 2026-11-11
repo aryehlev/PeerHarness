@@ -168,7 +168,7 @@ backticks or tildes directly followed by an exclamation mark). The check is exac
 deliberately errs towards refusing; no flag overrides it. This is what lets a binding
 circle install a passed rule without asking (architecture section 10.9 and 10.10).
 
-ADR-050 found that "on the line" and "a fence opened" were narrower than what Claude
+ADR-051 found that "on the line" and "a fence opened" were narrower than what Claude
 Code looks for, and widened both: the syntax is refused anywhere in the file.
 
 ## ADR-019: Events travel as files first
@@ -256,7 +256,7 @@ has not synced yet, but cannot forge or alter a vote). Writing records out is a 
 step and refuses inside an agent session; importing is open. The spec's request for a
 libp2p transport stands; this does not replace it.
 
-ADR-050 corrects "never conflicts": an event that its author signed twice is one file
+ADR-051 corrects "never conflicts": an event that its author signed twice is one file
 in two forms.
 
 ## ADR-026: The transport answers the roll, not credentials
@@ -3259,7 +3259,7 @@ repository shows is uploaded in the repository's settings ("Social preview"):
 **From now on.** When an answer on the page changes, its copy in the structured data
 changes with it, and `llms.txt` where it says the same.
 
-## ADR-050: What a second audit found, and what was changed for it
+## ADR-051: What a second audit found, and what was changed for it
 On 2026-11-11, after 0.4.0, the owner asked for the repository to be broken before it
 was promoted. Eight AI coding agents each took one area (the protocol parser, the
 counting of votes, the life of a circle, the network, skills, consent and windows, keys

@@ -338,7 +338,7 @@ pub fn ingest(
     let env: &SignedEnvelope = &verified;
     match &verified.body {
         // A proposal is stored whatever its `supersedes` or its repeal `target` names
-        // (protocol 12.5, ADR-050). Whether this node already holds the event it names
+        // (protocol 12.5, ADR-051). Whether this node already holds the event it names
         // must not decide whether the proposal is kept: a member who sent the two in
         // one order to some nodes and in the other order to the rest would leave them
         // with different records, and so with different rules. A `supersedes` that
@@ -449,7 +449,7 @@ fn ingest_question(
                     // Asked already, and shown: no second entry.
                     GuardDecision::Drop(ph_governance::DropReason::Duplicate) => {}
                     // Held back. It takes no text and counts against no quota
-                    // (ADR-050): what the owner was not shown must not keep the same
+                    // (ADR-051): what the owner was not shown must not keep the same
                     // question, or another member's, from being shown.
                     GuardDecision::Drop(_) => {
                         s.insert_held_question(&q)?;
@@ -1361,7 +1361,7 @@ impl Applied {
 /// A copy that a vote of one circle installed and that was to be removed there, left
 /// in place because another circle of this node has the same rule in force, with the
 /// same text and for the same place, and the owner follows that circle's rules
-/// ([`Applied::kept_for`], ADR-050).
+/// ([`Applied::kept_for`], ADR-051).
 ///
 /// Removing it would take a rule in force out of the owner's agent until that other
 /// circle is settled again, on the strength of a choice the owner made about the
@@ -1891,7 +1891,7 @@ pub fn apply_rules(
         }
         if managed_with(&target, name, digest) {
             // The same rule in force in another circle that the owner follows keeps
-            // the copy (ADR-050). The record passes to that circle in one write.
+            // the copy (ADR-051). The record passes to that circle in one write.
             let needed = (name, digest, &target.dir);
             if let Some(other) = relied_on_by(store, bundles, owner, id, needed)? {
                 store.transaction_with(|store| -> Result<()> {
@@ -1990,7 +1990,7 @@ pub fn apply_rules(
                     continue; // already in place
                 }
                 // The copy and the record that a vote put it there are made together
-                // (ADR-050). The write lock of the store is taken before anything is
+                // (ADR-051). The write lock of the store is taken before anything is
                 // written to the agent's directory: where another process holds it
                 // for longer than this one waits, nothing is installed and the next
                 // settle tries again. The copy used to be written first and the
@@ -2563,7 +2563,7 @@ pub(crate) mod tests {
         })
     }
 
-    /// What a node keeps never depends on the order its records came in (ADR-050).
+    /// What a node keeps never depends on the order its records came in (ADR-051).
     ///
     /// A proposal used to be refused for good when the proposal its `supersedes` named
     /// was already there and was for another skill, and kept when that one came later.
@@ -2612,7 +2612,7 @@ pub(crate) mod tests {
 
     /// A repeal is kept like any other proposal, in whatever order it and the proposal
     /// it names arrive, and it takes a rule out of force only if it has that rule's
-    /// scope (ADR-050). The scope used to be checked when the repeal arrived, and only
+    /// scope (ADR-051). The scope used to be checked when the repeal arrived, and only
     /// if its target was there by then: a repeal that came first was kept and counted,
     /// so another scope's electorate could repeal a rule on a node that got the two in
     /// that order.
@@ -3075,7 +3075,7 @@ pub(crate) mod tests {
         assert!(row.is_local && row.status == QuestionStatus::New);
     }
 
-    /// The quotas count what was shown (ADR-050). One member's flood used to count
+    /// The quotas count what was shown (ADR-051). One member's flood used to count
     /// in full against the circle's day, the eighty questions that were held back
     /// with the twenty that were shown, so that the next member's one question was
     /// held back too. A held-back question also kept its text, and the same question
@@ -4992,7 +4992,7 @@ pub(crate) mod tests {
         assert!(as_drafted(&store, &key(1), &circle, &shown, &rules).is_err());
     }
 
-    /// A copy is never written without the record that a vote wrote it (ADR-050). The
+    /// A copy is never written without the record that a vote wrote it (ADR-051). The
     /// copy used to be written first and the record after it. While another process
     /// held the store for longer than this one waits, that left a copy with no
     /// record, which counts as its owner's own: an opt-out and a repeal then said
@@ -5094,7 +5094,7 @@ pub(crate) mod tests {
     /// path), the copy stays if the owner follows the other circle, and the record
     /// passes to that circle, whose opt-out then removes it. Version 0.4.0 removed
     /// the copy, and a rule in force that its owner had not opted out of was gone
-    /// from the agent until that circle was settled again (ADR-050).
+    /// from the agent until that circle was settled again (ADR-051).
     #[test]
     fn a_copy_that_another_circles_rule_needs_stays_when_one_circle_lets_it_go() {
         let (store, team, now) = node();

@@ -42,7 +42,7 @@ impl From<ph_store::StoreError> for DrainError {
 
 /// Moves spooled hook observations into the database. Returns the number inserted.
 ///
-/// The order is what keeps a line from being lost (ADR-050). The write lock of the
+/// The order is what keeps a line from being lost (ADR-051). The write lock of the
 /// database is taken first. While another process holds it, this waits once for the
 /// connection's busy timeout and leaves the spool as it is: nothing was claimed. With
 /// the lock in hand the spool is claimed and its lines are inserted in the one
@@ -170,7 +170,7 @@ mod tests {
         )
     }
 
-    /// The spool loses no line while the database is busy (ADR-050). The drain used
+    /// The spool loses no line while the database is busy (ADR-051). The drain used
     /// to delete the spool once it had read it, wait for the lock once for every
     /// line, and append each line that failed to the spool again.
     ///
