@@ -39,11 +39,13 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Set PeerHarness up for Claude Code, once, in your own terminal.
+    /// Set PeerHarness up for your coding agents, once, in your own terminal.
     ///
     /// Creates your node if there is none, connects it to Claude Code after showing you
     /// what your agent may start and what it never decides, and gives Claude Code those
-    /// steps as tools. Each change is shown first and asks for your confirmation.
+    /// steps as tools. Then connects the other agents found here (Codex, opencode, Pi,
+    /// Antigravity, DeepSeek Harness). Each change is shown first and asks for your
+    /// confirmation.
     Setup(SetupArgs),
     /// Generate the device key, database and config (idempotent).
     Init(InitArgs),
@@ -78,7 +80,7 @@ pub enum Command {
     /// in a window when you allowed that (`peerharness setup`), and is refused
     /// otherwise.
     Mcp,
-    /// Install or remove agent hooks.
+    /// Connect or disconnect a coding agent: Claude Code's hooks, or another agent.
     Watch {
         #[command(subcommand)]
         agent: WatchAgent,
@@ -176,6 +178,10 @@ pub struct SetupArgs {
     /// Skip the confirmation prompts (after reviewing what they show).
     #[arg(long)]
     pub yes: bool,
+    /// Connect this agent besides Claude Code (repeatable): codex, opencode, pi,
+    /// antigravity, deepseek. Without it, every one of them found on this machine.
+    #[arg(long, value_enum, value_name = "AGENT")]
+    pub agent: Vec<crate::agents::Agent>,
     /// Where a new node keeps its private key, as for `init`.
     #[command(flatten)]
     pub init: InitArgs,
@@ -233,6 +239,37 @@ pub struct HookArgs {
 pub enum WatchAgent {
     /// Claude Code hooks (UserPromptSubmit and Stop).
     Claude(WatchClaudeArgs),
+    /// Codex: copies of the rules in ~/.agents/skills, the tools in ~/.codex/config.toml.
+    Codex(WatchOtherArgs),
+    /// opencode: it reads Claude Code's skills; the tools in its opencode.json.
+    Opencode(WatchOtherArgs),
+    /// Pi: copies of the rules in ~/.agents/skills, the tools in ~/.pi/agent/mcp.json.
+    Pi(WatchOtherArgs),
+    /// Google Antigravity: copies of the rules in ~/.gemini/config/skills, the tools in
+    /// ~/.gemini/config/mcp_config.json.
+    Antigravity(WatchOtherArgs),
+    /// DeepSeek Harness: copies of the rules in ~/.agents/skills; the tools are shown
+    /// for you to add.
+    Deepseek(WatchOtherArgs),
+}
+
+/// Connect another coding agent to PeerHarness, or disconnect it (ADR-050).
+#[derive(Debug, Args)]
+#[command(group(ArgGroup::new("action").args(["install", "remove", "status"])))]
+pub struct WatchOtherArgs {
+    /// Connect the agent: keep copies of your rules where it reads skills, and give it
+    /// the PeerHarness tools. Shows every change first and asks.
+    #[arg(long)]
+    pub install: bool,
+    /// Disconnect it: remove the copies PeerHarness made and the tools entry it wrote.
+    #[arg(long)]
+    pub remove: bool,
+    /// Show whether it is connected (default).
+    #[arg(long)]
+    pub status: bool,
+    /// Skip the confirmation prompt (after reviewing the preview).
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]

@@ -108,6 +108,14 @@ impl Node {
             .env("PEERHARNESS_TEST_WINDOW_BIN", &self.window)
             .env_remove("CLAUDECODE")
             .env_remove("PEERHARNESS_AGENT_SESSION")
+            .env_remove("CODEX_CI")
+            .env_remove("CODEX_TOOL_CALL_ID")
+            .env_remove("CODEX_THREAD_ID")
+            .env_remove("OPENCODE")
+            .env_remove("PI_CODING_AGENT")
+            .env_remove("AI_AGENT")
+            .env_remove("ANTIGRAVITY_AGENT")
+            .env_remove("DSH_SHELL")
             .env("USER", self.name);
         cmd
     }
@@ -1176,7 +1184,7 @@ fn window_that_imports_before_it_proceeds(
     let log = root.join(format!("{}-import-during-the-window", node.name));
     let script = format!(
         "#!/bin/sh\ncat > '{saw}'\n\
-         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION '{bin}' events import '{file}' \
+         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION -u CODEX_CI -u CODEX_TOOL_CALL_ID -u CODEX_THREAD_ID -u OPENCODE -u PI_CODING_AGENT -u AI_AGENT -u ANTIGRAVITY_AGENT -u DSH_SHELL '{bin}' events import '{file}' \
          > '{log}' 2>&1 || {{ echo declined; exit 0; }}\necho proceed\n",
         saw = saw.display(),
         bin = assert_cmd::cargo::cargo_bin("peerharness").display(),

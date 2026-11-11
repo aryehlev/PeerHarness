@@ -31,6 +31,46 @@ pub struct Config {
     pub retention: RetentionConfig,
     #[serde(default)]
     pub agent: AgentConfig,
+    /// The coding agents besides Claude Code that the owner connected (ADR-050).
+    #[serde(default, skip_serializing_if = "AgentsConfig::is_empty")]
+    pub agents: AgentsConfig,
+}
+
+/// The coding agents besides Claude Code that the owner connected in their own terminal
+/// (`peerharness setup`, `watch <agent> --install`). Only these get copies of the
+/// rules: nothing is written into another agent's directory before its owner said so.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentsConfig {
+    #[serde(default)]
+    pub connected: Vec<crate::agents::Agent>,
+}
+
+impl AgentsConfig {
+    pub fn is_empty(&self) -> bool {
+        self.connected.is_empty()
+    }
+
+    pub fn has(&self, agent: crate::agents::Agent) -> bool {
+        self.connected.contains(&agent)
+    }
+
+    /// Adds `agent`; returns whether it was new.
+    pub fn connect(&mut self, agent: crate::agents::Agent) -> bool {
+        if self.has(agent) {
+            return false;
+        }
+        self.connected.push(agent);
+        self.connected.sort();
+        true
+    }
+
+    /// Removes `agent`; returns whether it was there.
+    pub fn disconnect(&mut self, agent: crate::agents::Agent) -> bool {
+        let before = self.connected.len();
+        self.connected.retain(|a| *a != agent);
+        before != self.connected.len()
+    }
 }
 
 /// What the owner allows their coding agent's session to do beyond writing notes.
