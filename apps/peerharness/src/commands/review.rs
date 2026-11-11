@@ -75,8 +75,10 @@ pub fn run(ctx: &Ctx, a: ReviewArgs) -> Result<Report> {
 }
 
 /// A candidate the owner looks at has been shown: `Detected` becomes `LocalReview`.
+/// Inside a coding agent's session it is the agent that looks, and nothing changes
+/// (ADR-051): the Stop notice still tells the owner that the note waits.
 fn shown(node: &Node, mut cand: CandidateRow) -> Result<CandidateRow> {
-    if cand.status == CandidateStatus::Detected {
+    if cand.status == CandidateStatus::Detected && !in_agent_session() {
         match node.store.update_candidate_status(
             &cand.id,
             CandidateStatus::Detected,

@@ -1270,7 +1270,14 @@ written down directly.
 * An agent's note is advisory text from `Actor::System`. At most 20 unreviewed
   agent-reported notes are kept; further ones are refused until the owner reviews some.
   Whether a note is an agent's is decided by where the command runs: inside a session
-  (`consent::in_agent_session`) it is one with or without `--from-agent`.
+  (`consent::in_agent_session`) it is one with or without `--from-agent`. The count
+  and the insert are one write transaction, so the cap holds for notes written at the
+  same moment. `observe import` and `observe demo`, which store text as prompts the
+  owner typed, are refused inside a session (ADR-051).
+* A candidate is `Detected` until its owner was shown it: `inbox` and `review` move
+  it to `LocalReview` when they list it, and the notice at the end of a turn counts
+  the `Detected` ones. Inside a session the reader is the agent, so neither command
+  moves anything there (ADR-051), and the owner is still told that the note waits.
 * **Consent is human-only.** Every step that goes through `consent::confirm` or
   `consent::human_only` (reviewing, sharing, proposing, voting, installing, changing
   hooks) refuses with exit code 3 when the process runs inside a coding agent's session,

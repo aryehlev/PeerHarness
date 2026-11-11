@@ -1,6 +1,11 @@
 //! `peerharness inbox`: a bounded summary of candidates to review, received questions
-//! and proposals waiting for the owner's vote (`governance::awaiting_vote`). Showing a Detected candidate moves it to
-//! LocalReview (System).
+//! and proposals waiting for the owner's vote (`governance::awaiting_vote`). Showing a
+//! Detected candidate to its owner moves it to LocalReview (System).
+//!
+//! Inside a coding agent's session the reader is the agent, so nothing has been shown
+//! to the owner and the candidate stays Detected (ADR-051). The Stop notice counts the
+//! Detected ones: an agent that ran `inbox` after writing a note would otherwise keep
+//! its owner from ever being told that the note waits.
 
 use anyhow::Result;
 use ph_core::{Actor, CandidateStatus};
@@ -30,8 +35,9 @@ pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
         .candidates(&[CandidateStatus::Detected, CandidateStatus::LocalReview])?;
     let total_candidates = all.len();
     let mut shown: Vec<CandidateRow> = Vec::new();
+    let owner_reads = !crate::consent::in_agent_session();
     for mut c in all.into_iter().take(limit) {
-        if c.status == CandidateStatus::Detected {
+        if owner_reads && c.status == CandidateStatus::Detected {
             match node.store.update_candidate_status(
                 &c.id,
                 CandidateStatus::Detected,

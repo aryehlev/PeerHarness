@@ -86,7 +86,11 @@ stop, leave the feature disabled, and document the blocker.
   for every agent.
 * Inside a session a note is always an agent's note, whatever flags were passed
   (ADR-042): its label and the cap on waiting notes follow
-  `consent::in_agent_session()`, never `--from-agent` alone.
+  `consent::in_agent_session()`, never `--from-agent` alone. The cap is counted and the
+  note inserted in one write transaction (ADR-051): do not split them. Nothing else a
+  session can run makes a candidate: `observe import` and `observe demo` are refused
+  there. And a session shows its owner nothing: `inbox` and `review` leave a note
+  `Detected` there, so that the notice at the end of a turn still counts it.
 * `rule opt-in` is a consent step in the terminal (ADR-042). It puts a rule's text
   back into the owner's agent, so it goes through `consent::human_only` and
   `consent::confirm` with the rule's exact text and the install directory in the

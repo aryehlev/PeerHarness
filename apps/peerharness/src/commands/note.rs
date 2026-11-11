@@ -95,25 +95,28 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
         ));
     }
 
-    if from_agent {
-        let pending = node
-            .store
-            .candidates(&[CandidateStatus::Detected, CandidateStatus::LocalReview])?
-            .iter()
-            .filter(|c| {
-                ph_learning::note_origin(&c.concept_key, &c.topic)
-                    == Some(NoteOrigin::AgentReported)
-            })
-            .count();
-        if pending >= MAX_PENDING_AGENT_NOTES {
-            return Err(refused(format!(
-                "{pending} agent-reported notes already wait for review. Nothing was added: \
-                 the user reviews them with `peerharness inbox`."
-            )));
+    // The count and the insert are one write transaction of the store (ADR-051). As two
+    // steps, notes written at the same moment each counted fewer than the cap, and all
+    // of them were kept.
+    let (id, created) = node.store.transaction_with(|store| -> Result<_> {
+        if from_agent {
+            let pending = store
+                .candidates(&[CandidateStatus::Detected, CandidateStatus::LocalReview])?
+                .iter()
+                .filter(|c| {
+                    ph_learning::note_origin(&c.concept_key, &c.topic)
+                        == Some(NoteOrigin::AgentReported)
+                })
+                .count();
+            if pending >= MAX_PENDING_AGENT_NOTES {
+                return Err(refused(format!(
+                    "{pending} agent-reported notes already wait for review. Nothing was \
+                     added: the user reviews them with `peerharness inbox`."
+                )));
+            }
         }
-    }
-
-    let (id, created) = node.store.insert_or_merge_candidate(&cand, now)?;
+        Ok(store.insert_or_merge_candidate(&cand, now)?)
+    })?;
     let mut t = Text::new();
     if from_agent {
         // Read by the agent: say what happened and where its part ends.

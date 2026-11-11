@@ -3993,3 +3993,60 @@ makes the file malformed for PeerHarness, and it is left untouched.
 (`crates/ph-observer/src/agent_config.rs`). The audit's settings file was installed into
 again with this branch: its line of ten numbers came back character for character,
 and a second install changed nothing.
+
+### A session that reads the inbox has shown the owner nothing
+
+**Found.** The notice at the end of a turn tells the owner how many noted rules wait.
+It counts the candidates that are `Detected`. `inbox` moved every candidate it listed
+to `LocalReview`, and so did `review <id>`, because listing one was taken to mean
+that its owner saw it. Both run inside a session, and `inbox` is one of the tools of
+`peerharness mcp`. An agent that wrote a note and then read the inbox, in the same
+turn, left nothing for the notice to count: the owner was never told that a rule
+their agent wrote down waits for them.
+
+**Decision.** Inside a session (`consent::in_agent_session`) `inbox` and `review`
+change no candidate's status. What they print is the same. A note stays `Detected`
+until `inbox` or `review` runs in the owner's terminal, or until the owner decides
+about it (`keep`, `proposal create`), which move it on as before.
+
+**Not changed.** An owner who asks their agent what waits, and reads the answer in
+the conversation, is told once more at the end of a turn, within the limits the
+notice already has. PeerHarness cannot know what the agent passed on, so it does not
+count it. The cap of 20 waiting agent notes counts `Detected` and
+`LocalReview` alike and was never moved by this.
+
+**Tests.** `a_session_that_reads_the_inbox_has_shown_the_owner_nothing`
+(`apps/peerharness/tests/session_gates.rs`), under both marks of a session, with the
+Stop hook run after it. The audit's script was run again: after a note and an `inbox`
+by the agent, the hook prints its line and `status` says `detected 1`, where 0.4.0
+printed nothing and said `local_review 1`.
+
+### The cap on an agent's notes holds, and `observe` is the person's
+
+**Found.** Two ways past the cap of 20 waiting notes that an agent reported.
+The cap was a count followed by an insert, as two steps: 60 notes written at the same
+moment each counted fewer than 20, and between 20 and 26 of them were kept, depending
+on the run. And `observe import <file>`, a hidden command for demos and tests, stores
+the lines of a file as prompts the owner typed. It ran inside a session. The detector
+made a candidate from every correction in them, labelled as found in the owner's own
+prompts and not counted by the cap: with the cap full, an agent added 30 more.
+
+**Decision.** `note` counts the waiting agent notes and inserts the new one in one
+write transaction of the store (`Store::transaction_with`), so a second note waits
+for the first and counts it. `observe import` and `observe demo` go through
+`consent::human_only`: inside a session they are refused with exit code 3, before
+the file is read.
+
+**Not changed.** A hook is how Claude Code hands a prompt to PeerHarness, and it runs
+inside the session. A process there that hands `peerharness hook user-prompt-submit`
+a payload it made up is taken for the hook: two such prompts made one candidate with
+the label of the owner's prompts when this was tried. PeerHarness cannot tell the two
+apart, and the guard on a session stops an agent that is trying to help, not one that
+is trying to deceive (ADR-022). What holds in both cases is that a candidate is only
+a line in the inbox: nothing is kept, installed or shared without its owner's yes.
+
+**Tests.** `the_cap_holds_for_notes_written_at_the_same_moment` and
+`observations_are_not_added_by_hand_inside_a_session`
+(`apps/peerharness/tests/session_gates.rs`). The audit's two scripts were run again:
+60 notes at once left exactly 20 in four runs out of four, and the import was refused
+with the cap full, the inbox holding the 20 notes and nothing else.

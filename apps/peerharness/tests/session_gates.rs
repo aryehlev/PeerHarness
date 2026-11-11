@@ -10,6 +10,11 @@
 //!   person. A plain `init` is still allowed.
 //! * A note written inside a session is an agent's note whatever flags it was given:
 //!   labelled so, and counted against the cap on waiting agent notes.
+//! * `inbox` and `review` inside a session do not mark a note as shown to its owner,
+//!   so the notice at the end of a turn still tells the owner that it waits.
+//! * The cap on an agent's waiting notes holds for notes written at the same moment,
+//!   and `observe import` and `observe demo`, which store text as the owner's own
+//!   prompts, are refused.
 //! * The `join_circle` tool of `peerharness mcp` takes a peer id or an address, never a
 //!   path, so an agent cannot make a join read a file it wrote. `circle join` itself
 //!   holds to that inside a session: what reads as a peer id or as an address is never
@@ -685,6 +690,135 @@ fn a_note_written_inside_a_session_is_an_agents_note() {
     let own = node.run(&["note", "One more rule."]);
     assert_eq!(own["origin"], "written down");
     assert_eq!(node.candidates().len(), 21);
+}
+
+/// The cap counted the waiting notes and then inserted, as two steps: notes written at
+/// the same moment each counted fewer than twenty, and up to 26 of 60 were kept in the
+/// audit's runs (ADR-051). The count and the insert are one write transaction now.
+#[test]
+fn the_cap_holds_for_notes_written_at_the_same_moment() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let codes: Vec<i32> = std::thread::scope(|s| {
+        let writers: Vec<_> = (0..40)
+            .map(|i| {
+                let node = &node;
+                s.spawn(move || {
+                    let text = format!("Parallel rule {i}: always pass flag{i} to the build.");
+                    node.out(By::Agent, &["note", &text]).0
+                })
+            })
+            .collect();
+        writers.into_iter().map(|w| w.join().unwrap()).collect()
+    });
+    let kept = codes.iter().filter(|c| **c == 0).count();
+    let refused = codes.iter().filter(|c| **c == 3).count();
+    assert_eq!((kept, refused), (20, 20), "{codes:?}");
+    assert_eq!(node.candidates().len(), 20);
+}
+
+/// `observe import` stores lines as if the owner had typed them to their agent, and the
+/// detector makes candidates from them that carry the label of the owner's own prompts
+/// and are not counted by the cap. Inside a session an agent wrote 30 such candidates
+/// past a full cap (ADR-051). Both `observe` commands are the person's now.
+#[test]
+fn observations_are_not_added_by_hand_inside_a_session() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let file = tmp.path().join("made-up.jsonl");
+    let mut lines = String::new();
+    for i in 0..3 {
+        for session in ["s1", "s2"] {
+            lines.push_str(&format!(
+                r#"{{"kind":"user_prompt","repo":"myrepo","session":"{session}","text":"No, use tool{i}x, not tool{i}y, for this repo."}}"#
+            ));
+            lines.push('\n');
+        }
+    }
+    std::fs::write(&file, lines).unwrap();
+    let file = file.to_str().unwrap();
+
+    for by in [By::Agent, By::Marked] {
+        for args in [&["observe", "import", file][..], &["observe", "demo"][..]] {
+            let msg = node.refused(by, args);
+            assert!(msg.contains("inside a coding agent's session"), "{msg}");
+        }
+    }
+    assert_eq!(node.run(&["status"])["candidates"], json!({}));
+    assert!(node.candidates().is_empty());
+
+    // In the person's own terminal both still work.
+    let imported = node.run(&["observe", "import", file]);
+    assert_eq!(imported["observations_stored"], 6, "{imported}");
+    assert_eq!(node.candidates().len(), 3);
+    node.run(&["observe", "demo"]);
+    assert_eq!(node.candidates().len(), 4);
+}
+
+/// What Claude Code shows its user at the end of a turn: the output of the Stop hook,
+/// run inside the session as Claude Code runs it.
+fn stop_notice(node: &Node) -> String {
+    let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
+    node.env(&mut cmd, By::Agent);
+    let mut child = cmd
+        .args(["hook", "stop"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"{"hook_event_name":"Stop","session_id":"s1","cwd":"/nowhere","transcript_path":"/nowhere/t"}"#,
+        )
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// A note that was shown to its owner stops being announced at the end of a turn.
+/// `inbox` and `review` marked it as shown for whoever ran them, so an agent that
+/// wrote a note and then read the inbox kept its owner from ever being told
+/// (ADR-051). Inside a session nothing is marked: the reader is the agent.
+#[test]
+fn a_session_that_reads_the_inbox_has_shown_the_owner_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let (code, noted, printed) = node.out(
+        By::Agent,
+        &["note", "Never force-push to main without asking first."],
+    );
+    assert_eq!(code, 0, "{printed}");
+    let id = noted["candidate_id"].as_str().unwrap().to_owned();
+
+    // The agent reads the inbox and the note, under either mark of a session. (The
+    // `inbox` tool of `peerharness mcp` runs under the second.)
+    for by in [By::Agent, By::Marked] {
+        let (code, inbox, printed) = node.out(by, &["inbox"]);
+        assert_eq!(code, 0, "{printed}");
+        assert_eq!(inbox["candidates"][0]["status"], "detected", "{inbox}");
+        let (code, shown, printed) = node.out(by, &["review", &id]);
+        assert_eq!(code, 0, "{printed}");
+        assert_eq!(shown["candidate"]["status"], "detected", "{shown}");
+    }
+    assert_eq!(node.run(&["status"])["candidates"]["detected"], 1);
+
+    // So the owner is told at the end of the turn.
+    let notice = stop_notice(&node);
+    assert!(
+        notice.contains("1 possible convention to review"),
+        "{notice:?}"
+    );
+
+    // The owner reads the inbox in their terminal: now it has been shown.
+    assert_eq!(node.candidates()[0]["status"], "local_review");
+    let status = node.run(&["status"]);
+    assert_eq!(status["candidates"]["local_review"], 1, "{status}");
+    assert!(status["candidates"]["detected"].is_null(), "{status}");
 }
 
 /// consent-16. The tool's own comment says a word that names a file is never taken for

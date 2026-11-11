@@ -136,6 +136,15 @@ database schema it writes.
     `watch claude --install` and `--remove` wrote `1e5` back as `100000.0`, and
     rounded a long decimal or an integer beyond 64 bits. Every number in the file
     now comes back with the text it had.
+  * **An agent that read the inbox kept its owner from being told about its notes.**
+    `inbox` and `review` marked a noted rule as shown to whoever ran them, and the
+    notice at the end of a turn counts the ones not shown yet. Inside a session they
+    no longer mark anything.
+  * **The limit of 20 waiting notes from an agent could be passed.** Notes written
+    at the same moment were all kept, and `observe import`, run by the agent, added
+    candidates that looked like the owner's own corrections. The limit is now counted
+    and applied in one step, and `observe import` and `observe demo` are refused
+    inside a session.
 
 ## 0.4.0 (2026-11-11)
 
