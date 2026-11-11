@@ -136,6 +136,37 @@ fn check_member_name(name: &str) -> Result<()> {
     }
 }
 
+/// A circle's name, when a coding agent's session gives it (ADR-051).
+///
+/// The name is local, and every later preview puts it among PeerHarness's own words
+/// ("This shares the following with the members of <name> ..."), in a window too. A
+/// name of several words could say something there that reads as PeerHarness's. So
+/// inside a session a name is one word: letters and digits of any script, and `.`, `_`
+/// and `-` after the first character. In their own terminal a person names a circle as
+/// they like (the store's rule: one line of 1-64 characters).
+fn check_name_from_a_session(name: &str) -> Result<()> {
+    if !in_agent_session() {
+        return Ok(());
+    }
+    let letter = |c: char| {
+        let mut buf = [0u8; 4];
+        let as_shown: &str = c.encode_utf8(&mut buf);
+        c.is_alphanumeric() && safe(as_shown) == as_shown
+    };
+    let mut chars = name.chars();
+    let one_word = chars.next().is_some_and(letter)
+        && chars.all(|c| letter(c) || matches!(c, '.' | '_' | '-'));
+    if one_word {
+        return Ok(());
+    }
+    Err(refused(
+        "inside a coding agent's session a circle's name is one word: letters and digits, \
+         with '.', '_' and '-' after the first. The name is shown later among PeerHarness's \
+         own words, in windows too. Nothing was done. In your own terminal you can name a \
+         circle as you like.",
+    ))
+}
+
 /// The charter as human text: rules, then the roll.
 pub fn describe_charter(charter: &Charter, me: Option<&DeviceKey>) -> String {
     let rules = charter.content.rules;
@@ -218,6 +249,7 @@ fn create(ctx: &Ctx, name: &str, member: Option<&str>) -> Result<Report> {
     // Before a key exists (ADR-051): a name the store would refuse used to be found
     // out after the circle's root key was in the keystore, where it stayed.
     ph_store::check_circle_name(name).map_err(|e| usage(e.to_string()))?;
+    check_name_from_a_session(name)?;
     let now = node.now();
     let device = node.device()?;
     let keystore = node.keystore()?;
@@ -2300,6 +2332,10 @@ fn plan_join(
         .name
         .clone()
         .unwrap_or_else(|| format!("circle-{}", &fingerprint[..fingerprint.len().min(9)]));
+    // The name is checked before anything is shown, and it is shown: the owner's yes
+    // covers what the circle is called here from now on (ADR-051).
+    ph_store::check_circle_name(&name).map_err(|e| usage(e.to_string()))?;
+    check_name_from_a_session(&name)?;
     let member = charter
         .content
         .member_of(me)
@@ -2307,9 +2343,11 @@ fn plan_join(
         .member
         .clone();
     let mut preview = format!(
-        "You are about to join a circle as {member}.\n  root fingerprint {fingerprint}\n\
+        "You are about to join a circle as {member}.\n  root fingerprint {fingerprint}\n  \
+         on this machine it will be called {called}\n\
          Check that fingerprint with the founder through another channel before you continue.\n\n{charter}\n\
          Joining means accepting this charter and the way it is amended.{binding}",
+        called = safe(&name),
         charter = describe_charter(&charter, Some(me)).trim_end(),
         binding = if charter.content.rules.binding {
             "\nThe rules this circle has passed are installed for your agent when you join, \

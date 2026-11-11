@@ -545,7 +545,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   shows the device fingerprint and the scopes the new member would get, or the root
   fingerprint and the whole charter, taken from the signed content and not from a
   title, and says to check it with the other person. (Until ADR-051 the preview of
-  `circle invite` did not name the scopes, in a window or in the terminal.) Inside a session `circle invite` writes no file with the circle's records.
+  `circle invite` did not name the scopes, in a window or in the terminal.) The join window
+  also shows what the circle will be called on this machine. Inside a session that
+  name, like the one given to `circle create`, is one word: every later window puts
+  it inside one of PeerHarness's own sentences, where a name of several words could
+  read as part of the sentence (ADR-051). Inside a session `circle invite` writes no file with the circle's records.
   Removing a member, leaving, changing the rules of the vote, devices, revoking and
   every other ballot on the charter still refuse inside a session.
 * **The MCP server (ADR-038).** `peerharness mcp` offers an agent a fixed list of tools.

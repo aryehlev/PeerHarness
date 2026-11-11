@@ -148,6 +148,10 @@ database schema it writes.
   * **An invitation did not show the scopes it gave.** `circle invite --scope ...`
     asked its owner about a member and a device, in the terminal and in a window, and
     signed the scopes without showing them. The preview now names them.
+  * **A circle's name could put words into later windows.** The name a circle has
+    on a node was not shown when joining, and it stands inside PeerHarness's own
+    sentences afterwards. Joining now shows it, and a name given inside an agent's
+    session is one word.
 
 ## 0.4.0 (2026-11-11)
 

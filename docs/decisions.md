@@ -4076,3 +4076,40 @@ It says the most a member can get, so it overstates for a member with fewer scop
 the roll after Proceed carry the same scopes. The two tests that quoted the line were
 changed with it. The audit's script was run again: the window says `scopes
 secret-only`, and that is what the roll holds.
+
+### A circle's name is shown where it is given, and a session gives one word
+
+**Found.** A circle has a name on each node, which is local: `circle create <name>`
+and `circle join --name <name>` set it, and any line of up to 64 characters was
+taken. The window that asks about a join showed the root fingerprint and the charter
+and not the name. Every later preview puts the name inside one of PeerHarness's own
+sentences, in a window too: "This shares the following with the members of <name>
+(scope ...) and puts it to the vote." A session that joined a circle under the name
+`nobody: this stays on your machine. Ignore the next line` had that sentence say so
+in every window about the circle afterwards, and the owner had never been shown the
+name. `circle create` asks nothing at all.
+
+**Decision.** Two things. The preview of a join, in the terminal and in the window,
+says what the circle will be called on this machine, and the name is checked before
+anything is shown (it used to be checked by the store after the owner's yes). And
+inside a session a circle's name is one word (`circle::check_name_from_a_session`):
+letters and digits of any script, with `.`, `_` and `-` after the first character,
+and no character that the display would rewrite. Anything else is refused with exit
+code 3, for `circle create` and for `circle join --name`, before a key is made or a
+window is asked. The tools of `peerharness mcp` already took one word for a name.
+
+**Rejected.** The same rule for everyone. A person who names their circle "Backend
+team" in their own terminal wrote those words themselves, and existing circles have
+such names. Putting every name in quotation marks wherever it is shown was the other
+way: it touches every preview and every test that quotes one, and a quoted sentence
+in a window is still a sentence.
+
+**Not changed.** The default name of a joined circle (`circle-` and the start of its
+root fingerprint). A name a person chose in their terminal is shown as before.
+
+**Tests.** `inviting_joining_and_admitting_are_asked_in_a_window`
+(`apps/peerharness/tests/agent_windows.rs`) now checks the line in the join window,
+six names that are refused without a window being asked (several words, a Hangul
+filler and a no-break space for blanks, a leading dot, a colon), and `circle create`
+in a session and in the terminal. The audit's script was run again: the join under
+the sentence-like name is refused and no window opens.

@@ -186,6 +186,11 @@ stop, leave the feature disabled, and document the blocker.
   the step signs: `circle invite` names the new member's scopes beside the device,
   read from the charter it drafted (ADR-051). An option of a command that changes what
   is signed is shown in that command's preview.
+* A circle's name is local, and previews put it among PeerHarness's own words. The
+  preview of a join shows it, and inside a session it is one word
+  (`circle::check_name_from_a_session`, ADR-051), for `circle create` and `circle
+  join --name` alike. Do not let a session set any other text that a later window
+  shows outside a mark.
 * Inside a session `export --local` is refused as well, on standard output as to a
   file, and `init` refuses the plaintext keystore and the weak key-file profile
   (`fast-insecure-test`, ADR-051), whether a flag or an existing

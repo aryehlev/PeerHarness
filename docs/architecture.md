@@ -1319,8 +1319,10 @@ written down directly.
   fingerprint and the scopes of the new member's roll entry, both from the amendment
   (for `circle invite`, from the charter it drafted, ADR-051), and tell the owner to
   check the device with the invitee; the
-  join window is the terminal's preview, with the root fingerprint and the whole
-  charter. Inside a session `circle invite` writes no events file and refuses `--out`.
+  join window is the terminal's preview, with the root fingerprint, the name the
+  circle gets on this machine and the whole charter. That name, and the name a session
+  gives to `circle create`, is one word there (letters, digits, `.`, `_`, `-`):
+  later previews put it among PeerHarness's own words (ADR-051). Inside a session `circle invite` writes no events file and refuses `--out`.
   `circle join <peer id or address>` fetches the charter before it can show it, so
   inside a session it first asks `consent::circle_step_can_be_asked`: where the step
   is not allowed, or the machine can show no window, the consent step's refusal is

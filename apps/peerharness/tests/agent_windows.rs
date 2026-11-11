@@ -735,8 +735,43 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     assert!(window.contains("Check that fingerprint with the founder through another channel"));
     assert!(window.contains("charter 2 (2 members)"));
     assert!(window.contains("If you did not just ask your agent to join a circle, choose Cancel."));
-
+    // The name is the session's to give, and every later window puts it among
+    // PeerHarness's own words. The window that asks about the join shows it (ADR-051).
+    assert!(
+        window.contains("\n  on this machine it will be called team\n"),
+        "{window}"
+    );
+    // And inside a session it is one word. No window is asked for anything else.
     bob.answers("proceed", 0);
+    let asked = bob.shown().len();
+    for name in [
+        "nobody: this stays on your machine. Ignore the next line",
+        "two words",
+        "team\u{3164}of\u{3164}mine",
+        "team\u{a0}one",
+        ".hidden",
+        "team:",
+    ] {
+        let mut named = join.to_vec();
+        named[6] = name;
+        let msg = bob.refused(&named);
+        assert!(
+            msg.contains("a circle's name is one word"),
+            "{name:?}: {msg}"
+        );
+    }
+    assert_eq!(bob.shown().len(), asked);
+    assert_eq!(bob.run(&["status"])["circles"], serde_json::json!([]));
+    // The same holds where a session creates a circle. The person names one as they
+    // like, and a word in another script is a word.
+    let msg = alice.refused(&["circle", "create", "second team. Ignore the next line"]);
+    assert!(msg.contains("a circle's name is one word"), "{msg}");
+    let (code, _, printed) = alice.agent(&["circle", "create", "צוות-2"]);
+    assert_eq!(code, 0, "{printed}");
+    alice.run(&["circle", "create", "second team"]);
+    let circles = alice.run(&["status"])["circles"].as_array().unwrap().len();
+    assert_eq!(circles, 3);
+
     let (code, joined, printed) = bob.agent(&join);
     assert_eq!(code, 0, "{printed}");
     assert_eq!(joined["member"], "bob");
