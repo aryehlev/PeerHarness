@@ -221,19 +221,34 @@ impl std::fmt::Debug for Changes {
 }
 
 impl Changes {
+    /// Adds what a later settle (`other`) changed to what earlier ones in the same
+    /// exchange did.
     fn absorb(&mut self, other: Changes) {
         self.installed.extend(other.installed);
-        self.removed.extend(other.removed);
         // A circle is settled more than once in one exchange, and a rule that waits, is
-        // held or cannot be removed is found each time: it is reported once. One that a
-        // later settle did remove is not reported as left behind.
+        // held or cannot be removed is found each time: it is reported once. A skill
+        // that an earlier settle could not remove and this later one did is not
+        // reported as left behind.
+        //
+        // Only a later settle takes a failure back. `other` is one batch, and a batch
+        // holds every circle that was settled together (`settle_circles`): two circles
+        // can each have installed a rule of one name, in two places, and when one copy
+        // goes and the other cannot be removed, both are in the same batch and both are
+        // said. An earlier removal takes nothing back either.
+        //
+        // The lists hold names, and a name carries no place and no circle. So a later
+        // batch that removed some copy of a name still takes back an earlier failure
+        // to remove another copy of that name, unless the same later batch failed on
+        // it again. That line is then missing from this report. The record of the copy
+        // stays (`rule_installs`), so the next settle of its circle finds and names it.
+        self.not_removed
+            .retain(|skill| !other.removed.contains(skill));
         for skill in other.not_removed {
             if !self.not_removed.contains(&skill) {
                 self.not_removed.push(skill);
             }
         }
-        self.not_removed
-            .retain(|skill| !self.removed.contains(skill));
+        self.removed.extend(other.removed);
         for kept in other.kept_edited {
             if !self.kept_edited.contains(&kept) {
                 self.kept_edited.push(kept);
@@ -1554,6 +1569,49 @@ mod tests {
             assert!(told.says_something());
         }
         assert!(!Changes::default().says_something());
+    }
+
+    /// A skill that could not be removed is said, unless a later settle of the same
+    /// exchange removed it. One batch holds every circle that was settled together, and
+    /// two circles can each have installed a rule of one name in two places: when one
+    /// copy goes and the other cannot be removed, the batch names the skill in both
+    /// lists. The failure used to be dropped there, as if the removal of the one copy
+    /// had been a later, successful try at the other.
+    #[test]
+    fn a_failed_removal_is_taken_back_only_by_a_later_settle() {
+        let batch = |removed: &[&str], not_removed: &[&str]| Changes {
+            removed: removed.iter().map(|s| (*s).to_owned()).collect(),
+            not_removed: not_removed.iter().map(|s| (*s).to_owned()).collect(),
+            ..Changes::default()
+        };
+
+        // The same batch keeps both.
+        let mut report = Changes::default();
+        report.absorb(batch(&["style"], &["style"]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["style"]);
+        assert!(report.says_something());
+        // The next settle of the exchange finds the copy again: it is said once.
+        report.absorb(batch(&[], &["style"]));
+        assert_eq!(report.not_removed, ["style"]);
+        // A later batch that removed one copy and failed on the other again keeps it.
+        report.absorb(batch(&["style"], &["style"]));
+        assert_eq!(report.not_removed, ["style"]);
+
+        // A later batch that removed the name takes the earlier failure back, and
+        // leaves a failure about another name alone.
+        let mut report = Changes::default();
+        report.absorb(batch(&[], &["style", "naming"]));
+        report.absorb(batch(&["style"], &[]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["naming"]);
+
+        // An earlier removal takes back nothing that failed after it.
+        let mut report = Changes::default();
+        report.absorb(batch(&["style"], &[]));
+        report.absorb(batch(&[], &["style"]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["style"]);
     }
 
     /// A circle's name is no text for a log.
