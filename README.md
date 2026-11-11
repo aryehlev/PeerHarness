@@ -20,24 +20,11 @@ recognized by an environment variable, and only Claude Code's sessions are recog
 by default. [Known limits](#known-limits) begins with what this stops and what it does
 not.
 
-> **Status: 0.4.0 on `main`, unreleased; early and not audited.** It has had no
+> **Status: v0.4.0, early and not audited.** It has had no
 > independent review. [What works today](#what-works-today) says how each part was
 > checked and what was never tried, and [Known limits](#known-limits) says what is
-> missing. Read both before relying on it.
->
-> **This page describes 0.4.0, which is on `main` and not released. The install line
-> below installs v0.3.0.** In v0.3.0: there is no `peerharness keep`; a rule that
-> passes a vote replaces a skill of the same name that you installed yourself; `rule
-> opt-in` installs without asking; a rule is not scanned when it is proposed, and the
-> scanner lacks the two high-risk rules named under [Known limits](#known-limits); a
-> step that finds no terminal says `re-run with --yes`; a ballot on an amendment in a
-> terminal shows its title, not what it changes; `export --local` and a plaintext
-> `init` are not refused inside a session; `reset` does not list the skill folders it
-> leaves; a second `circle leave` is refused, and one that could not unlock the key
-> leaves the team's rules installed. The full list is in
-> [CHANGELOG.md](CHANGELOG.md) under Unreleased. To build 0.4.0, with Rust 1.89 or
-> newer:
-> `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
+> missing. Read both before relying on it. What changed since v0.3.0 is in
+> [CHANGELOG.md](CHANGELOG.md).
 
 **Where it runs.** Claude Code on macOS, with the windows. Linux from your own
 terminal, without windows. Windows is not supported.
@@ -402,9 +389,10 @@ check records, on the version named. *Not tried* means no run is recorded.
 * **Not tried.** Clicking the buttons of the real window. The setup prompt above
   through an agent. A real agent noting, keeping, proposing, voting or joining.
   Internet mode between two different routers, over IPv6 or on Linux. `--lan` on
-  Linux. The aarch64 Linux binary, and the macOS binaries since v0.2.0. A release
-  binary of 0.4.0: none is published. MCP clients other than Claude Code. Windows is
-  not supported.
+  Linux. The aarch64 Linux binary, and the macOS binaries since v0.2.0. The release
+  binaries of 0.4.0, which the release workflow builds from the tag: none had been
+  run when this page was tagged. MCP clients other than Claude Code. Windows is not
+  supported.
 
 The whole suite was run on 2026-11-10, on Linux, at commit `e6fae27` (0.4.0), in a
 pre-launch check made with AI coding agents: 843 tests passed, none failed, and 10

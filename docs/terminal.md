@@ -20,12 +20,6 @@ confirmation window, and `doctor` and `status` say that it is one.
 This page says "circle" where the README says "team": it is the word the commands
 use. The README has the other words under [Words](../README.md#words).
 
-> **This page describes 0.4.0, which is on `main` and not released.** The install
-> script above installs v0.3.0, which has no `peerharness keep`: there, use
-> `peerharness review <candidate-id> --approve` and then `peerharness skills install
-> <name>`. The `cargo install` line above builds 0.4.0. What else v0.3.0 does
-> differently is in the [README's status note](../README.md#peerharness).
-
 ## A rule of your own
 
 A rule of your own needs no circle and no network.

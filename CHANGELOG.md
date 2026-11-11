@@ -7,9 +7,7 @@ protocol ([docs/release.md](docs/release.md)). Each entry names the protocol ver
 the binary speaks ([docs/protocol-v0.md](docs/protocol-v0.md), section 15) and the
 database schema it writes.
 
-## Unreleased (0.4.0)
-
-`main` carries version 0.4.0. It is not tagged.
+## 0.4.0 (2026-11-11)
 
 * `peerharness keep <candidate>` saves a noted rule to your library and installs it for
   your own agent in one step, after showing the exact text and where it goes. It
