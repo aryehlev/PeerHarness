@@ -314,20 +314,20 @@ fn without_windows_setup_says_what_works_and_suggests_nothing_that_cannot() {
     let said = text(&out);
     assert!(out.status.success(), "{said}");
     assert!(said.contains("off (every decision needs your own terminal)"));
-    // What it says about the reporting skill holds inside a session PeerHarness
-    // recognizes, and is worded so.
+    // What it says about the reporting skill: what the skill asks of the agent, and
+    // what is refused inside a session PeerHarness recognizes. It does not say that a
+    // note is all a session can do, which no check enforces: a session can found a
+    // circle or opt out of a rule.
     let said_flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         said_flat.contains(
-            "Inside its session the agent can only add a note to your inbox; it cannot \
-             approve, share or install anything."
+            "It asks your agent to write down a rule when you correct it, and to run \
+             nothing else. Inside its session the agent cannot approve, share or install \
+             anything."
         ),
         "{said}"
     );
-    assert!(
-        !said_flat.contains(". The agent can only add a note"),
-        "{said}"
-    );
+    assert!(!said_flat.contains("can only add a note"), "{said}");
     // What works there: the note, the count at the end of a turn, and the terminal.
     assert!(
         said.contains("Without confirmation windows, this is what works from here:"),

@@ -190,9 +190,12 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
                  share, install or join anything: that is your click in the window. \
                  Skip it with --no-agent-notes. Its exact text:"
             } else {
-                "It asks your agent to write down a rule when you correct it. Inside its session \
-                 the agent can only add a note to your inbox; it cannot approve, share or \
-                 install anything. \
+                // What the skill asks of the agent, and then what the program enforces.
+                // The first is a request: a session can still found a circle or opt out
+                // of a rule, so nothing here says that a note is all it can do.
+                "It asks your agent to write down a rule when you correct it, and to run \
+                 nothing else. Inside its session the agent cannot approve, share or install \
+                 anything. \
                  Skip it with --no-agent-notes. Its exact text:"
             });
             preview.line("");
