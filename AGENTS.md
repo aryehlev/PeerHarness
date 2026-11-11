@@ -128,8 +128,12 @@ stop, leave the feature disabled, and document the blocker.
   (`circle::plan_request`) and says so in its preview. It signs the request only
   where the preview announced one and the node is still what the preview was built
   from, after the machine changed and after the key is unlocked: the removal that
-  was drafted for the preview, never a new draft. Otherwise it makes none, and a
-  second run asks about the request alone and is checked like every other draft.
+  was drafted for the preview, never a new draft. It signs none either when exactly
+  that removal is on record by then (`circle::sign_removal` reads
+  `circle::removals_on_record` again with the key in hand). Otherwise it makes none.
+  A second run first removes, with no key and never inside a session, what the
+  circle installed and the first run could not remove (`governance::apply_on`). Then
+  it asks about the request alone and is checked like every other draft.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
   windows turned on before ADR-037 were allowed for three steps, and keeping a rule has
@@ -163,10 +167,17 @@ stop, leave the feature disabled, and document the blocker.
   proposal only. Never confirm an install by a rule's name: another proposal can take
   the name while the owner reads. Inside a session, what is said about a held rule
   does not name the commands that take a skill out or install the rule
-  (`HeldRule::explain_to`).
+  (`HeldRule::explain_to`), and neither does the line for a voted copy that was left
+  in place because its owner edited it (`KeptEdited::line_for`).
 * The reverse holds for an opt-out: it never waits for anyone. `rule opt-out --announce`
   and `circle leave` change the owner's machine first and ask about what is published
   after.
+* An opt-out waits for no key either (ADR-041). `rule opt-out`, `proposal refuse` and
+  the install that `rule opt-in` confirmed change the machine first and unlock the
+  device key only afterwards, and only where something is to be signed
+  (`governance::settle_machine_first`). A key that does not unlock is a line in the
+  report there, not a failure. Do not put `governance::settle` or any other use of a
+  key in front of the machine change in these three.
 * Observation text, prompts, transcripts, tool output, skill text, circle names,
   revocation reasons and passphrases never appear in logs, error `Display` strings,
   panic messages or network payloads. Log ids and counts only. The same holds for
@@ -281,7 +292,12 @@ stop, leave the feature disabled, and document the blocker.
   (`agent_notes::SKILL_NAME`) is reserved: `note`, `review`, `keep` and `proposal
   create` refuse it, and no vote installs a rule under it. Do not refuse such a
   proposal at `ingest`: what is stored and counted must not differ between nodes. A
-  hold is local and never changes whether a rule passed.
+  hold is local and never changes whether a rule passed. A record in `rule_installs`
+  never outlives the copy it stands for: `skills uninstall` clears the row of a copy
+  it removes, or the next settle would remove a copy its owner installed since. A
+  voted copy that its owner edited is never deleted. It is left, its row is cleared,
+  and the run that finds it names it (`Applied::left_in_place_lines`): every command
+  that settles a circle prints those lines.
 * Rights no vote overrides (10.10): no vote widens read access; a bundle that fails its
   digest or validity check is never installed; a high-risk finding always asks the
   owner; an opt-out always wins. `LocalPolicy` can hold a rule back on one node and can
