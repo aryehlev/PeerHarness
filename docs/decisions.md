@@ -1159,7 +1159,8 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
   between the check in `propose_under` and its signature is closed: a command runs
   its checks and its signatures in one transaction of the store. And `proposal
   create` and `rule repeal` sign through `propose_under` as well, so `propose` is
-  left to `peerharness demo`, for the one rule it proposes, and to tests.
+  left to `peerharness demo`, for the one rule it proposes, and to tests (under the
+  name `propose_without_preview` since then).
 * **An approval of an amendment is checked again after the yes.** What an amendment
   changes is read against the charter and the rules in force on the voter's node, and
   both can change while a preview or a window is open. A rule that passed meanwhile
@@ -1350,8 +1351,8 @@ signed byte, wire type or schema touched.
   demo calls `propose_under` with the digest of the charter it drafted from. The demo
   has no prompt between its draft and its signature, so nothing was at risk there.
   (Since the review of the pull request no command that showed its owner a preview
-  calls `propose`: `proposal create` and `rule repeal` sign through `propose_under`
-  too.)
+  calls `propose`, which is named `propose_without_preview` since then: `proposal
+  create` and `rule repeal` sign through `propose_under` too.)
 * **The first run of `circle leave` signs the request it showed, or none.** Step 3
   above drafted the request after the answer, from what the node held then. The
   review ran two consequences. On a node that lacked a carried rule the preview said
@@ -1702,8 +1703,8 @@ in `crates/ph-store`. No signed byte, wire type, schema or dependency was touche
   transaction begins. Nothing inside the closure shows a prompt or a window, reads
   standard input, touches the network or settles a circle.
 
-  It is called in six places. Each holds a check together with everything that is
-  signed on the strength of it:
+  It is called in six places (seven since `question send` joined them, below). Each
+  holds a check together with everything that is signed on the strength of it:
 
   * `circle::put_amendment`, for `circle remove`, `amend` and `device`, and now for
     `circle invite` as well: `as_drafted`, `propose_under` and the proposer's
@@ -1766,7 +1767,8 @@ in `crates/ph-store`. No signed byte, wire type, schema or dependency was touche
   the question may no longer be the ones you were shown. Nothing was shared and
   nothing was signed. Run the command again to see who would read it now." Nothing
   is stored, and the candidate keeps its status. This one is a check and not a
-  transaction: see "Not done".
+  transaction: see "Not done". (It is in the transaction since the review of these
+  changes, below.)
 * **A second `circle leave` makes no second request when the same one arrived while
   its owner was asked.** Since the fourth review the first run reads what is on
   record once more with the key in hand. The second run did not. It read the record
@@ -1797,8 +1799,8 @@ in `crates/ph-store`. No signed byte, wire type, schema or dependency was touche
   drafts no removal to compare with, the line is "Proposal <id> on record takes you
   off the roll. This node cannot show whether it changes anything else:
   `peerharness proposal show <id>`." The sentence for a request is unchanged, and it
-  is the one printed when both are on record. `--undo` makes no request and
-  withdraws none, as before.
+  is the one printed when both are on record. (Both are named since the review of
+  these changes, below.) `--undo` makes no request and withdraws none, as before.
 * **A sync report keeps a skill that could not be removed when another copy of that
   name was removed before it.** By its subject this belongs to ADR-042. An exchange
   settles the circles it concerns one after the other, each more than once, and
@@ -1826,7 +1828,7 @@ in `crates/ph-store`. No signed byte, wire type, schema or dependency was touche
   ..., not with a file"), so no file under the name of a peer id was read that way.
   Only a value the tool passes as an address could be read as a file, and as a path
   such a value is absolute and begins with the name of a protocol (`/ip4/...`): it
-  needs a directory of that name at the root of the file system. The command typed
+  needs a file or a directory of that name at the root of the file system. The command typed
   inside a session without `--internet` did read a file named like a peer id, and
   that is what the test shows. The rule is all the same
   that a tool never makes `circle join` read a file, and it rested on the tool's own
@@ -1853,7 +1855,9 @@ documentation of `Store::transaction_with` runs as a test too. Unit tests in
 `a_second_leave_makes_no_second_request_when_the_same_one_arrived_meanwhile` and
 `undoing_a_leave_names_another_members_proposal_that_takes_the_owner_off_the_roll`,
 which asserts the whole preview. In `apps/peerharness/src/runtime.rs`:
-`a_failed_removal_is_taken_back_only_by_a_later_settle`. Through the binary, two
+`a_failed_removal_is_taken_back_only_by_a_later_settle` (replaced by
+`a_failed_removal_is_taken_back_only_by_the_same_circle` after the review of these
+changes, below). Through the binary, two
 tests. `a_rule_is_not_proposed_under_a_charter_that_arrived_while_its_proposer_read`
 in `apps/peerharness/tests/vote_and_own_skills.rs` (debug builds) asks `proposal
 create` in a stand-in window that imports charter 4 before it answers Proceed: the
@@ -1897,7 +1901,9 @@ Not done.
 * **`question send` checks and then signs.** Its look at the charter and its
   signature are not one transaction, so the time between two calls in one process is
   left there, as it was for a draft before this review. What can change in it is how
-  many members can read the question. The text is what was shown.
+  many members can read the question. The text is what was shown. (Changed after
+  the review of these changes, below: the look and the signature are one
+  transaction.)
 * **A bundle file can stay behind a `proposal create` that fails late.** The library
   entry is saved inside the transaction, after the check of the charter. A rollback
   takes its rows back and not the file in the bundle store: an error after that step
@@ -1927,12 +1933,14 @@ Not done.
 * **No test holds a prompt open.** As before, the suite has no pseudo-terminal. The
   check after a prompt in a terminal of `rule repeal`, `question send`, `proposal
   create` and a second `circle leave` was run by hand only, and in this round not at
-  a passphrase prompt.
+  a passphrase prompt. (The review of these changes ran them at the passphrase
+  prompt as well: below.)
 * **No test writes between a check and a signature through the binary.** That
   nobody else writes inside the transaction is a unit test of `atomically` with a
   second connection to the same file. That each command runs its check and its
   signatures inside it is read in the code. Two processes were not made to race for
-  that moment, before the change or after it.
+  that moment, before the change or after it. (The review of these changes raced an
+  `events import` of a successor charter against commands run with `--yes`: below.)
 * What the parts above list as not done stands, except the first point under "After
   a fourth review": `circle leave` from a revoked device, the root key in
   `settle_machine_first`, and a rule that passed in a scope the node cannot read.
@@ -1940,8 +1948,16 @@ Not done.
 The changes of this part were then reviewed by two more agents, one for the
 transaction and the proposals and one for the rest and the documents. They ran the
 commands with daemons on every home, a peer that pushed in a loop and three
-terminals on one home: 220 commands, none failed, none met a locked database. They
-held each prompt open on a pseudo-terminal and imported a charter, a rule or a
+terminals on one home: 220 commands in two runs, none failed, none met a locked
+database. In a run before those two, one `proposal create` in the pushing peer's own
+loop failed; the script had discarded its output, so the cause is not recorded (a
+sync on that home imported a newer charter at about that time, which gives the
+refusal by design), and the two runs that kept the output had no failure. They raced
+an `events import` of a successor charter against commands run with `--yes`, 200
+times: every proposal that was signed names the charter whose count its preview
+printed. They
+held each prompt open on a pseudo-terminal, the passphrase prompt too, and imported
+a charter, a rule or a
 removal there, and the cases of the earlier parts that once signed something
 unshown were run again: nothing was signed that had not been shown. They found no
 case in which something was signed, installed or removed that its owner had not been
@@ -1955,8 +1971,10 @@ shown. What they found, and what was changed for it:
   the names, the circle whose settle found each (`removed_in`, `not_removed_in`),
   and `absorb` takes a failure back only when a later settle of the same circle
   removed that skill. Both lines are printed in either order. Test:
-  `a_failed_removal_is_taken_back_only_by_the_same_circle` (unit); the two circles
-  were not run through the binary again after the change.
+  `a_failed_removal_is_taken_back_only_by_the_same_circle` (unit). After the change
+  the two circles were run through the binary again by hand, in both orders, with a
+  one-shot `sync`, with a daemon that syncs on a timer and with one that only
+  answers: both lines each time.
 * **`circle leave --undo` names both proposals.** With the owner's request and
   another member's wider proposal both on record, the preview named only the
   request. It prints the line for the other one under it now, as `circle leave`
@@ -1969,29 +1987,42 @@ shown. What they found, and what was changed for it:
   The name is there so that a command that asked its owner does not call it by
   habit.
 * **`question send` runs its look and its signature in the transaction too**
-  (`governance::atomically`), so the seven places above are eight and there is no
+  (`governance::atomically`), so the six places above are seven and there is no
   exception.
 * **What the entry about `circle join` said about the tool** was wider than what the
   code did, and is corrected above.
 
 Not done from that review: the refusals of `rule repeal`, `question send` and a
 second `circle leave` are pinned by unit tests of the functions they call
-(`propose_under`, `request_as_previewed`), and by no test of the commands
-themselves. A command that went back to signing without the look would pass the
-suite. A test of the command needs a prompt held open, which the suite cannot do;
-the three were run by hand on a pseudo-terminal by the agent that made the change
-and by the one that reviewed it.
+(`propose_under`, `charter_as_shown`, `request_as_previewed`), and by no test of the
+commands themselves; the text of the refusal of `question send` is in no test. A
+command that went back to signing without the look would pass the suite. A test of
+the command needs a prompt held open, which the suite cannot do; the three were run
+by hand on a pseudo-terminal by the agent that made the change and by the ones that
+reviewed it, `question send` again after it was moved into the transaction.
+
+Two more things were seen in those runs and left as they are. With three proposals
+on record that take the owner off the roll (their request, an older one of their
+own and another member's), the previews of `circle leave --undo` and of a second
+`circle leave` name the request and one other, the owner's own first: `OnRecord`
+holds one other proposal. And the walk of a note to "questioned" comes after the
+transaction of `question send`, as it came after the signature before: when the
+note is rejected or asked again from a second terminal while the passphrase is
+typed, the question is shared as it was confirmed and the command then ends with an
+error about the note's status.
 
 CI ran the suite for the pull request at commit `0ffc90e`, on the merge of that commit
 with `main` (`e6fae27`), on 2026-11-11: 973 tests passed on Linux (Ubuntu 26.04,
 x86_64) and 968 on macOS (macOS 26.7, arm64, runner image `macos-26-arm64`), none
 failed and 10 were skipped on each. That is the first run on macOS on record for the
-fixes of the parts above. It is a run of the code before the changes of this part:
-nothing of this part was run on macOS, and no run by hand was made there. One of the
-new tests relies on SQLite refusing a second writer at once
-(`nobody_else_writes_between_a_check_and_the_signatures_it_allows`). An older test of
-the store that relies on the same, `short_busy_timeout_reports_busy`, was in the
-suite that CI ran on macOS, and the new one was not.
+fixes of the parts above, and it is a run of the code before the changes of this
+part. CI then ran the suite with the changes of this part, at commit `400fd20` on the
+merge of that commit with `main`, on the same day and the same runner images: 983
+tests passed on Linux and 978 on macOS, none failed and 10 were skipped on each. The
+tests this part added passed on both, among them the one that relies on SQLite
+refusing a second writer at once
+(`nobody_else_writes_between_a_check_and_the_signatures_it_allows`). No run by hand
+was made on macOS.
 
 ## ADR-042: A vote never replaces a skill it did not install, the name of PeerHarness's own skill is reserved, and more steps are refused inside a session
 ADR-023 recorded the installs made because a rule passed in `rule_installs`, so that a
@@ -2593,7 +2624,7 @@ removed in the same exchange (`runtime::Changes::absorb`); the report now tells 
 copies apart by their circle. And inside a session `circle join` read an argument
 that parses as a peer id or as an address as a file when something of that name was
 on disk. Through the `join_circle` tool that could happen only for an address, whose
-path needs a directory at the root of the file system; the tool's rule no longer
+path needs a file or a directory at the root of the file system; the tool's rule no longer
 rests on its own look at the disk. What was traced, what changed, the tests and what
 is left are in ADR-041, "After a review of the pull request".
 

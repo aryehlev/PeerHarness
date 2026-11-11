@@ -852,11 +852,12 @@ key is unlocked before the transaction begins. What is inside:
 * for `rule repeal`: `rule_as_shown` and `propose_under`;
 * for `--announce`: `rule_as_shown` and the stance;
 * for `proposal create`: `charter_as_shown`, the library entry, the candidate's walk
-  to `Proposed`, `propose_under` and the candidate's link to the proposal.
+  to `Proposed`, `propose_under` and the candidate's link to the proposal;
+* for `question send`: `charter_as_shown` and the question.
 
 What is never inside: a prompt, a window, standard input, the network, and settling,
-which follows the commit. Every other ballot is cast outside a transaction, and
-`question send` checks and then signs without one. The bundle file that `proposal
+which follows the commit. Every other ballot is cast outside a transaction. The
+bundle file that `proposal
 create` writes is not taken back by a rollback: it can stay, named by no row. While a
 transaction is open other writers wait, up to their busy timeout, and readers do not.
 
@@ -1003,8 +1004,8 @@ what one rule in force means on this machine, in this order:
   nothing is signed and the report is the one for a request on record. `circle
   leave --undo` makes no request and withdraws none. Its preview
   (`circle::follow_again_preview`) says what is on record: the request, another
-  member's proposal that takes the owner off the roll and is not the request, or
-  nothing. A node that is voted off learns of it from a peer (section 7, the removal
+  member's proposal that takes the owner off the roll and is not the request, both,
+  or nothing. A node that is voted off learns of it from a peer (section 7, the removal
   notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step). `rule

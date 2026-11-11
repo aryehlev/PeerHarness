@@ -333,8 +333,8 @@ The look and what it lets the command sign are also one transaction of your node
 database, so a sync by a daemon you left running, or an import in another terminal,
 cannot store anything between the two. Your answer and your passphrase are asked for
 before that transaction and never inside it. What follows from a vote (a result, a
-new charter, your skills brought in line) is done after it. `question send` is the
-one command above that looks and then signs without a transaction.
+new charter, your skills brought in line) is done after it. This holds for every
+command above, `question send` included.
 
 `--announce` ends in the same way when your key does not unlock. What was done on
 your machine is reported, and the command exits 3 with "nothing was announced: the

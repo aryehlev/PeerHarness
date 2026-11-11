@@ -118,10 +118,10 @@ same lists. Several change what a command prints, asks or accepts.
   your node's database. A running daemon's sync and an import in another terminal
   cannot store anything between the two. This holds for `circle invite`, `remove`,
   `amend`, `device` and `leave`, for an approval of an amendment, for `rule repeal`,
-  for `--announce` and for `proposal create`. Your answer and your passphrase are
-  asked for before the transaction, never inside it, and what follows from a vote
-  (a result, a new charter, your skills) is done after it. `question send` checks
-  and then signs without one. In the ordinary case nothing looks different. When a
+  for `--announce`, for `proposal create` and for `question send`. Your answer and
+  your passphrase are asked for before the transaction, never inside it, and what
+  follows from a vote (a result, a new charter, your skills) is done after it. In
+  the ordinary case nothing looks different. When a
   later step fails, less is left behind: a proposal is not stored without its
   proposer's approval, and `proposal create` leaves no library entry and no note
   marked as proposed for a proposal that was refused.
@@ -169,8 +169,8 @@ same lists. Several change what a command prints, asks or accepts.
   roll is on record, and names it. It no longer says that one stays on record when
   none was made. A proposal of another member that takes you off the roll and is
   not your request is named as well ("Proposal <id> on record also takes you off
-  the roll, and changes more than that"), where the preview said that no request is
-  on record.
+  the roll, and changes more than that"), beside your request or where the preview
+  said that no request is on record.
 
 **When your key does not unlock**
 

@@ -623,8 +623,9 @@ fn the_join_tool_takes_a_peer_id_or_an_address_and_never_a_path() {
     assert_eq!(joined["member"], "bob");
 }
 
-/// Inside a session `circle join` does not ask the disk about an argument that reads as
-/// a peer id or as an address: such an argument names a node. The `join_circle` tool
+/// Inside a session `circle join` does not read an argument that reads as a peer id
+/// or as an address as a file, whatever is on disk: such an argument names a node. The
+/// `join_circle` tool
 /// has its own look at the disk before it starts the command, and the command used to
 /// look again by itself; the tool's rule that it never makes `circle join` read a file
 /// no longer rests on those two looks agreeing. (Through the tool a peer id came with
