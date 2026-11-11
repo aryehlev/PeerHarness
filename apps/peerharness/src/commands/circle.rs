@@ -1133,49 +1133,62 @@ fn request_removal(
     Ok(Ok(put))
 }
 
-/// `circle leave --undo`: the owner follows the circle again on this machine. Nothing
-/// is signed and nothing on record changes; the preview says what is on record.
-fn follow_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<Report> {
-    let id = circle.circle_id;
-    let me = node.device_key();
+/// What `circle leave --undo` shows its owner (`me`) before it asks: what following
+/// the circle again does on this machine, and what is on record about taking them off
+/// the roll.
+///
+/// A request that is on record stays there: the run withdraws nothing, and nothing that
+/// was signed can be withdrawn. Whether one is on record is read here, not assumed: a
+/// machine can have left without making one. Three things can be on record. The
+/// request itself, or a proposal of the owner's own that takes them off the roll and
+/// changes more: either is "a request". Another member's proposal that takes them off
+/// the roll and is not the request, because it changes more than that or because this
+/// node cannot compare it: it is named for what it is
+/// ([`other_removal_line`]), since the members can still approve it. Or nothing.
+fn follow_again_preview(store: &Store, me: &DeviceKey, circle: &CircleRow) -> Result<String> {
     let name = safe(&circle.name);
-    let (current, rules, _) = governance::rule_set(&node.store, &id)?;
-    let preview = match current.content.member_of(&me) {
-        Some(entry) => {
-            let member = entry.member.clone();
-            // A request that is on record stays there: this run withdraws nothing, and
-            // nothing that was signed can be withdrawn. Whether one is on record is
-            // read here, not assumed: a machine can have left without making one.
-            let draft = if rules.missing_carried().is_empty() {
-                remove_member(&current.content, &rules, &member).ok()
-            } else {
-                None
-            };
-            let on_record =
-                removals_on_record(&node.store, &me, &current, draft.as_ref(), &member)?;
-            let request = on_record
-                .request
-                .map(|(proposal, _)| proposal)
-                .or(on_record.other.filter(|p| p.author() == me));
-            let about_the_request = match request {
-                Some(proposal) => format!(
-                    "A request to take you off the roll is on record (proposal {}) and \
-                     stays there; the members may still approve it.",
-                    short_id(&proposal.event_id())
-                ),
-                None => "No request to take you off the roll is on record.".to_owned(),
-            };
-            format!(
-                "This follows {name} again on this machine: rules in force are installed \
-                 for your agent according to your mode ({}).\n{about_the_request}",
-                circle.adoption_mode
-            )
-        }
-        None => format!(
+    let (current, rules, _) = governance::rule_set(store, &circle.circle_id)?;
+    let Some(entry) = current.content.member_of(me) else {
+        return Ok(format!(
             "This follows {name} again on this machine. You are not on the roll of its \
              charter in force, so none of its rules binds you and none is installed."
-        ),
+        ));
     };
+    let member = entry.member.clone();
+    let draft = if rules.missing_carried().is_empty() {
+        remove_member(&current.content, &rules, &member).ok()
+    } else {
+        None
+    };
+    let on_record = removals_on_record(store, me, &current, draft.as_ref(), &member)?;
+    let (own, of_another) = match on_record.other {
+        Some(other) if other.author() == *me => (Some(other), None),
+        other => (None, other),
+    };
+    let request = on_record.request.map(|(proposal, _)| proposal).or(own);
+    let about_the_request = match (request, of_another) {
+        (Some(proposal), _) => format!(
+            "A request to take you off the roll is on record (proposal {}) and stays \
+             there; the members may still approve it.",
+            short_id(&proposal.event_id())
+        ),
+        (None, Some(other)) => other_removal_line(&other, draft.is_some()),
+        (None, None) => "No request to take you off the roll is on record.".to_owned(),
+    };
+    Ok(format!(
+        "This follows {name} again on this machine: rules in force are installed for your \
+         agent according to your mode ({}).\n{about_the_request}",
+        circle.adoption_mode
+    ))
+}
+
+/// `circle leave --undo`: the owner follows the circle again on this machine. Nothing
+/// is signed and nothing on record changes; the preview says what is on record
+/// ([`follow_again_preview`]).
+fn follow_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<Report> {
+    let id = circle.circle_id;
+    let name = safe(&circle.name);
+    let preview = follow_again_preview(&node.store, &node.device_key(), circle)?;
     confirm(&ctx.out, &preview, yes, "following the circle again")?;
     node.store.set_circle_left(&id, None)?;
     let settled = governance::settle(node, circle, &governance::user_installer()?, &[])?;
@@ -2882,5 +2895,91 @@ mod tests {
             Removal::OnRecord(found) if found.0.event_id() == signed.event_id()
         ));
         assert_eq!(proposals(&store), before + 1);
+    }
+
+    /// `circle leave --undo` says what is on record about taking its owner off the
+    /// roll. Another member's proposal that takes them off the roll and changes more
+    /// than that is not "the request", and the preview used to say "No request to take
+    /// you off the roll is on record." while the members could still approve that
+    /// proposal. It is named now, as `circle leave` names it. Bob (device 2) undoes his
+    /// leave; the store is what his node holds.
+    #[test]
+    fn undoing_a_leave_names_another_members_proposal_that_takes_the_owner_off_the_roll() {
+        let (store, circle, now) = node();
+        let row = store.circle(&circle).unwrap().unwrap();
+        let bob = device(2);
+        let preview = |store: &Store| follow_again_preview(store, &bob, &row).unwrap();
+        let machine = "This follows team again on this machine: rules in force are installed \
+                       for your agent according to your mode (ask).\n";
+        let nothing = "No request to take you off the roll is on record.";
+        let request = |p: &ProposalView| {
+            format!(
+                "A request to take you off the roll is on record (proposal {}) and stays \
+                 there; the members may still approve it.",
+                short_id(&p.event_id())
+            )
+        };
+        let (current, rules) = read(&store, &circle);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+
+        // Nothing is on record.
+        assert_eq!(preview(&store), format!("{machine}{nothing}"));
+
+        // Alice proposes an amendment that takes bob off the roll, and carol too.
+        let mut more = draft.clone();
+        more.roll.retain(|e| e.member != "carol");
+        let by_alice = amendment(&store, 1, &current, "Remove bob", more.clone(), now);
+        let said = preview(&store);
+        assert_eq!(
+            said,
+            format!("{machine}{}", other_removal_line(&by_alice, true))
+        );
+        assert!(
+            said.ends_with(&format!(
+                "Proposal {id} on record also takes you off the roll, and changes more than \
+                 that: `peerharness proposal show {id}`.",
+                id = short_id(&by_alice.event_id())
+            )),
+            "{said}"
+        );
+        assert!(!said.contains(nothing), "{said}");
+        assert!(
+            !said.contains("A request to take you off the roll"),
+            "{said}"
+        );
+
+        // Bob's own proposal that does the same is still called a request, as before.
+        let own = amendment(&store, 2, &current, "Remove bob and carol", more, now);
+        assert_eq!(preview(&store), format!("{machine}{}", request(&own)));
+
+        // So is the exact removal, whoever proposed it, on a node without bob's own.
+        let (store, circle, now) = node();
+        let (current, _) = read(&store, &circle);
+        let exact = amendment(&store, 1, &current, "Remove bob", draft, now);
+        assert_eq!(preview(&store), format!("{machine}{}", request(&exact)));
+
+        // A node that lacks a rule the charter carries drafts no removal to compare
+        // with. Another member's removal is named there too, for what this node can
+        // say about it.
+        let mut content = current.content.clone();
+        content.carried = vec![EventId::from_digest(Digest::sha256(
+            b"a rule not held here",
+        ))];
+        next_charter(&store, &current, content, now);
+        let (current, rules) = read(&store, &circle);
+        assert_eq!(rules.missing_carried().len(), 1);
+        assert_eq!(preview(&store), format!("{machine}{nothing}"));
+        let mut honest = current.content.clone();
+        honest.roll.retain(|e| e.member != "bob");
+        let by_alice = amendment(&store, 1, &current, "Remove bob", honest, now);
+        let said = preview(&store);
+        assert_eq!(
+            said,
+            format!("{machine}{}", other_removal_line(&by_alice, false))
+        );
+        assert!(
+            said.contains("This node cannot show whether it changes anything else"),
+            "{said}"
+        );
     }
 }
