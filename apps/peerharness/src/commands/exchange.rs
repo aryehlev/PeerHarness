@@ -109,6 +109,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
     let mut installed = Vec::new();
     let mut removed = Vec::new();
     let mut not_removed = Vec::new();
+    let mut kept_edited = Vec::new();
     let mut held = Vec::new();
     let mut charters = Vec::new();
     for circle in node.store.circles()? {
@@ -142,6 +143,10 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
                 safe(&circle.name),
                 governance::not_removed_line(skill)
             ));
+        }
+        for kept in &settled.applied.kept_edited {
+            t.line(format!("  {}: {}", safe(&circle.name), kept.line()));
+            kept_edited.push(kept.name.clone());
         }
         for waiting in &settled.applied.asking {
             t.line(format!("  {}: {}", safe(&circle.name), waiting.line()));
@@ -187,6 +192,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             "installed": installed,
             "removed": removed,
             "not_removed": not_removed,
+            "kept_edited": kept_edited,
             "held": held,
             "charters_issued": charters,
         }),

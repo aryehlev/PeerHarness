@@ -183,6 +183,9 @@ pub struct Changes {
     /// Skills a vote installed that were to be removed and could not be
     /// (`governance::Applied::not_removed`).
     pub not_removed: Vec<String>,
+    /// Copies a vote installed that were to be removed and were left in place because
+    /// they were edited on this machine (`governance::Applied::kept_edited`).
+    pub kept_edited: Vec<governance::KeptEdited>,
     /// Rules in force that wait for the owner's confirmation.
     pub asking: Vec<governance::Waiting>,
     /// Rules in force that this node holds back (`governance::Held`), each with the
@@ -194,13 +197,15 @@ pub struct Changes {
 }
 
 /// A held rule comes with the name of its circle, which is no text for a log: `Debug`
-/// prints how many there are.
+/// prints how many there are. A copy that was kept comes with the path of a project,
+/// and is counted too.
 impl std::fmt::Debug for Changes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Changes")
             .field("installed", &self.installed)
             .field("removed", &self.removed)
             .field("not_removed", &self.not_removed)
+            .field("kept_edited", &self.kept_edited.len())
             .field("asking", &self.asking)
             .field("held", &self.held.len())
             .field("charters_issued", &self.charters_issued)
@@ -223,6 +228,11 @@ impl Changes {
         }
         self.not_removed
             .retain(|skill| !self.removed.contains(skill));
+        for kept in other.kept_edited {
+            if !self.kept_edited.contains(&kept) {
+                self.kept_edited.push(kept);
+            }
+        }
         for waiting in other.asking {
             if !self.asking.contains(&waiting) {
                 self.asking.push(waiting);
@@ -241,9 +251,13 @@ impl Changes {
     /// not something that happened: a sync that exchanged nothing does not report it
     /// again, tick after tick (`rule list` shows it at any time). The same goes for a
     /// skill that cannot be removed: every settle finds it again until it can.
+    ///
+    /// A copy that was left because it was edited did happen: its record is cleared
+    /// when it is found, so no later settle finds it again.
     pub fn is_empty(&self) -> bool {
         self.installed.is_empty()
             && self.removed.is_empty()
+            && self.kept_edited.is_empty()
             && self.asking.is_empty()
             && self.charters_issued.is_empty()
     }
@@ -268,6 +282,7 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                 changes.installed.extend(settled.applied.installed);
                 changes.removed.extend(settled.applied.removed);
                 changes.not_removed.extend(settled.applied.not_removed);
+                changes.kept_edited.extend(settled.applied.kept_edited);
                 changes.asking.extend(settled.applied.asking);
                 changes.held.extend(
                     settled
@@ -1503,6 +1518,16 @@ mod tests {
             ..Changes::default()
         };
         assert!(!installed.is_empty());
+        // A copy that was left because it was edited is found once, so it is news.
+        let kept = Changes {
+            kept_edited: vec![governance::KeptEdited {
+                name: "style".to_owned(),
+                place: None,
+                uninstall_refused: false,
+            }],
+            ..Changes::default()
+        };
+        assert!(!kept.is_empty());
     }
 
     /// A circle's name is no text for a log.

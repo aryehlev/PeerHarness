@@ -183,6 +183,9 @@ fn sync_lines(t: &mut Text, r: &SyncReport, held: &[(governance::HeldRule, Strin
     for skill in &r.changes.not_removed {
         t.line(format!("  {}", governance::not_removed_line(skill)));
     }
+    for kept in &r.changes.kept_edited {
+        t.line(format!("  {}", kept.line()));
+    }
     for waiting in &r.changes.asking {
         t.line(format!("  {}", waiting.line()));
     }
@@ -205,6 +208,7 @@ fn sync_json(r: &SyncReport) -> Value {
         "installed": r.changes.installed,
         "removed": r.changes.removed,
         "not_removed": r.changes.not_removed,
+        "kept_edited": r.changes.kept_edited.iter().map(|k| &k.name).collect::<Vec<_>>(),
         "asking": r.changes.asking.iter().map(|w| &w.name).collect::<Vec<_>>(),
         "held": r.changes.held.iter().map(|(rule, _)| rule.json()).collect::<Vec<_>>(),
         "charters_issued": r.changes.charters_issued,

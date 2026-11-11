@@ -679,6 +679,7 @@ fn amendment_report(circle: &CircleRow, put: &Put, done: &str, mut t: Text) -> R
             "charter_seq": put.settled.charter_notarized,
             "removed_rules": put.settled.applied.removed,
             "not_removed_rules": put.settled.applied.not_removed,
+            "kept_edited_rules": put.settled.applied.kept_edited_names(),
         }),
         t.finish(),
     )
@@ -1155,6 +1156,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         for skill in &applied.not_removed {
             t.line(format!("  {}", governance::not_removed_line(skill)));
         }
+        for kept in &applied.kept_edited {
+            t.line(format!("  {}", kept.line()));
+        }
         t.line(format!(
             "No request to take you off the roll was made: {}",
             why.explain(&circle.name, "")
@@ -1167,6 +1171,7 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                 "reason": why.code(),
                 "removed_rules": applied.removed,
                 "not_removed_rules": applied.not_removed,
+                "kept_edited_rules": applied.kept_edited_names(),
             }),
             t.finish(),
         ));
@@ -1252,6 +1257,7 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     let mut t = Text::new();
     let mut removed = applied.removed;
     let mut not_removed = applied.not_removed;
+    let mut kept_edited = applied.kept_edited;
     let mut report = match outcome {
         Ok(put) => {
             t.line(format!(
@@ -1272,11 +1278,19 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                     not_removed.push(skill.clone());
                 }
             }
+            for kept in &put.settled.applied.kept_edited {
+                if !kept_edited.contains(kept) {
+                    kept_edited.push(kept.clone());
+                }
+            }
             for skill in &removed {
                 t.line(format!("  removed rule {skill}"));
             }
             for skill in &not_removed {
                 t.line(format!("  {}", governance::not_removed_line(skill)));
+            }
+            for kept in &kept_edited {
+                t.line(format!("  {}", kept.line()));
             }
             let mut report = amendment_report(&circle, &put, "You are off the roll.", t);
             report.json["requested"] = json!(true);
@@ -1290,6 +1304,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
             }
             for skill in &not_removed {
                 t.line(format!("  {}", governance::not_removed_line(skill)));
+            }
+            for kept in &kept_edited {
+                t.line(format!("  {}", kept.line()));
             }
             let mut json = json!({ "requested": false, "reason": why.code() });
             match on_record.filter(|_| why == NoRequest::OnRecord) {
@@ -1322,6 +1339,10 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     report.json["left"] = json!(true);
     report.json["removed_rules"] = json!(removed);
     report.json["not_removed_rules"] = json!(not_removed);
+    report.json["kept_edited_rules"] = json!(kept_edited
+        .iter()
+        .map(|kept| kept.name.as_str())
+        .collect::<Vec<_>>());
     Ok(report)
 }
 
@@ -1743,6 +1764,10 @@ fn place(ctx: &Ctx, args: CirclePlaceArgs) -> Result<Report> {
     for skill in &settled.applied.not_removed {
         t.line(format!("  {}", governance::not_removed_line(skill)));
     }
+    // A copy in the old place that was edited there stays, beside the one that moved.
+    for kept in &settled.applied.kept_edited {
+        t.line(format!("  {}", kept.line()));
+    }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
     }
@@ -1885,6 +1910,9 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
     }
     for skill in &settled.applied.not_removed {
         t.line(format!("  {}", governance::not_removed_line(skill)));
+    }
+    for kept in &settled.applied.kept_edited {
+        t.line(format!("  {}", kept.line()));
     }
     Ok(Report::new(
         json!({

@@ -1186,6 +1186,11 @@ pub struct Applied {
     /// not be: the uninstall failed (a file that cannot be changed). The record that a
     /// vote installed them is kept, so the next settle tries again.
     pub not_removed: Vec<String>,
+    /// Copies a vote of this circle installed that were to be removed now and were left
+    /// in place because their file was edited on this machine since. An edited file is
+    /// never deleted unasked. The record that a vote installed it is cleared, so this
+    /// is found once: the copy is its owner's from then on.
+    pub kept_edited: Vec<KeptEdited>,
     /// Rules in force that are not installed and wait for the owner's confirmation. A
     /// rule that is in place already is not among them.
     pub asking: Vec<Waiting>,
@@ -1204,6 +1209,78 @@ pub struct Applied {
     /// install over what it did not install, nor under the name of PeerHarness's own
     /// skill ([`Held`]).
     pub held: Vec<HeldRule>,
+}
+
+impl Applied {
+    /// The names in [`Self::kept_edited`], for a command's JSON report.
+    pub fn kept_edited_names(&self) -> Vec<&str> {
+        self.kept_edited.iter().map(|k| k.name.as_str()).collect()
+    }
+}
+
+/// A copy that a vote installed and that was to be removed, left in place because its
+/// `SKILL.md` was edited on this machine ([`Applied::kept_edited`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeptEdited {
+    /// The skill's name.
+    pub name: String,
+    /// The project directory the copy is in, or `None` for the user's skills directory.
+    pub place: Option<String>,
+    /// `skills uninstall` refuses this copy: its owner still follows a rule with this
+    /// text, and the copy is in the user's skills directory or where that rule is
+    /// placed. That is so when the copy was to go only because the rule's scope was
+    /// moved from the user's directory to a project (`circle place`).
+    pub uninstall_refused: bool,
+}
+
+impl KeptEdited {
+    /// The line a command prints for the owner: what was left, and the command that
+    /// takes it out. Inside a coding agent's session the line names no command, like
+    /// what is said there about a held rule ([`HeldRule::explain`]): taking a skill out
+    /// of the owner's agent is the owner's choice, and `skills uninstall` asks nobody.
+    pub fn line(&self) -> String {
+        self.line_for(crate::consent::in_agent_session())
+    }
+
+    /// [`Self::line`], with who reads it: the person, or a session (`in_session`).
+    ///
+    /// The command named is the one that works where the vote's copy was to go because
+    /// the rule is repealed, opted out of, no longer binds the owner, or its circle
+    /// was left, and for a copy in a project whose rule moved elsewhere. One case has
+    /// no such command ([`Self::uninstall_refused`]): a rule that is still followed and
+    /// whose scope was moved from the user's skills directory to a project. There
+    /// `skills uninstall` refuses every copy with the rule's text in the user's
+    /// directory, the edited one included, and the line says that instead.
+    pub fn line_for(&self, in_session: bool) -> String {
+        let name = &self.name;
+        let left = format!(
+            "rule {name}: the copy a vote installed was edited on this machine and was \
+             left in place"
+        );
+        if in_session {
+            return format!(
+                "{left}. Whether it is taken out is the owner's choice, made in their own \
+                 terminal. Tell them so, and take nothing out yourself."
+            );
+        }
+        if self.uninstall_refused {
+            return format!(
+                "{left}. You still follow a rule with this text, and while you do \
+                 `peerharness skills uninstall {name}` refuses this copy as well and names \
+                 the opt-out."
+            );
+        }
+        match &self.place {
+            Some(dir) => format!(
+                "{left}. `peerharness skills uninstall {name} --scope project \
+                 --allow-modified`, run in {}, takes it out.",
+                crate::output::safe(dir)
+            ),
+            None => format!(
+                "{left}. `peerharness skills uninstall {name} --allow-modified` takes it out."
+            ),
+        }
+    }
 }
 
 /// A rule in force that waits for the owner's confirmation before it is installed.
@@ -1520,12 +1597,38 @@ pub fn apply_rules(
     // Removes what a vote installed for `name`, from wherever it was put. Returns
     // whether nothing of it is on record any more. Where the files are what the vote
     // installed and cannot be removed, it returns `false` and keeps the record: the
-    // skill is still there, and the next settle tries again.
+    // skill is still there, and the next settle tries again. A copy whose file was
+    // edited since is left in place and noted (`Applied::kept_edited`); its record
+    // goes, as it does when the copy is gone or is another text.
     let remove = |name: &str, digest: &Digest, applied: &mut Applied| -> Result<bool> {
         let Some(place) = store.rule_install_place(id, name)? else {
             return Ok(true);
         };
         let target = Target::of(installer, place);
+        let edited = matches!(
+            target.installer.status(name),
+            Ok(InstallState::Managed { digest: d, modified: true }) if d == *digest
+        );
+        if edited {
+            // Whether `skills uninstall` refuses this copy, by what that command asks:
+            // the owner still follows a rule with this very text, and the copy is in
+            // the user's directory or where that rule is placed. Then the copy was to
+            // go only because the rule's place changed.
+            let followed = rules
+                .get(name)
+                .filter(|r| r.bundle_digest() == *digest && binds_me(r));
+            let uninstall_refused = match followed {
+                Some(rule) if !store.is_rule_opted_out(id, name)? => {
+                    target.dir.is_none() || place_for(&places, rule.scope()) == target.dir
+                }
+                _ => false,
+            };
+            applied.kept_edited.push(KeptEdited {
+                name: name.to_owned(),
+                place: target.dir.clone(),
+                uninstall_refused,
+            });
+        }
         if managed_with(&target, name, digest) {
             match target
                 .installer
@@ -3271,6 +3374,178 @@ pub(crate) mod tests {
         assert_eq!(on_record(&store), None);
     }
 
+    /// A copy that a vote installed and its owner then edited is never deleted
+    /// unasked. When it is to go (the rule is opted out of, repealed, or its scope was
+    /// moved) it is left in place, and that used to be all: no line said so, and the
+    /// record that a vote installed it was cleared, so nothing said it later either.
+    /// Now it is named once, with where it is, and the line names the command that
+    /// takes it out, or says that there is none.
+    #[test]
+    fn a_voted_copy_that_was_edited_is_left_in_place_and_named_once() {
+        let (store, circle, now) = node();
+        let machine = Machine::new();
+        let name = "commit-style";
+        let (adopt, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            name,
+            "Commit subjects are always a single word.",
+            now,
+        );
+        assert_eq!(machine.apply(&store, &circle, &[]).installed, [name]);
+        let file = machine.skills.join(name).join("SKILL.md");
+        let edit = |file: &std::path::Path| {
+            let mut text = std::fs::read_to_string(file).unwrap();
+            text.push_str("\nOne more line, typed by the owner.\n");
+            std::fs::write(file, &text).unwrap();
+            text
+        };
+        let edited = edit(&file);
+        let kept = |place: Option<&str>, uninstall_refused: bool| KeptEdited {
+            name: name.to_owned(),
+            place: place.map(str::to_owned),
+            uninstall_refused,
+        };
+
+        // --- The owner opts out. The edited copy stays, and is named.
+        store.set_rule_opt_out(&circle, name, now).unwrap();
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(applied.kept_edited, [kept(None, false)]);
+        assert_eq!(applied.kept_edited_names(), [name]);
+        assert!(applied.removed.is_empty() && applied.not_removed.is_empty());
+        assert_eq!(machine.text(name).as_deref(), Some(edited.as_str()));
+        // Its record is gone, so it is said once: the copy is the owner's from here.
+        assert_eq!(store.rule_install_place(&circle, name).unwrap(), None);
+        assert!(machine.apply(&store, &circle, &[]).kept_edited.is_empty());
+        assert_eq!(machine.text(name).as_deref(), Some(edited.as_str()));
+
+        // --- The line: what was left and the command that takes it out. Inside a
+        // session it names no command.
+        let line = kept(None, false).line_for(false);
+        assert!(line.contains("was edited on this machine and was left in place"));
+        assert!(line.contains(&format!(
+            "`peerharness skills uninstall {name} --allow-modified` takes it out"
+        )));
+        let in_project = kept(Some("/work/web"), false).line_for(false);
+        assert!(in_project.contains(&format!(
+            "`peerharness skills uninstall {name} --scope project --allow-modified`, run in \
+             /work/web, takes it out"
+        )));
+        for copy in [
+            kept(None, false),
+            kept(Some("/work/web"), false),
+            kept(None, true),
+        ] {
+            let to_a_session = copy.line_for(true);
+            assert!(to_a_session.contains("was left in place"), "{to_a_session}");
+            assert!(to_a_session.contains("take nothing out yourself"));
+            assert!(!to_a_session.contains("uninstall"), "{to_a_session}");
+        }
+
+        // --- The same when the rule is repealed. A second rule, edited after the vote
+        // installed it.
+        let other = "branch-names";
+        let (adopt_other, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            other,
+            "Branch names are lower case.",
+            now,
+        );
+        assert_eq!(machine.apply(&store, &circle, &[]).installed, [other]);
+        let other_file = machine.skills.join(other).join("SKILL.md");
+        let other_edited = edit(&other_file);
+        repeal(&store, &circle, &adopt_other, now);
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(applied.kept_edited_names(), [other]);
+        assert!(applied.removed.is_empty());
+        assert_eq!(std::fs::read_to_string(&other_file).unwrap(), other_edited);
+        assert!(machine.apply(&store, &circle, &[]).kept_edited.is_empty());
+
+        // --- A copy that is gone, or that is another text, is not named: nothing of
+        // the vote's is left there. (The record goes as before.)
+        let third = "review-size";
+        let (_, _) = pass_rule(&store, &machine, &circle, third, "Reviews are small.", now);
+        assert_eq!(machine.apply(&store, &circle, &[]).installed, [third]);
+        std::fs::remove_dir_all(machine.skills.join(third)).unwrap();
+        store.set_rule_opt_out(&circle, third, now).unwrap();
+        let applied = machine.apply(&store, &circle, &[]);
+        assert!(applied.kept_edited.is_empty() && applied.not_removed.is_empty());
+        assert_eq!(store.rule_install_place(&circle, third).unwrap(), None);
+
+        // --- A scope that is moved while its rule is followed. The owner opts back
+        // in to the first rule; her edited copy is hers now, so the rule is held until
+        // she takes it out, and then the vote installs it again.
+        store.clear_rule_opt_out(&circle, name).unwrap();
+        assert_eq!(
+            held_as(&machine.apply(&store, &circle, &[])),
+            [(name, Held::OwnSkill)]
+        );
+        machine
+            .installer
+            .uninstall(
+                name,
+                ph_skills::UninstallOptions {
+                    allow_modified: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(machine.apply(&store, &circle, &[]).installed, [name]);
+        edit(&file);
+        // She places the scope in a project. The rule goes there; the edited copy in
+        // her user directory stays, and its line names no command, because `skills
+        // uninstall` refuses every copy of a followed rule's text in that directory.
+        let project = machine.skills.parent().unwrap().join("web");
+        std::fs::create_dir_all(&project).unwrap();
+        let place = project.to_str().unwrap();
+        store.set_rule_place(&circle, &Scope::all(), place).unwrap();
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(applied.installed, [name]);
+        assert_eq!(applied.kept_edited, [kept(None, true)]);
+        assert!(file.is_file());
+        let moved = applied.kept_edited[0].line_for(false);
+        assert!(moved.contains("was left in place"), "{moved}");
+        assert!(
+            moved.contains("You still follow a rule with this text"),
+            "{moved}"
+        );
+        assert!(
+            moved.contains(&format!(
+                "`peerharness skills uninstall {name}` refuses this copy as well"
+            )),
+            "{moved}"
+        );
+        assert!(!moved.contains("takes it out"), "{moved}");
+        // Moved back from the project, with the project's copy edited: that one has
+        // its command, run in the project, where nothing refuses it.
+        let in_project = project
+            .join(".claude")
+            .join("skills")
+            .join(name)
+            .join("SKILL.md");
+        edit(&in_project);
+        machine
+            .installer
+            .uninstall(
+                name,
+                ph_skills::UninstallOptions {
+                    allow_modified: true,
+                },
+            )
+            .unwrap();
+        store.clear_rule_place(&circle, &Scope::all()).unwrap();
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(applied.installed, [name]);
+        assert_eq!(applied.kept_edited, [kept(Some(place), false)]);
+        assert!(in_project.is_file());
+        assert!(applied.kept_edited[0]
+            .line_for(false)
+            .contains("--scope project --allow-modified"));
+        let _ = adopt;
+    }
+
     /// The name of PeerHarness's own skill: a rule that has it is never installed, and
     /// what a vote installed under it before the name was reserved is taken out.
     #[test]
@@ -3324,6 +3599,36 @@ pub(crate) mod tests {
         let applied = machine.apply(&store, &circle, &[adopt.event_id()]);
         assert!(applied.installed.is_empty() && applied.removed.is_empty());
         assert_eq!(machine.text(name), None);
+
+        // The same leftover of an earlier version, edited by its owner since: an edited
+        // file is not deleted. It is named, and the line promises no command, because
+        // `skills uninstall` refuses a copy with the text of a rule its owner has not
+        // opted out of.
+        machine
+            .installer
+            .install(&theirs, InstallOptions::default())
+            .unwrap();
+        store
+            .record_rule_install(&circle, name, &theirs.digest(), now)
+            .unwrap();
+        let file = machine.skills.join(name).join("SKILL.md");
+        let edited = format!("{}\nA line its owner added.\n", machine.text(name).unwrap());
+        std::fs::write(&file, &edited).unwrap();
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(
+            applied.kept_edited,
+            [KeptEdited {
+                name: name.to_owned(),
+                place: None,
+                uninstall_refused: true,
+            }]
+        );
+        assert!(applied.removed.is_empty());
+        assert_eq!(machine.text(name).as_deref(), Some(edited.as_str()));
+        assert!(store.rule_installs(&circle).unwrap().is_empty());
+        assert!(!applied.kept_edited[0]
+            .line_for(false)
+            .contains("takes it out"));
     }
 
     /// One rule per name is in force, the later proposal. An amendment that carries a
