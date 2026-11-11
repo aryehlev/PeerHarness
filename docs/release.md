@@ -60,7 +60,8 @@ Plus one `SHA256SUMS` file covering every archive, and auto-generated release no
 The four documents sit next to the README in the archive, not in a `docs/` folder,
 and no other document is packed. So the README's links to `docs/…`, `CHANGELOG.md`,
 `SECURITY.md` and `CONTRIBUTING.md` do not resolve
-inside the archive, and neither do the links of the four documents to
+inside the archive, its screenshot (`docs/images/noted-rule.png`) is not there and
+shows as its description, and neither do the links of the four documents to
 `../README.md`, `../SECURITY.md`, `decisions.md` and `terminal.md`. Every link works in the
 repository at the release's tag: read the documents there when you need to follow
 one.

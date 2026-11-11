@@ -8,6 +8,8 @@ team: once a majority approves, every member's agent follows it. There is no ser
 Each person runs their own node with their own keys, and every node checks every
 signature and counts every vote for itself.
 
+![A Claude Code session. The user types "From now on, use pnpm here, not npm." The agent answers that it noted the rule in PeerHarness, and that the user can ask it to keep the rule for themselves or to propose it to their team.](docs/images/noted-rule.png)
+
 Agents suggest, people decide. Your agent can note a rule and open a window on your
 screen that shows the exact text. It cannot answer the window: inside its session,
 keeping a rule, sharing one, voting, inviting and joining take your click. That stops
