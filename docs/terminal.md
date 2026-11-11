@@ -12,6 +12,7 @@ To read the script before you run it, download it first: the three lines are in 
 README under [See it run](../README.md#see-it-run). Or build from source, with Rust
 1.89 or newer:
 `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
+That builds whatever is on `main`; add `--tag v0.4.0` to build this release.
 `peerharness status` and `peerharness doctor` show where your node stands, and every
 command has `--help`. A binary made with a plain `cargo build` is a debug build, for
 development and tests: it obeys the stand-in programs the tests use in place of a

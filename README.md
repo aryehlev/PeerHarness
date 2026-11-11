@@ -239,8 +239,8 @@ kept, proposed, voted on, admitted or joined unless you click Proceed, and no fl
 argument or input of the agent is taken for that click. A rule your team passed is
 installed when your node learns of it, without a window. That is shown where you
 join, in the join window or the terminal's preview, and `peerharness circle create`
-prints it to whoever runs it when a team is founded. `peerharness circle mode ask`
-changes it.
+prints it to whoever runs it when a team is founded. `peerharness circle mode ask
+--circle <team>` changes it.
 
 ### Rules
 
@@ -394,7 +394,7 @@ check records, on the version named. *Not tried* means no run is recorded.
   run when this page was tagged. MCP clients other than Claude Code. Windows is not
   supported.
 
-The whole suite was run on 2026-11-10, on Linux, at commit `e6fae27` (0.4.0), in a
+The whole suite was run on 2026-11-10, on Linux, at commit `e6fae27` (the 0.4.0 tree before the fixes), in a
 pre-launch check made with AI coding agents: 843 tests passed, none failed, and 10
 were skipped because they need multicast, the public network or the real OS keychain.
 After the fixes the suite was run again on Linux on 2026-11-11: 983 tests passed, none failed and 10 were skipped. CI ran it for pull request #7 at commit `400fd20` on Linux and macOS: 983 tests passed on Linux and 978 on macOS, none failed and 10 were skipped on each.

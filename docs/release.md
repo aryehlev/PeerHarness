@@ -19,8 +19,10 @@ PeerHarness follows [Semantic Versioning 2.0.0](https://semver.org/).
   0.1.1) contain only fixes and never change the protocol or migrate the database in an
   incompatible way.
 * The protocol has its own version, independent of the binary's
-  (`docs/protocol-v0.md`, section 15). Release notes say which protocol versions a
-  release speaks and whether its database migration is one-way.
+  (`docs/protocol-v0.md`, section 15). `CHANGELOG.md` says for each version which
+  protocol version it speaks, which database schema it writes, and whether a
+  migration is one-way. The release page itself is published by the workflow with a
+  fixed text and generated notes, and does not say it.
 
 ## Supported platforms
 
@@ -55,7 +57,8 @@ For each target, `peerharness-<tag>-<target>.tar.gz` containing:
 Plus one `SHA256SUMS` file covering every archive, and auto-generated release notes.
 
 The three documents sit next to the README in the archive, not in a `docs/` folder,
-and no other document is packed. So the README's links to `docs/…` do not resolve
+and no other document is packed. So the README's links to `docs/…`, `CHANGELOG.md`,
+`SECURITY.md` and `CONTRIBUTING.md` do not resolve
 inside the archive, and neither do the links of the three documents to
 `../README.md`, `../SECURITY.md` and `decisions.md`. Every link works in the
 repository at the release's tag: read the documents there when you need to follow
@@ -145,9 +148,11 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    check each command the README shows against the binary. The README is packed into
    every archive, so what is tagged is what people read, and `docs/checked.md` is
    packed next to it.
-4. Note in the release notes draft: user-visible changes, protocol version, database
-   migrations, and any change to `RELEASE_TOOLCHAIN`. Move the "Unreleased" entries of
-   `CHANGELOG.md` under the new version in the same pull request.
+4. Write into `CHANGELOG.md`: user-visible changes, protocol version, database
+   migrations, and any change to `RELEASE_TOOLCHAIN`. Move its "Unreleased" entries
+   under the new version in the same pull request. The workflow publishes the
+   release page at once, with a fixed text and generated notes: there is no draft to
+   edit before it is public, and the page can be edited afterwards.
 5. Tag and push, with the version you set in step 2 in place of `<version>`:
 
    ```sh

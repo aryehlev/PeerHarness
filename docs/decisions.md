@@ -2868,8 +2868,9 @@ nothing. `init` and `note` named next steps the guide no longer teaches. A faile
 * **`circle invite --role`, `--addr` and `--ttl-hours` are removed**, not hidden and
   not refused with a message of their own. An admission is an amendment that is voted
   on. It has no role and no expiry, and an option that looks like a security control
-  must not be accepted and ignored. This breaks the command line of 0.4.0 as it was
-  on `main`, which had not been released then. Nothing in the repository passed them.
+  must not be accepted and ignored. This breaks the command line of v0.3.0 and
+  earlier, where the three options were accepted: passing one is now an error.
+  Nothing in the repository passed them.
 * **`observe` and `hook` are hidden from `--help`, not removed.** The hooks installed
   in users' settings call `hook`, and tests use `observe`.
 * **The error for a circle that is not on the node names no circle**, the one the
