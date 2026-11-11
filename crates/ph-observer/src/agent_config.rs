@@ -192,7 +192,8 @@ fn parse_json(bytes: &[u8]) -> Result<Doc> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(Doc::Object(Obj::new()));
     }
-    serde_json::from_slice::<Doc>(bytes).map_err(|e| {
+    // `Doc::parse`: a number elsewhere in the file keeps the text it had (ADR-051).
+    Doc::parse(bytes).map_err(|e| {
         if e.is_data() && e.to_string().starts_with(DUPLICATE_KEY_MSG) {
             AgentConfigError::DuplicateKey
         } else {
@@ -554,6 +555,37 @@ mod tests {
             v,
             json!({"theme": "dark", "mcpServers": {"other": {"command": "x"}}})
         );
+    }
+
+    /// The file is the owner's. A number in it comes back with the text it had
+    /// (ADR-051): serde_json would write `1e5` as `100000.0` and round a long one.
+    #[test]
+    fn a_number_elsewhere_in_a_json_file_keeps_its_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mcp.json");
+        let backups = tmp.path().join("backups");
+        let want = json!({"command": "/p", "args": ["mcp"]});
+        std::fs::write(
+            &path,
+            r#"{"limits": [1e5, 1.10, -0, 0.1234567890123456789, 12345678901234567890123], "mcpServers": {"other": {"command": "x", "timeout": 30.0}}}"#,
+        )
+        .unwrap();
+        let squeezed = |p: &Path| -> String {
+            std::fs::read_to_string(p)
+                .unwrap()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect()
+        };
+        let numbers = r#""limits":[1e5,1.10,-0,0.1234567890123456789,12345678901234567890123]"#;
+        add_json_entry(&path, &["mcpServers"], "peerharness", &want, &[], &backups).unwrap();
+        let text = squeezed(&path);
+        assert!(text.contains(numbers), "{text}");
+        assert!(text.contains(r#""timeout":30.0"#), "{text}");
+        remove_json_entry(&path, &["mcpServers"], "peerharness", &want, &backups).unwrap();
+        let text = squeezed(&path);
+        assert!(text.contains(numbers), "{text}");
+        assert!(text.contains(r#""timeout":30.0"#), "{text}");
     }
 
     #[test]

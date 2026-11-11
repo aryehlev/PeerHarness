@@ -3972,6 +3972,11 @@ The numbers PeerHarness writes itself (the `timeout` of its own hook entries) ar
 written as before. Two numbers are equal when their text is, which is what "an entry
 that is exactly what PeerHarness writes" already meant.
 
+The tools entry in another agent's JSON configuration (`ph_observer::agent_config`,
+ADR-050, merged into this branch afterwards) is written through the same document
+type and read with `Doc::parse` too, so a number elsewhere in Pi's, Antigravity's or
+opencode's file keeps its text as well.
+
 **Rejected.** serde_json's `arbitrary_precision` does this by itself, and Cargo would
 turn it on for every crate of the workspace, where it changes what a number is for
 the protocol's parser. It is the reason `preserve_order` is not used either.
@@ -3982,7 +3987,9 @@ which is the same string. A number that serde_json cannot read at all (`1e999`) 
 makes the file malformed for PeerHarness, and it is left untouched.
 
 **Tests.** `numbers_elsewhere_in_the_file_are_written_back_as_they_were`
-(`crates/ph-observer/tests/settings.rs`) and `numbers_keep_their_text`
-(`crates/ph-observer/src/json_doc.rs`). The audit's settings file was installed into
+(`crates/ph-observer/tests/settings.rs`), `numbers_keep_their_text`
+(`crates/ph-observer/src/json_doc.rs`) and
+`a_number_elsewhere_in_a_json_file_keeps_its_text`
+(`crates/ph-observer/src/agent_config.rs`). The audit's settings file was installed into
 again with this branch: its line of ten numbers came back character for character,
 and a second install changed nothing.
