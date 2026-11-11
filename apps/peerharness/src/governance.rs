@@ -727,21 +727,62 @@ pub fn propose_under(
 /// The second half covers what the charter's digest does not: a rule that passed, was
 /// repealed or arrived while the owner read. A draft made before it would drop that
 /// rule, or bring it back, under a preview that said the rules stay as they are.
+///
+/// `unlocked` is the key the proposal will be signed with. Nothing is done with it
+/// here. It is a parameter so that this cannot be called before the key is unlocked:
+/// unlocking can ask for a passphrase on the terminal, and a prompt is a place where
+/// the node changes (a sync by a running daemon, an import from another terminal). The
+/// check therefore comes after the key is unlocked and before it signs, with no prompt
+/// between the two.
 pub fn as_drafted(
     store: &Store,
+    unlocked: &SigningKey,
     circle: &CircleId,
     shown: &Charter,
     rules: &RuleSet,
 ) -> Result<Digest> {
-    let digest = shown.digest()?;
-    let (current, now_in_force, _) = rule_set(store, circle)?;
-    if current.digest()? != digest
-        || now_in_force.carried_ids() != rules.carried_ids()
-        || now_in_force.missing_carried() != rules.missing_carried()
-    {
+    let _ = unlocked;
+    if !still_as_read(store, circle, shown, rules)? {
         return Err(crate::error::refused(CHARTER_CHANGED));
     }
-    Ok(digest)
+    Ok(shown.digest()?)
+}
+
+/// Whether this node still holds what was read before a preview: `shown` is the charter
+/// in force, and the rules in force are `rules`, with the same ones missing.
+///
+/// A command that is about to sign does not ask this: it calls [`as_drafted`], which
+/// takes the unlocked key, so that its answer cannot be older than a passphrase prompt.
+/// This is for what a report says where nothing is signed.
+pub fn still_as_read(
+    store: &Store,
+    circle: &CircleId,
+    shown: &Charter,
+    rules: &RuleSet,
+) -> Result<bool> {
+    let (current, now_in_force, _) = rule_set(store, circle)?;
+    Ok(current.digest()? == shown.digest()?
+        && now_in_force.carried_ids() == rules.carried_ids()
+        && now_in_force.missing_carried() == rules.missing_carried())
+}
+
+/// Whether the rule named `name` in force in `circle` is still the one `shown` put in
+/// force: the proposal a preview named, read before its owner was asked.
+///
+/// A repeal names the proposal it repeals, and a stance the proposal it is about. Both
+/// are read from the store before the preview, and a newer rule can take the name
+/// while the owner reads. Like [`as_drafted`], this takes the unlocked key it is
+/// checked for, so that it runs after a passphrase prompt and not before one.
+pub fn rule_as_shown(
+    store: &Store,
+    unlocked: &SigningKey,
+    circle: &CircleId,
+    name: &str,
+    shown: &EventId,
+) -> Result<bool> {
+    let _ = unlocked;
+    let (_, rules, _) = rule_set(store, circle)?;
+    Ok(rules.get(name).is_some_and(|r| r.proposal_id() == *shown))
 }
 
 fn sign_proposal(
@@ -3561,9 +3602,9 @@ mod tests {
         assert_eq!(repeal.charter(), second.digest().unwrap());
     }
 
-    /// What `circle invite`, `remove`, `amend` and `device` check after the owner
-    /// answered and before the key is used (`as_drafted`): this node would still draft
-    /// what the preview showed. The charter's digest alone does not say so. A rule that
+    /// What `circle invite`, `remove`, `amend`, `device` and `leave` check after the
+    /// owner answered, once the key is unlocked and before it signs (`as_drafted`): this
+    /// node would still draft what the preview showed. The charter's digest alone does not say so. A rule that
     /// passed or was repealed while the owner read, or a carried rule that arrived,
     /// leaves the charter as it is and makes the draft drop a rule or bring one back.
     #[test]
@@ -3571,7 +3612,7 @@ mod tests {
         let (store, circle, now) = node();
         let machine = Machine::new();
         let changed = |shown: &Charter, rules: &RuleSet| -> bool {
-            match as_drafted(&store, &circle, shown, rules) {
+            match as_drafted(&store, &key(1), &circle, shown, rules) {
                 Ok(digest) => {
                     assert_eq!(digest, shown.digest().unwrap());
                     false
@@ -3643,5 +3684,51 @@ mod tests {
             shown.digest().unwrap()
         );
         assert!(changed(&shown, &rules));
+    }
+
+    /// A repeal names the proposal it repeals and a stance the proposal it is about.
+    /// Both are read before the preview. After the owner's answer, with the key
+    /// unlocked, `rule repeal` and `--announce` look again (`rule_as_shown`): a rule
+    /// that took the name meanwhile is another text, and nothing is signed about the
+    /// one that was shown.
+    #[test]
+    fn a_repeal_and_a_stance_are_signed_only_for_the_rule_that_was_shown() {
+        let (store, circle, now) = node();
+        let machine = Machine::new();
+        let name = "run-tests";
+        let shown = |id: &ProposalView| -> bool {
+            rule_as_shown(&store, &key(1), &circle, name, &id.event_id()).unwrap()
+        };
+        let (first, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            name,
+            "Run the tests before you say a task is done.",
+            now,
+        );
+        assert!(shown(&first));
+        assert!(
+            !rule_as_shown(&store, &key(1), &circle, "another-name", &first.event_id()).unwrap()
+        );
+
+        // A second text takes the name while the owner reads: of two rules with one
+        // name the one proposed later is in force.
+        let later = Timestamp::from_unix_seconds(now.unix_seconds() + 1).unwrap();
+        let (second, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            name,
+            "Run the tests and the linter before you say a task is done.",
+            later,
+        );
+        assert!(!shown(&first), "what was shown is no longer the rule");
+        assert!(shown(&second));
+
+        // The rule is repealed while the owner reads: there is nothing to repeal twice,
+        // and no stance to record about a rule that is not in force.
+        repeal(&store, &circle, &second, later);
+        assert!(!shown(&second));
     }
 }

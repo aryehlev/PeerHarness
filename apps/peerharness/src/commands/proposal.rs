@@ -5,7 +5,9 @@ use anyhow::{anyhow, Result};
 use ph_core::{Actor, CandidateStatus, EventId, Scope};
 use ph_governance::{carried_diff, ProposalView, RuleSet, Tally};
 use ph_protocol::text::{is_forbidden_char, Lines};
-use ph_protocol::{AdoptAction, Charter, ProposalAction, ProposalKind, RollEntry, VoteDecision};
+use ph_protocol::{
+    AdoptAction, Charter, ProposalAction, ProposalKind, RollEntry, SigningKey, VoteDecision,
+};
 use ph_store::CircleRow;
 use serde_json::{json, Value};
 
@@ -316,6 +318,54 @@ const RULE_CHANGED: &str =
 /// Why this node cannot say what an amendment changes. (A proposal is stored only once
 /// the charter it names is here, so this is a damaged store, not an everyday case.)
 const NO_NAMED_CHARTER: &str = "this node does not hold the charter that amendment names";
+
+/// Checks, after the owner confirmed an approval of the amendment `p`, that it still
+/// changes what they were shown. `shown` is what the preview described (`None`: this
+/// node could not describe it). `in_window` is the member and the charter number a
+/// window named, when the ballot was asked there as "admit this member, and nothing
+/// else".
+///
+/// What an amendment changes is read against the charter and the rules in force on
+/// this node, and both can have changed while the owner read (a sync, an import): a
+/// rule that passed meanwhile is one the amendment now drops, and a window that said
+/// "and nothing else" said it about another state. So it is read again here, and the
+/// approval is refused when it is no longer what they were shown.
+///
+/// `unlocked` is the key the ballot will be signed with. Nothing is done with it here.
+/// It is a parameter so that this cannot be called before the key is unlocked: a
+/// passphrase prompt is one more place where the node changes, and this check comes
+/// after it and immediately before the signature ([`governance::as_drafted`] takes the
+/// key for the same reason).
+fn approval_as_shown(
+    node: &Node,
+    unlocked: &SigningKey,
+    bundles: &ph_skills::BundleStore,
+    p: &ProposalView,
+    shown: Option<&crate::amendment::Changes>,
+    in_window: Option<(&RollEntry, u64)>,
+) -> Result<()> {
+    let _ = unlocked;
+    let now = governance::amendment_changes(&node.store, bundles, p, &node.device_key())?;
+    let same = match (shown, &now) {
+        (Some(shown), Some(now)) => shown.same_as(now),
+        _ => false,
+    };
+    let window_still_fits = match in_window {
+        Some((entry, seq)) => {
+            let (current, in_force, _) = governance::rule_set(&node.store, &p.circle_id())?;
+            current.seq == seq
+                && matches!(
+                    sole_admission(p, &current, &in_force),
+                    Ok(Some(still)) if still == entry
+                )
+        }
+        None => true,
+    };
+    if !same || !window_still_fits {
+        return Err(refused(AMENDMENT_CHANGED));
+    }
+    Ok(())
+}
 
 fn create(
     ctx: &Ctx,
@@ -788,36 +838,19 @@ fn vote(
         confirm(&ctx.out, &preview, yes, "the ballot")?;
     }
 
-    // An approval is for what was shown. What an amendment changes is read against the
-    // charter and the rules in force on this node, and both can have changed while the
-    // owner read (a sync, an import): a rule that passed meanwhile is one the amendment
-    // now drops, and a window that said "and nothing else" said it about another state.
-    // Read it again, and sign nothing when it is no longer what they were shown. A
-    // reject or a revise approves nothing and is not refused.
+    // The key first: unlocking it can ask for a passphrase, and a prompt is a place
+    // where the node changes. What follows is checked with the key in hand, and no
+    // prompt lies between that check and the signature.
+    let key = node.device()?.signing_key();
+    // An approval is for what was shown. A reject or a revise approves nothing and is
+    // never refused here.
     if decision == VoteDecision::Approve {
         if let Some(shown) = &amendment {
-            let now = governance::amendment_changes(&node.store, &bundles, &p, &node.device_key())?;
-            let same = match (shown, &now) {
-                (Some(shown), Some(now)) => shown.same_as(now),
-                _ => false,
-            };
-            let window_still_fits = !circle_window || {
-                let (current, in_force, _) = governance::rule_set(&node.store, &circle.circle_id)?;
-                admission.is_some_and(|(entry, seq)| {
-                    current.seq == seq
-                        && matches!(
-                            sole_admission(&p, &current, &in_force),
-                            Ok(Some(still)) if still == entry
-                        )
-                })
-            };
-            if !same || !window_still_fits {
-                return Err(refused(AMENDMENT_CHANGED));
-            }
+            let in_window = admission.filter(|_| circle_window);
+            approval_as_shown(&node, key, &bundles, &p, shown.as_ref(), in_window)?;
         }
     }
 
-    let key = node.device()?.signing_key();
     governance::cast_vote(
         &node.store,
         key,

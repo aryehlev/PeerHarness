@@ -479,7 +479,27 @@ fn put_on_record(
             done.text.trim_end()
         )));
     }
+    // The stance names the proposal the preview named. The key first, then a look at
+    // whether that is still the rule: a newer rule can take the name while the owner
+    // reads or types a passphrase, and a stance about the old one would not say what
+    // they were shown.
     let key = node.device()?.signing_key();
+    if !governance::rule_as_shown(
+        &node.store,
+        key,
+        &circle.circle_id,
+        name,
+        &rule.proposal_id(),
+    )? {
+        // What was done on this machine stands, and is said first. The error after it
+        // names nothing.
+        ctx.out.note(done.text.trim_end());
+        return Err(refused(
+            "nothing was announced: the rule changed while this was being confirmed, and \
+             what you were shown is no longer the rule in force. Run the command again to \
+             see the rule as it is now.",
+        ));
+    }
     let env = governance::announce_stance(
         &node.store,
         key,
@@ -556,7 +576,18 @@ fn repeal(
     ));
     crate::consent::confirm(&ctx.out, &preview, yes, "sharing the repeal proposal")?;
 
+    // A repeal names the proposal it repeals, which was read before the preview. The
+    // key first, then a look at whether that proposal is still the rule of this name:
+    // one that took the name while the owner read or typed a passphrase is another
+    // text, which this repeal would leave in force.
     let key = node.device()?.signing_key();
+    if !governance::rule_as_shown(&node.store, key, id, name, &target)? {
+        return Err(refused(
+            "the rule changed while this was being confirmed: what you were shown is no \
+             longer the rule in force. Nothing was proposed and nothing was signed. Run \
+             the command again to see the rule as it is now.",
+        ));
+    }
     let proposal = governance::propose(
         &node.store,
         key,

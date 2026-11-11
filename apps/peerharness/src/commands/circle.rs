@@ -333,10 +333,12 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     )?;
 
     // The yes was for an admission to the charter the preview named. What this node
-    // holds can have changed while the owner read (a sync, an import): nothing is
-    // signed then, and the key is not touched.
-    let drafted = governance::as_drafted(&node.store, &id, &current, &rules)?;
+    // holds can have changed while the owner read (a sync, an import), and unlocking
+    // the key can ask for a passphrase, which is one more wait. So the key is unlocked
+    // first and the node is checked after, with no prompt between the check and the
+    // signature: when the node changed, nothing is signed.
     let key = node.device()?.signing_key();
+    let drafted = governance::as_drafted(&node.store, key, &id, &current, &rules)?;
     let title = format!("Admit {}", args.member);
     let proposal = governance::propose_under(
         &node.store,
@@ -566,8 +568,9 @@ struct Drafted<'a> {
 ///
 /// The confirmation is for what the preview said. When this node no longer holds what
 /// the draft was made from (`from`), because a sync or an import stored a newer charter
-/// or changed the rules in force while the owner read, this refuses before the key is
-/// used and before anything is stored ([`governance::as_drafted`]).
+/// or changed the rules in force while the owner read or typed a passphrase, this
+/// refuses after the key is unlocked and before it signs, and nothing is stored
+/// ([`governance::as_drafted`]).
 fn put_amendment(
     node: &Node,
     circle: &CircleRow,
@@ -579,8 +582,10 @@ fn put_amendment(
     approve_and_settle(node, circle, proposal)
 }
 
-/// The first half of [`put_amendment`]: checks that the draft is still what this node
-/// would draft and signs the proposal. An error here means that nothing was stored.
+/// The first half of [`put_amendment`]: unlocks the key, checks that the draft is still
+/// what this node would draft, and signs the proposal, in that order. Unlocking can ask
+/// for a passphrase, so it comes before the check: no prompt lies between the check
+/// and the signature. An error here means that nothing was stored.
 fn propose_amendment(
     node: &Node,
     circle: &CircleRow,
@@ -588,8 +593,14 @@ fn propose_amendment(
     next: CharterContent,
     from: &Drafted<'_>,
 ) -> Result<ProposalView> {
-    let drafted = governance::as_drafted(&node.store, &circle.circle_id, from.current, from.rules)?;
     let key = node.device()?.signing_key();
+    let drafted = governance::as_drafted(
+        &node.store,
+        key,
+        &circle.circle_id,
+        from.current,
+        from.rules,
+    )?;
     governance::propose_under(
         &node.store,
         key,
