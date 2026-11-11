@@ -638,6 +638,8 @@ fn current_charter(export: &str) -> Charter {
 /// hold that rule.
 struct Incomplete {
     alice: Node,
+    bob: Node,
+    carol: Node,
     dave: Node,
     erin: Node,
     /// The rule the charter carries: its proposal id and its skill name.
@@ -746,6 +748,8 @@ fn a_node_that_lacks_a_carried_rule(root: &Path) -> Incomplete {
     }
     Incomplete {
         alice,
+        bob,
+        carol,
         dave,
         erin,
         rule,
@@ -896,8 +900,8 @@ fn an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window() {
 
 /// Where such amendments came from with nobody attacking: the node that lacks the rule
 /// drafted one, because an amendment carries "the rules in force" of the node that
-/// drafts it. It no longer drafts any. Leaving is the exception, because leaving never
-/// waits: the request lists the rule by the id the charter lists, and drops nothing.
+/// drafts it. It no longer drafts any. Leaving never waits, so it is not refused: it
+/// changes the machine, and makes no request to change the roll from that node.
 #[test]
 fn a_node_that_lacks_a_carried_rule_drafts_no_amendment_and_can_still_leave() {
     let tmp = TempDir::new().unwrap();
@@ -942,30 +946,33 @@ fn a_node_that_lacks_a_carried_rule_drafts_no_amendment_and_can_still_leave() {
     }
     assert_eq!(proposals(dave), before, "nothing was stored");
 
-    // --- Leaving is not refused, and changes his machine first. What it asks the
-    // circle for changes the roll and nothing else: on Alice's complete node the
-    // amendment carries exactly the rules in force.
+    // --- Leaving is not refused, and changes his machine. It asks the circle for
+    // nothing from this node: a removal drafted here would leave the rule out, or list
+    // it by its id and bring it back if it was repealed since, and this node could not
+    // show its owner which. He is told so before he answers, and again afterwards.
+    let (code, preview) = dave.reads(&["circle", "leave", "--circle", "team"]);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains(
+            "for the circle: no request to take you off the roll is made from this node, \
+             because this node does not hold 1 rule(s) that the charter in force carries"
+        ),
+        "{preview}"
+    );
+    assert!(!preview.contains("is put to the vote"), "{preview}");
     let left = dave.run(&["circle", "leave", "--circle", "team", "--yes"]);
     assert_eq!(left["left"], true, "{left}");
-    let removal = left["proposal_id"].as_str().unwrap().to_owned();
-    alice.run(&[
+    assert_eq!(left["requested"], false, "{left}");
+    assert_eq!(left["reason"], "missing_carried_rules", "{left}");
+    assert_eq!(left.get("proposal_id"), None, "{left}");
+    assert_eq!(proposals(dave), before, "no request was stored");
+    // Nothing of it reaches a complete node: Dave's node holds nothing Alice's lacks.
+    let from_dave = alice.run(&[
         "events",
         "import",
         &dave.export(&root.join("dave-left.jsonl")),
     ]);
-    let json = alice.run(&["proposal", "show", &removal]);
-    let amendment = &json["amendment"];
-    assert_eq!(amendment["roll"]["removed"][0]["member"], "dave");
-    assert_eq!(
-        amendment["rules_in_force"],
-        serde_json::json!({ "dropped": [], "added": [] }),
-        "{amendment}"
-    );
-    let preview = alice.ballot_preview(&removal, "approve");
-    assert!(
-        preview.contains("the rules in force stay as they are (1 in force)"),
-        "{preview}"
-    );
+    assert_eq!(from_dave["stored"], 0, "{from_dave}");
     assert_eq!(alice.rules(), [c.skill.as_str()]);
 
     // --- A node that holds the rule drafts as before, and carries it.
@@ -1223,4 +1230,342 @@ fn an_approval_is_not_signed_for_what_an_amendment_changes_since_it_was_shown() 
         bob.approvals(&admission),
         serde_json::json!(["alice", "bob"])
     );
+}
+
+/// Whether `node` has the skill `name` installed for its agent.
+fn has_skill(node: &Node, name: &str) -> bool {
+    node.skills.join(name).join("SKILL.md").is_file()
+}
+
+/// The review's scenario for `circle leave`. Dave's node lacks a rule the charter in
+/// force carries (a member whose scopes do not cover a rule is in that state after
+/// every sync). The others repeal that rule, and nothing of the repeal reaches him.
+/// His request to leave used to list the rule by the id the charter lists, "so that it
+/// drops nothing": with the rule repealed, that request brought it back into force,
+/// with Dave's approval on an amendment his own node called unapprovable.
+///
+/// Leaving changes his machine and asks for nothing from that node. Once his node holds
+/// the rule's records, the same command makes the request, and the request changes the
+/// roll and nothing else.
+#[test]
+fn leaving_from_a_node_that_lacks_a_carried_rule_brings_no_repealed_rule_back() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let c = a_node_that_lacks_a_carried_rule(root);
+    let (alice, bob, carol, dave) = (&c.alice, &c.bob, &c.carol, &c.dave);
+    let members = [alice, bob, carol];
+
+    // --- A second rule passes under charter 4 (3 of 4), and reaches Dave whole: his
+    // node installs it. He still lacks the first rule's records.
+    let second_rule = "Run the tests before you say a task is done.";
+    let (second, second_skill) = propose(alice, second_rule);
+    alice.run(&["proposal", "vote", &second, "approve", "--yes"]);
+    carry(root, &members);
+    bob.run(&["proposal", "vote", &second, "approve", "--yes"]);
+    carol.run(&["proposal", "vote", &second, "approve", "--yes"]);
+    carry(root, &members);
+    let all = std::fs::read_to_string(alice.export(&root.join("two-rules.jsonl"))).unwrap();
+    let without_the_first: Vec<&str> = all
+        .lines()
+        .filter(|raw| {
+            let record = line(raw);
+            let event = &record["event"];
+            let its_text = record["bundle"]["skill_md"]
+                .as_str()
+                .is_some_and(|md| md.contains(RULE));
+            !its_text
+                && event["event_id"] != c.rule.as_str()
+                && event["body"]["proposal_id"] != c.rule.as_str()
+        })
+        .collect();
+    let partial = root.join("the-second-rule-for-dave.jsonl");
+    std::fs::write(&partial, without_the_first.join("\n") + "\n").unwrap();
+    dave.run(&["events", "import", partial.to_str().unwrap()]);
+    assert_eq!(dave.rules(), [second_skill.as_str()]);
+    assert!(has_skill(dave, &second_skill));
+    let (_, listed) = dave.reads(&["rule", "list"]);
+    assert!(
+        listed.contains("has not arrived on this node yet"),
+        "{listed}"
+    );
+
+    // --- The others repeal the first rule. Nothing of it reaches Dave.
+    let repeal = alice.run(&["rule", "repeal", &c.skill, "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice.run(&["proposal", "vote", &repeal, "approve", "--yes"]);
+    carry(root, &members);
+    bob.run(&["proposal", "vote", &repeal, "approve", "--yes"]);
+    carol.run(&["proposal", "vote", &repeal, "approve", "--yes"]);
+    carry(root, &members);
+    assert_eq!(alice.rules(), [second_skill.as_str()]);
+    let on_alice_before = alice.run(&["proposal", "list"])["proposals"]
+        .as_array()
+        .unwrap()
+        .len();
+
+    // --- Dave leaves. The rule the circle installed on his machine goes, and no
+    // request is made; he is told why and what makes it.
+    let (code, said) = dave.reads(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(code, 0, "{said}");
+    assert!(said.contains("Left team on this machine."), "{said}");
+    assert!(
+        said.contains(&format!("removed rule {second_skill}")),
+        "{said}"
+    );
+    assert!(
+        said.contains(
+            "No request to take you off the roll was made: this node does not hold 1 \
+             rule(s) that the charter in force carries, and a request drafted here would \
+             either drop them or bring back one that was repealed since."
+        ),
+        "{said}"
+    );
+    assert!(said.contains("`peerharness events import`"), "{said}");
+    assert!(
+        said.contains("`peerharness circle leave --circle team` again"),
+        "{said}"
+    );
+    assert!(
+        said.contains("`peerharness circle remove dave --circle team`"),
+        "{said}"
+    );
+    assert!(!has_skill(dave, &second_skill));
+    // On a complete node nothing of it appears.
+    let from_dave = alice.run(&[
+        "events",
+        "import",
+        &dave.export(&root.join("dave-left.jsonl")),
+    ]);
+    assert_eq!(from_dave["stored"], 0, "{from_dave}");
+    assert_eq!(
+        alice.run(&["proposal", "list"])["proposals"]
+            .as_array()
+            .unwrap()
+            .len(),
+        on_alice_before
+    );
+
+    // --- While his node lacks the rule, running it again says the same and signs
+    // nothing.
+    let again = dave.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(again["requested"], false, "{again}");
+    assert_eq!(again["reason"], "missing_carried_rules", "{again}");
+
+    // --- With a member's full file on his node, the same command makes the request.
+    dave.run(&[
+        "events",
+        "import",
+        &alice.export(&root.join("everything-for-dave.jsonl")),
+    ]);
+    assert!(!has_skill(dave, &second_skill), "he left this machine");
+    let asked = dave.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(asked["left"], true, "{asked}");
+    assert_eq!(asked["requested"], true, "{asked}");
+    let removal = asked["proposal_id"].as_str().unwrap().to_owned();
+    // His own node can show what he approved.
+    let own = dave.run(&["proposal", "show", &removal]);
+    assert_eq!(own["approvals"], serde_json::json!(["dave"]));
+    assert_eq!(own["amendment"]["can_be_approved_here"], true, "{own}");
+
+    // --- On a complete node the request changes the roll and nothing else: the
+    // repealed rule stays out, and the rule in force is carried.
+    alice.run(&[
+        "events",
+        "import",
+        &dave.export(&root.join("dave-asked.jsonl")),
+    ]);
+    let json = alice.run(&["proposal", "show", &removal]);
+    let amendment = &json["amendment"];
+    assert_eq!(amendment["roll"]["removed"][0]["member"], "dave");
+    assert_eq!(amendment["roll"]["admitted"], serde_json::json!([]));
+    assert_eq!(
+        amendment["rules_in_force"]["added"],
+        serde_json::json!([]),
+        "{amendment}"
+    );
+    assert_eq!(
+        amendment["rules_in_force"]["dropped"],
+        serde_json::json!([]),
+        "{amendment}"
+    );
+    let preview = alice.ballot_preview(&removal, "approve");
+    assert!(
+        preview.contains("the rules in force stay as they are (1 in force)"),
+        "{preview}"
+    );
+    assert!(!preview.contains("comes into force"), "{preview}");
+}
+
+/// `circle leave` changes the machine before it uses a key. With a passphrase that does
+/// not unlock the device key, the rules the circle installed are gone and no request
+/// was made, where the command used to stop with the circle marked as left, its rules
+/// still installed, and a second `leave` refused. Run again, it makes the request; and
+/// once a request is on record it says so and signs nothing.
+#[test]
+fn leaving_changes_the_machine_first_and_a_second_run_makes_the_request() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let (rule, skill) = propose(&alice, RULE);
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob]);
+    bob.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    assert!(has_skill(&carol, &skill), "the charter is binding");
+    let proposals = |node: &Node| node.run(&["proposal", "list"])["proposals"].clone();
+    let before = proposals(&carol);
+    let leave = ["--json", "circle", "leave", "--circle", "team", "--yes"];
+    let with_a_wrong_passphrase = || -> Value {
+        let out = carol
+            .bare()
+            .args(leave)
+            .env("PEERHARNESS_PASSPHRASE", "not the passphrase of this key")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+
+    // --- The key does not unlock. Her machine is changed all the same, and she is
+    // told that no request was made.
+    let left = with_a_wrong_passphrase();
+    assert_eq!(left["left"], true, "{left}");
+    assert_eq!(left["requested"], false, "{left}");
+    assert_eq!(left["reason"], "device_key_locked", "{left}");
+    assert_eq!(left["removed_rules"], serde_json::json!([skill]), "{left}");
+    assert!(!has_skill(&carol, &skill));
+    assert_eq!(proposals(&carol), before, "nothing was signed");
+    let (_, listed) = carol.reads(&["rule", "list"]);
+    assert!(!listed.contains("[installed]"), "{listed}");
+
+    // --- Run again, it shows the request alone and asks: nothing is left to change
+    // on this machine.
+    let (code, preview) = carol.reads(&["circle", "leave", "--circle", "team"]);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains("You left team on this machine already."),
+        "{preview}"
+    );
+    assert!(
+        preview.contains(
+            "an amendment that removes carol from the roll of charter 3 is put to the \
+             vote, with your approval."
+        ),
+        "{preview}"
+    );
+    assert!(
+        preview.contains("It passes with 2 of 3 member approval(s); yours is one."),
+        "{preview}"
+    );
+    assert_eq!(proposals(&carol), before);
+    // With the right passphrase and her yes, it is made.
+    let asked = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(asked["left"], true, "{asked}");
+    assert_eq!(asked["requested"], true, "{asked}");
+    assert_eq!(asked["passed"], false, "{asked}");
+    let removal = asked["proposal_id"].as_str().unwrap().to_owned();
+    assert_eq!(carol.approvals(&removal), serde_json::json!(["carol"]));
+    let with_the_request = proposals(&carol);
+
+    // --- The request is on record. Another run says so with its count, and uses no
+    // key: it succeeds with a passphrase that unlocks nothing.
+    let third = with_a_wrong_passphrase();
+    assert_eq!(third["requested"], false, "{third}");
+    assert_eq!(third["reason"], "request_on_record", "{third}");
+    assert_eq!(third["proposal_id"], removal.as_str(), "{third}");
+    assert_eq!(third["approvals"], 1, "{third}");
+    assert_eq!(third["need"], 2, "{third}");
+    let (code, said) = carol.reads(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(code, 0, "{said}");
+    assert!(
+        said.contains(&format!(
+            "a request to take carol off the roll of charter 3 is on record (proposal {})",
+            short(&removal)
+        )),
+        "{said}"
+    );
+    assert!(said.contains("1 of 3 approved"), "{said}");
+    assert!(
+        said.contains("Nothing was changed and nothing was signed."),
+        "{said}"
+    );
+    assert_eq!(proposals(&carol), with_the_request);
+
+    // --- The members approve it. Off the roll, a further run has nothing to ask for.
+    carry(root, &[&alice, &bob, &carol]);
+    alice.run(&["proposal", "vote", &removal, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    for node in [&alice, &bob, &carol] {
+        assert_eq!(
+            node.run(&["circle", "members", "--circle", "team"])["charter"]["seq"],
+            4,
+            "{}",
+            node.name
+        );
+    }
+    let off = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(off["requested"], false, "{off}");
+    assert_eq!(off["reason"], "off_the_roll", "{off}");
+    assert_eq!(alice.rules(), [skill.as_str()]);
+}
+
+/// A member's `circle remove` is such a record as well. Carol left on her machine and
+/// her request was not made; meanwhile Bob proposed her removal. Running `circle leave`
+/// again does not put a second removal to the vote: it names the one on record and
+/// says that her approval is not on it.
+#[test]
+fn a_removal_a_member_proposed_is_not_asked_for_a_second_time() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (_alice, bob, carol) = trio(root);
+    let out = carol
+        .bare()
+        .args(["--json", "circle", "leave", "--circle", "team", "--yes"])
+        .env("PEERHARNESS_PASSPHRASE", "not the passphrase of this key")
+        .output()
+        .unwrap();
+    let left: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(left["reason"], "device_key_locked", "{left}");
+
+    let removal = bob.run(&["circle", "remove", "carol", "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    carol.run(&[
+        "events",
+        "import",
+        &bob.export(&root.join("bob-removes-carol.jsonl")),
+    ]);
+    let proposals = carol.run(&["proposal", "list"])["proposals"].clone();
+
+    let (code, said) = carol.reads(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(code, 0, "{said}");
+    assert!(
+        said.contains(&format!(
+            "a request to take carol off the roll of charter 3 is on record (proposal {})",
+            short(&removal)
+        )),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "Your approval is not on it: `peerharness proposal vote {} approve`.",
+            short(&removal)
+        )),
+        "{said}"
+    );
+    assert_eq!(carol.run(&["proposal", "list"])["proposals"], proposals);
+    assert_eq!(carol.approvals(&removal), serde_json::json!(["bob"]));
+    // The approval is hers to give, in the ordinary way.
+    let voted = carol.run(&["proposal", "vote", &removal, "approve", "--yes"]);
+    assert_eq!(voted["passed"], true, "{voted}");
 }

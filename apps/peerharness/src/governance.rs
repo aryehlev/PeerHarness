@@ -1707,22 +1707,38 @@ pub fn settle(
     }
 
     // 3. Rules.
+    settled.applied = apply_on(node, circle, installer, confirmed)?;
+    Ok(settled)
+}
+
+/// The third step of [`settle`] alone: brings the agent's skills directory in line with
+/// the rules in force in `circle` ([`apply_rules`]). It publishes nothing and unlocks no
+/// key, so it is what `circle leave` runs first: the owner's machine changes whether or
+/// not anything can be signed afterwards.
+pub fn apply_on(
+    node: &crate::node::Node,
+    circle: &CircleRow,
+    installer: &ph_skills::Installer,
+    confirmed: &[EventId],
+) -> Result<Applied> {
+    let store = &node.store;
     let bundles = crate::library::bundle_store(&node.home);
     // Re-read the circle row: adoption settings may have changed during this command.
-    let circle = store.circle(&id)?.unwrap_or_else(|| circle.clone());
-    settled.applied = apply_rules(
+    let circle = store
+        .circle(&circle.circle_id)?
+        .unwrap_or_else(|| circle.clone());
+    apply_rules(
         store,
         &bundles,
         installer,
         &circle,
         &Owner {
-            me: &me,
+            me: &node.device_key(),
             policy: &node.config.policy,
             confirmed,
         },
-        now,
-    )?;
-    Ok(settled)
+        node.now(),
+    )
 }
 
 /// Where this machine puts the rules of `scope` in `circle`: the project directory the

@@ -511,9 +511,15 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
     assert_eq!(left["passed"], false);
     assert!(!carol.has_skill(&skill) && !carol.has_skill(&second_skill));
     assert_eq!(carol.roll(), ["alice", "bob", "carol"], "still on the roll");
+    assert_eq!(left["requested"], true);
+    // Her request is on record: running it again says so and asks for nothing more.
+    let again = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(again["requested"], false);
+    assert_eq!(again["reason"], "request_on_record");
+    assert_eq!(again["proposal_id"], left["proposal_id"]);
     assert_eq!(
-        carol.fail(&["circle", "leave", "--circle", "team", "--yes"]),
-        2
+        carol.fail_as_agent(&["circle", "leave", "--circle", "team", "--yes"]),
+        3
     );
     // She can change her mind about this machine.
     let back = carol.run(&["circle", "leave", "--circle", "team", "--undo", "--yes"]);
