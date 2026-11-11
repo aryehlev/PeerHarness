@@ -130,20 +130,23 @@ impl Worker {
 }
 
 /// The rules a settle found held on this node, each with the name of its circle on
-/// this machine: what a daemon is handed about a settle it did not start itself.
+/// this machine.
 pub type HeldRules = Vec<(governance::HeldRule, String)>;
 
-/// How many batches of held rules wait for a daemon to read them before further ones
-/// are dropped. A hold is a state: one that was dropped is found again by the next
-/// settle of its circle.
-const HELD_QUEUE: usize = 64;
+/// How many settles' worth of changes wait for a daemon to read them before further
+/// ones are dropped. A hold, a rule that waits and a skill that cannot be removed are
+/// states: one that was dropped is found again by the next settle of its circle. A
+/// rule that was installed or removed is said once, and with a dropped batch it is not
+/// said: `peerharness rule list` shows what is installed.
+const CHANGES_QUEUE: usize = 64;
 
-/// A queue from the request handler to the daemon that started the transport.
-pub fn held_queue() -> (
-    tokio::sync::mpsc::Sender<HeldRules>,
-    tokio::sync::mpsc::Receiver<HeldRules>,
+/// A queue from the request handler to the daemon that started the transport: what
+/// each settle after a peer's push changed for the owner ([`Changes`]).
+pub fn changes_queue() -> (
+    tokio::sync::mpsc::Sender<Changes>,
+    tokio::sync::mpsc::Receiver<Changes>,
 ) {
-    tokio::sync::mpsc::channel(HELD_QUEUE)
+    tokio::sync::mpsc::channel(CHANGES_QUEUE)
 }
 
 /// State shared between the request handler and a running sync.
@@ -155,21 +158,24 @@ struct Shared {
     pulls: tokio::sync::Mutex<HashMap<PeerId, JoinHandle<()>>>,
     /// The transport, once started (the handler needs it to fetch bundles back).
     net: OnceLock<NetworkHandle>,
-    /// Where the request handler puts the rules it finds held when it settles after a
-    /// peer's push: a running daemon, which tells its owner ([`Running::start_telling`]).
-    /// `None` for every other command, whose handler settles and says nothing.
-    held: Option<tokio::sync::mpsc::Sender<HeldRules>>,
+    /// Where the request handler puts what it changed for the owner when it settles
+    /// after a peer's push: a running daemon, which tells its owner
+    /// ([`Running::start_telling`]). `None` for every other command, whose handler
+    /// settles and says nothing.
+    told: Option<tokio::sync::mpsc::Sender<Changes>>,
 }
 
 impl Shared {
-    /// Hands the holds of a settle the request handler ran to the daemon, if one
-    /// listens. Only the holds: nothing else of what the settle did is passed on, and
-    /// nothing of this reaches a notification.
-    fn tell_held(&self, changes: Changes) {
-        if let Some(queue) = &self.held {
-            if !changes.held.is_empty() {
-                // A full queue drops the batch: the next settle finds the hold again.
-                let _ = queue.try_send(changes.held);
+    /// Hands what a settle the request handler ran changed for the owner to the
+    /// daemon, if one listens: rules installed and removed, a skill that could not be
+    /// removed or was left because it was edited, rules that wait for the owner or are
+    /// held, a charter that was issued. A settle that has none of these is not passed
+    /// on. Nothing of this reaches a notification.
+    fn tell(&self, changes: Changes) {
+        if let Some(queue) = &self.told {
+            if changes.says_something() {
+                // A full queue drops the batch (see `CHANGES_QUEUE`).
+                let _ = queue.try_send(changes);
             }
         }
     }
@@ -261,6 +267,13 @@ impl Changes {
             && self.asking.is_empty()
             && self.charters_issued.is_empty()
     }
+
+    /// Whether a settle that nobody on this machine started (the request handler's,
+    /// after a peer's push) has anything a daemon would tell its owner: something that
+    /// happened ([`Self::is_empty`] is false), or a state it may not have said yet.
+    fn says_something(&self) -> bool {
+        !self.is_empty() || !self.held.is_empty() || !self.not_removed.is_empty()
+    }
 }
 
 /// Settles `circles` on the node thread. A circle that cannot be settled is logged and
@@ -328,7 +341,7 @@ fn handler(worker: Worker, shared: Arc<Shared>) -> Arc<dyn ph_network::RequestHa
                     )?;
                     // With bundles still to fetch, settling waits until they are here.
                     if answer.pulls.is_empty() && !answer.touched.is_empty() {
-                        tells.tell_held(settle_circles(node, &answer.touched)?);
+                        tells.tell(settle_circles(node, &answer.touched)?);
                     }
                     Ok(answer)
                 })
@@ -374,7 +387,7 @@ async fn pull_then_settle(
         .call(move |node| settle_circles(node, &touched))
         .await
     {
-        shared.tell_held(changes);
+        shared.tell(changes);
     }
 }
 
@@ -430,26 +443,27 @@ impl Running {
         Self::start_with(home, config, None)
     }
 
-    /// [`Self::start`] for a daemon: the rules that the request handler finds held when
-    /// it settles after a peer's push are put on `held` ([`held_queue`]), so that the
-    /// daemon can tell its owner. A daemon that only answers, and syncs with nobody by
-    /// itself, would otherwise never say that a rule a peer brought is held here.
+    /// [`Self::start`] for a daemon: what the request handler changes for the owner
+    /// when it settles after a peer's push is put on `told` ([`changes_queue`]), so
+    /// that the daemon can tell its owner. A daemon that only answers, and syncs with
+    /// nobody by itself, would otherwise never say that a rule a peer brought was
+    /// installed here, waits for its owner or is held.
     pub fn start_telling(
         home: Home,
         config: NetworkConfig,
-        held: tokio::sync::mpsc::Sender<HeldRules>,
+        told: tokio::sync::mpsc::Sender<Changes>,
     ) -> Result<Self> {
-        Self::start_with(home, config, Some(held))
+        Self::start_with(home, config, Some(told))
     }
 
     fn start_with(
         home: Home,
         config: NetworkConfig,
-        held: Option<tokio::sync::mpsc::Sender<HeldRules>>,
+        told: Option<tokio::sync::mpsc::Sender<Changes>>,
     ) -> Result<Self> {
         let (worker, seed, device_key) = Worker::spawn(home)?;
         let shared = Arc::new(Shared {
-            held,
+            told,
             ..Shared::default()
         });
         let (net, join) = ph_network::start(seed, config, handler(worker.clone(), shared.clone()))
@@ -1528,6 +1542,18 @@ mod tests {
             ..Changes::default()
         };
         assert!(!kept.is_empty());
+        // What the request handler passes on to a daemon is wider: a hold and a skill
+        // that cannot be removed go too, and the daemon says each once. A settle that
+        // changed nothing and found nothing is not passed on.
+        let stuck = Changes {
+            not_removed: vec!["style".to_owned()],
+            ..Changes::default()
+        };
+        assert!(stuck.is_empty());
+        for told in [&only_held, &installed, &kept, &stuck] {
+            assert!(told.says_something());
+        }
+        assert!(!Changes::default().says_something());
     }
 
     /// A circle's name is no text for a log.

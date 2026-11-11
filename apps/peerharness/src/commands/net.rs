@@ -100,7 +100,7 @@ async fn stop_signal() {
 /// when a peer's push brings the ballot that passes it, and that push is settled by the
 /// request handler. So a daemon prints each hold once per run, when it first learns of
 /// it: from a report of its own exchanges ([`daemon_report`]), or from the request
-/// handler ([`runtime::held_queue`]), whichever comes first.
+/// handler ([`pushed_report`]), whichever comes first.
 #[derive(Default)]
 struct HoldsTold(HashSet<(String, EventId)>);
 
@@ -113,6 +113,59 @@ impl HoldsTold {
             .cloned()
             .collect()
     }
+}
+
+/// The states a running daemon has printed from what the request handler handed it
+/// ([`pushed_report`]): the rules that wait for the owner's confirmation, by the
+/// proposal that put each in force, and the skills that could not be removed, by name.
+///
+/// Every settle finds such a state again, and the request handler settles on every
+/// push. From that path each is printed once per run. (A report of the daemon's own
+/// exchange lists a rule that waits every time it is printed, as before.)
+#[derive(Default)]
+struct PushedTold {
+    waiting: HashSet<EventId>,
+    not_removed: HashSet<String>,
+}
+
+/// What a running daemon prints for what the request handler changed when it settled
+/// after a peer's push, or `None` when there is nothing this run has not said.
+///
+/// A daemon that only answers makes no exchange of its own, so it has no report in
+/// which these lines would appear: a rule that a push installed or removed is said
+/// here when it happens, with the lines of a sync report. A rule that waits for the
+/// owner, a skill that could not be removed and a hold are said once per run.
+fn pushed_report(
+    holds: &mut HoldsTold,
+    told: &mut PushedTold,
+    changes: &runtime::Changes,
+) -> Option<String> {
+    let new_holds = holds.new_in(&changes.held);
+    let waiting: Vec<governance::Waiting> = changes
+        .asking
+        .iter()
+        .filter(|w| told.waiting.insert(w.proposal_id))
+        .cloned()
+        .collect();
+    let not_removed: Vec<String> = changes
+        .not_removed
+        .iter()
+        .filter(|name| told.not_removed.insert((*name).clone()))
+        .cloned()
+        .collect();
+    let mut t = Text::new();
+    change_lines(
+        &mut t,
+        "",
+        &runtime::Changes {
+            asking: waiting,
+            not_removed,
+            ..changes.clone()
+        },
+        &new_holds,
+    );
+    let text = t.finish();
+    (!text.is_empty()).then(|| text.trim_end().to_owned())
 }
 
 /// What a running daemon prints for one peer's report of a sync it made itself, or
@@ -171,26 +224,38 @@ fn sync_lines(t: &mut Text, r: &SyncReport, held: &[(governance::HeldRule, Strin
             safe(name)
         ));
     }
-    for seq in &r.changes.charters_issued {
-        t.line(format!("  an amendment passed; issued charter {seq}"));
+    change_lines(t, "  ", &r.changes, held);
+}
+
+/// What settling changed for the owner, as lines that each begin with `indent`: under
+/// the first line of a sync report, or by themselves for what a peer's push changed
+/// on a daemon. `held` is the held rules to list (see [`sync_lines`]).
+fn change_lines(
+    t: &mut Text,
+    indent: &str,
+    changes: &runtime::Changes,
+    held: &[(governance::HeldRule, String)],
+) {
+    for seq in &changes.charters_issued {
+        t.line(format!("{indent}an amendment passed; issued charter {seq}"));
     }
-    for skill in &r.changes.installed {
-        t.line(format!("  installed rule {skill} for your agent"));
+    for skill in &changes.installed {
+        t.line(format!("{indent}installed rule {skill} for your agent"));
     }
-    for skill in &r.changes.removed {
-        t.line(format!("  removed rule {skill}"));
+    for skill in &changes.removed {
+        t.line(format!("{indent}removed rule {skill}"));
     }
-    for skill in &r.changes.not_removed {
-        t.line(format!("  {}", governance::not_removed_line(skill)));
+    for skill in &changes.not_removed {
+        t.line(format!("{indent}{}", governance::not_removed_line(skill)));
     }
-    for kept in &r.changes.kept_edited {
-        t.line(format!("  {}", kept.line()));
+    for kept in &changes.kept_edited {
+        t.line(format!("{indent}{}", kept.line()));
     }
-    for waiting in &r.changes.asking {
-        t.line(format!("  {}", waiting.line()));
+    for waiting in &changes.asking {
+        t.line(format!("{indent}{}", waiting.line()));
     }
     for (rule, circle) in held {
-        t.line(format!("  {}", rule.line(circle)));
+        t.line(format!("{indent}{}", rule.line(circle)));
     }
 }
 
@@ -273,9 +338,9 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
         );
     }
     tokio_runtime()?.block_on(async move {
-        // What the request handler finds held when it settles a peer's push comes here.
-        let (held_tx, mut held_rx) = runtime::held_queue();
-        let run = Running::start_telling(home.clone(), config, held_tx)?;
+        // What the request handler changes when it settles a peer's push comes here.
+        let (told_tx, mut told_rx) = runtime::changes_queue();
+        let run = Running::start_telling(home.clone(), config, told_tx)?;
         let addrs = run.dialable_addrs().await?;
         let peer_id = run.net.local_peer_id().to_string();
         let mut info = DaemonInfo {
@@ -347,6 +412,7 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
             tokio::time::interval_at(tokio::time::Instant::now() + every, every)
         });
         let mut holds_told = HoldsTold::default();
+        let mut pushed_told = PushedTold::default();
         loop {
             let tick = async {
                 match ticker.as_mut() {
@@ -374,13 +440,16 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
             };
             tokio::select! {
                 _ = &mut stop => break,
-                Some(held) = held_rx.recv() => {
-                    // A peer synced to this node and what it brought left a rule held
-                    // here. This daemon may never exchange with that peer by itself
-                    // (it knows no address, or has no sync interval), so it says so
-                    // now: once, like a hold its own exchange finds.
-                    for (rule, circle) in holds_told.new_in(&held) {
-                        out.note(rule.line(&circle));
+                Some(changes) = told_rx.recv() => {
+                    // A peer synced to this node, and settling what it brought changed
+                    // something for the owner: a rule was installed or removed, waits
+                    // for them or is held. This daemon may never exchange with that
+                    // peer by itself (it knows no address, or has no sync interval),
+                    // so it says so now. A state is said once, like a hold that its
+                    // own exchange finds.
+                    let report = pushed_report(&mut holds_told, &mut pushed_told, &changes);
+                    if let Some(report) = report {
+                        out.note(report);
                     }
                 }
                 _ = news => {
@@ -829,6 +898,116 @@ mod tests {
         let printed = t.finish();
         assert!(printed.contains(&hold_line("style")), "{printed}");
         assert!(printed.contains(&hold_line("tests")), "{printed}");
+    }
+
+    /// What a daemon prints for what the request handler changed after a peer's push.
+    /// It used to be told the holds and nothing else, so a daemon that only answers
+    /// never said that a push had installed a rule or left one waiting for its owner.
+    /// What happened is said when it happens. A state (a rule that waits, a skill that
+    /// could not be removed, a hold) is said once per run from this path, although the
+    /// handler finds it again on every push.
+    #[test]
+    fn a_daemon_tells_what_a_push_changed_and_each_state_once() {
+        let waits = |name: &str| governance::Waiting {
+            name: name.to_owned(),
+            proposal_id: EventId::from_digest(ph_core::Digest::sha256(name.as_bytes())),
+            why: "ask_owner",
+        };
+        let names = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let waiting_line =
+            |name: &str| format!("rule {name} is in force and waits for your confirmation");
+        let mut holds = HoldsTold::default();
+        let mut told = PushedTold::default();
+        let mut said = |changes: &runtime::Changes| pushed_report(&mut holds, &mut told, changes);
+
+        // A push installed a rule: one line, by itself, with the words of a sync report.
+        let installed = runtime::Changes {
+            installed: names(&["tests"]),
+            ..runtime::Changes::default()
+        };
+        assert_eq!(
+            said(&installed).as_deref(),
+            Some("installed rule tests for your agent")
+        );
+
+        // A push left a rule waiting for the owner: said, with the command that
+        // confirms it. The next push settles the circle again and finds it again.
+        let asks = runtime::Changes {
+            asking: vec![waits("commits")],
+            ..runtime::Changes::default()
+        };
+        let first = said(&asks).expect("a rule that waits is said");
+        assert!(first.starts_with(&waiting_line("commits")), "{first}");
+        assert!(first.contains("`peerharness proposal adopt "), "{first}");
+        assert_eq!(said(&asks), None);
+
+        // A later push removes a rule and a second one waits: the removal and the new
+        // one, without the first.
+        let more = runtime::Changes {
+            removed: names(&["tests"]),
+            asking: vec![waits("commits"), waits("naming")],
+            ..runtime::Changes::default()
+        };
+        let second = said(&more).expect("something happened");
+        assert_eq!(
+            second.lines().next(),
+            Some("removed rule tests"),
+            "{second}"
+        );
+        assert!(second.contains(&waiting_line("naming")), "{second}");
+        assert!(!second.contains(&waiting_line("commits")), "{second}");
+        assert_eq!(second.lines().count(), 2, "{second}");
+
+        // A skill that could not be removed is a state too: once.
+        let stuck = runtime::Changes {
+            not_removed: names(&["layout"]),
+            ..runtime::Changes::default()
+        };
+        let line = said(&stuck).expect("said once");
+        assert_eq!(line, governance::not_removed_line("layout"));
+        assert_eq!(said(&stuck), None);
+
+        // A copy that was left because it was edited, and a charter that was issued,
+        // happen once and are said when they do.
+        let kept = runtime::Changes {
+            kept_edited: vec![governance::KeptEdited {
+                name: "layout".to_owned(),
+                place: None,
+                uninstall_refused: false,
+            }],
+            charters_issued: vec![4],
+            ..runtime::Changes::default()
+        };
+        let line = said(&kept).expect("said");
+        assert!(
+            line.contains("an amendment passed; issued charter 4"),
+            "{line}"
+        );
+        assert!(
+            line.contains("rule layout: the copy a vote installed was edited"),
+            "{line}"
+        );
+
+        // A hold goes through the record the daemon's own reports use: once from
+        // either path. Nothing here is a report of an exchange.
+        let with_hold = runtime::Changes {
+            held: vec![held("style", "team")],
+            ..runtime::Changes::default()
+        };
+        let line = said(&with_hold).expect("a new hold");
+        assert!(line.starts_with("rule style is in force and is held on this machine:"));
+        assert_eq!(said(&with_hold), None);
+        let report = SyncReport {
+            peer_id: "a-peer".to_owned(),
+            circles: 1,
+            changes: with_hold.clone(),
+            ..SyncReport::default()
+        };
+        assert_eq!(daemon_report(&mut holds, &report), None);
+        for printed in [first, second] {
+            assert!(!printed.contains("Synced "), "{printed}");
+            assert!(printed.lines().all(|l| !l.starts_with(' ')), "{printed}");
+        }
     }
 
     /// A daemon that listens on loopback only has nothing to announce: `--lan` there

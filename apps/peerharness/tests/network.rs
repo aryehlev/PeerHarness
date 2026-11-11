@@ -5,7 +5,8 @@
 //! an admission and a removal decided by ballots that arrive over the network, with the
 //! founder's daemon issuing the charters; a new member who gets the circle from a
 //! member's node; a removed member whose node is shown the vote that removed it; a
-//! daemon that tells its owner of a rule that a peer's push left held on its node; and
+//! daemon that tells its owner of a rule that a peer's push left held on its node, and
+//! of one that a push installed, removed or left waiting for them; and
 //! the ways a node that is not on the roll is turned away; and the internet mode, in
 //! which members find each other by device key, against a private stand-in for the
 //! public network (the hub that the transport's own tests use).
@@ -652,32 +653,21 @@ fn members_vote_over_quic_and_strangers_are_turned_away() {
     assert_eq!(code, 3, "{msg}");
 }
 
-/// A daemon that only answers. Bob's node runs `daemon` without a sync interval and
-/// knows no peer: the members sync to it, and it dials nobody. Alice and Carol pass a
-/// rule that has the name of a skill Bob keeps for himself, and Alice's sync pushes
-/// the ballots to Bob's daemon. On his node the rule is held, and his daemon says so:
-/// once, when the push that made it arrives. It used to say nothing at all, because
-/// the request handler settles a push and nobody was told what the settle found.
-///
-/// A later push settles the circle again and finds the same hold: it is not printed
-/// again. A second rule that becomes held is printed in its turn.
-#[test]
-fn a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once() {
-    let tmp = TempDir::new().unwrap();
-    let root = tmp.path();
+/// A file of the circle's records, from one node to another.
+fn hand_over(root: &Path, from: &Node, to: &Node, tag: &str) {
+    let file = root.join(format!("{}-{tag}.jsonl", from.name));
+    let path = file.to_str().unwrap();
+    from.run(&["events", "export", "--circle", "team", "--out", path]);
+    to.run(&["events", "import", path]);
+}
+
+/// Alice founds the circle `team`; Bob and Carol are admitted by vote and join by file.
+/// All three hold charter 3, and no node knows another's address.
+fn three_members(root: &Path) -> (Node, Node, Node) {
     let alice = Node::new(root, "alice");
     let bob = Node::new(root, "bob");
     let carol = Node::new(root, "carol");
     let id = |report: &Value, key: &str| report[key].as_str().unwrap().to_owned();
-    // A file of the circle's records, from one node to another.
-    let hand_over = |from: &Node, to: &Node, tag: &str| {
-        let file = root.join(format!("{}-{tag}.jsonl", from.name));
-        let path = file.to_str().unwrap();
-        from.run(&["events", "export", "--circle", "team", "--out", path]);
-        to.run(&["events", "import", path]);
-    };
-
-    // --- Alice founds the circle; Bob and Carol are admitted by vote and join by file.
     let created = alice.run(&["circle", "create", "team"]);
     let fingerprint = id(&created, "root_fingerprint");
     alice.run(&[
@@ -706,14 +696,33 @@ fn a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once() {
         ]),
         "proposal_id",
     );
-    hand_over(&alice, &bob, "admission");
+    hand_over(root, &alice, &bob, "admission");
     bob.run(&["proposal", "vote", &admission, "approve", "--yes"]);
-    hand_over(&bob, &alice, "admitted");
+    hand_over(root, &bob, &alice, "admitted");
     carol.join(&alice, root, &fingerprint);
-    hand_over(&alice, &bob, "charter");
+    hand_over(root, &alice, &bob, "charter");
     for node in [&alice, &bob, &carol] {
         assert_eq!(node.charter_seq(), 3, "{}", node.name);
     }
+    (alice, bob, carol)
+}
+
+/// A daemon that only answers. Bob's node runs `daemon` without a sync interval and
+/// knows no peer: the members sync to it, and it dials nobody. Alice and Carol pass a
+/// rule that has the name of a skill Bob keeps for himself, and Alice's sync pushes
+/// the ballots to Bob's daemon. On his node the rule is held, and his daemon says so:
+/// once, when the push that made it arrives. It used to say nothing at all, because
+/// the request handler settles a push and nobody was told what the settle found.
+///
+/// A later push settles the circle again and finds the same hold: it is not printed
+/// again. A second rule that becomes held is printed in its turn.
+#[test]
+fn a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = three_members(root);
+    let id = |report: &Value, key: &str| report[key].as_str().unwrap().to_owned();
+    let hand_over = |from: &Node, to: &Node, tag: &str| hand_over(root, from, to, tag);
 
     // --- Bob keeps two rules for himself.
     for (name, text) in [
@@ -793,6 +802,108 @@ fn a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once() {
         rules.iter().all(|r| r["held"] == "held_own_skill"),
         "{rules:?}"
     );
+    drop(daemon);
+}
+
+/// The same daemon, and what a push changes besides holds. Bob follows the circle: a
+/// rule that Alice and Carol pass is installed on his node by the push that brings its
+/// ballots, and his daemon says so when it happens. Then he chooses to be asked first:
+/// the next rule waits for his confirmation, and the daemon says that once, with the
+/// command that confirms it, although every later push settles the circle again and
+/// finds the rule waiting. A repeal that a push brings is said as well.
+///
+/// The daemon used to be told holds and nothing else. One that makes no exchange of
+/// its own has no report in which these lines appear, so its owner learned of a rule
+/// in their agent, or of one waiting for them, from `rule list` only.
+#[test]
+fn a_daemon_that_only_answers_tells_what_a_push_installed_and_what_waits() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = three_members(root);
+    let id = |report: &Value, key: &str| report[key].as_str().unwrap().to_owned();
+    let hand_over = |from: &Node, to: &Node, tag: &str| hand_over(root, from, to, tag);
+    let said = root.join("bob-daemon.out");
+    let daemon = bob.daemon_printing(
+        &["--listen", LISTEN],
+        Stdio::from(std::fs::File::create(&said).unwrap()),
+    );
+    let printed = || std::fs::read_to_string(&said).unwrap_or_default();
+    let wait_for = |line: &str| {
+        let deadline = Instant::now() + Duration::from_secs(40);
+        while !printed().contains(line) {
+            assert!(
+                Instant::now() < deadline,
+                "bob's daemon never printed {line:?}:\n{}",
+                printed()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // Alice and Carol decide `proposal` between them, on their own nodes.
+    let decide = |proposal: &str, tag: &str| {
+        alice.run(&["proposal", "vote", proposal, "approve", "--yes"]);
+        hand_over(&alice, &carol, tag);
+        let voted = carol.run(&["proposal", "vote", proposal, "approve", "--yes"]);
+        assert_eq!(voted["passed"], true, "{voted}");
+        hand_over(&carol, &alice, tag);
+    };
+    let pass = |name: &str, text: &str| -> String {
+        let noted = id(&alice.run(&["note", text, "--name", name]), "candidate_id");
+        let rule = id(
+            &alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]),
+            "proposal_id",
+        );
+        decide(&rule, name);
+        rule
+    };
+    let installed = |name: &str| format!("installed rule {name} for your agent");
+    let waits = |name: &str| format!("rule {name} is in force and waits for your confirmation");
+    let on_bob = |name: &str| bob.skills.join(name).join("SKILL.md").is_file();
+
+    // --- A rule passes and Alice's sync pushes it. Bob follows: it is installed, and
+    // the daemon says so.
+    pass("tests", "Run the tests before you say a change is done.");
+    alice.run(&["sync", &daemon.addr]);
+    wait_for(&installed("tests"));
+    assert!(on_bob("tests"));
+
+    // --- Bob chooses to be asked first. The next rule a push brings waits for him.
+    bob.run(&["circle", "mode", "ask", "--circle", "team"]);
+    let commits = pass("commits", "Write commit subjects in the imperative mood.");
+    alice.run(&["sync", &daemon.addr]);
+    wait_for(&waits("commits"));
+    assert!(!on_bob("commits"));
+    let all = printed();
+    let short: String = commits.chars().take(19).collect();
+    assert!(
+        all.contains(&format!("`peerharness proposal adopt {short}`")),
+        "the line names the command with the proposal: {all}"
+    );
+
+    // --- The first rule is repealed, and a push brings the repeal: said when it
+    // happens. That push settles the circle again and finds `commits` still waiting.
+    let repeal = id(
+        &alice.run(&["rule", "repeal", "tests", "--circle", "team", "--yes"]),
+        "proposal_id",
+    );
+    decide(&repeal, "repeal");
+    alice.run(&["sync", &daemon.addr]);
+    wait_for("removed rule tests");
+    assert!(!on_bob("tests"));
+
+    // --- A second rule waits after a fourth push. Its line comes after anything the
+    // earlier pushes could have printed, so the counts below are of everything.
+    pass("naming", "Names are lower case.");
+    alice.run(&["sync", &daemon.addr]);
+    wait_for(&waits("naming"));
+    let all = printed();
+    assert_eq!(all.matches(&installed("tests")).count(), 1, "{all}");
+    assert_eq!(all.matches("removed rule tests").count(), 1, "{all}");
+    assert_eq!(all.matches(&waits("commits")).count(), 1, "{all}");
+    assert_eq!(all.matches(&waits("naming")).count(), 1, "{all}");
+    // It made no exchange of its own, so it has no report of one, and nothing is held.
+    assert!(!all.contains("Synced "), "{all}");
+    assert!(!all.contains("is held on this machine"), "{all}");
     drop(daemon);
 }
 
