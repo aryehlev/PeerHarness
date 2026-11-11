@@ -3412,3 +3412,24 @@ the four.
 (`apps/peerharness/tests/reset.rs`). By hand: the reproduction of the audit, a home
 in a folder with `src`, `.git` and a note, run with the new build.
 
+### A request that panics fails alone
+
+**Found.** A daemon does everything that touches the node (the store, the key) on one
+thread, which ran its jobs with nothing around them. One panic in one job ended the
+thread. The daemon went on listening and answered every later request with "the node
+thread has stopped": to its owner it looked like a running daemon, and it synced
+nothing until it was started again. No input that makes a job panic was found. The
+finding is that one would have stopped the node for good, for every peer.
+
+**Decision.** The loop of the node thread runs each job inside `catch_unwind`
+(`runtime::serve`). A job that panics fails alone, its caller gets the error of a
+dropped job, and the next job is served. A panic is logged as an error, with no text
+of the request.
+
+**Not changed.** A panic is still a bug to be fixed where it is. The release build
+unwinds as before: `panic = "abort"` would end the daemon instead, which is visible
+but stops the node all the same.
+
+**Tests.** `a_request_that_panics_fails_alone_and_the_node_thread_goes_on`
+(`apps/peerharness/src/runtime.rs`).
+

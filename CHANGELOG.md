@@ -50,6 +50,10 @@ database schema it writes.
     could be passed with another spelling of the same path. `reset` now deletes only
     what PeerHarness put there and says what stays, refuses your home directory under
     every spelling, and works when the database cannot be read.
+  * **One failed request could stop a daemon without stopping its process.** A panic
+    in one request ended the thread that serves the node, and the daemon went on
+    listening while every later request failed. A request that panics now fails
+    alone.
 
 ## 0.4.0 (2026-11-11)
 
