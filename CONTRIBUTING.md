@@ -191,8 +191,9 @@ specification was ambiguous.
 
 ## Reporting security issues
 
-**Do not open public issues for vulnerabilities.** Follow [`SECURITY.md`](SECURITY.md)
-to report privately. PeerHarness has not had a security audit.
+**Do not put the details of a vulnerability in a public issue.** Follow
+[`SECURITY.md`](SECURITY.md) to report privately. PeerHarness has not had a security
+audit.
 
 ## License
 

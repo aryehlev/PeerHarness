@@ -120,15 +120,23 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    release workflow or to native dependencies, run the Release workflow manually
    (**Actions > Release > Run workflow**). A manual run builds every target and uploads
    the archives as workflow artifacts named `peerharness-dev-<commit>-<target>`, but
-   publishes nothing.
+   publishes nothing. Before a release is announced, check that private vulnerability
+   reporting is switched on for the repository (**Settings > Code security**):
+   `gh api repos/aryehlev/peerharness/private-vulnerability-reporting` prints
+   `{"enabled":true}` when it is. `SECURITY.md` and `CODE_OF_CONDUCT.md` name that
+   form, and `SECURITY.md` says that it was off when it was written: correct that
+   sentence once it is on.
 2. Update the version in the root `Cargo.toml` (`[workspace.package] version` and the
    `version` of the internal path dependencies under `[workspace.dependencies]`), run
    `cargo build` so `Cargo.lock` is updated, and commit both.
 3. Update `README.md` in the same pull request, every time. Its status line names the
-   version being released. Read "What works today" and "Known limits" again against
-   what this release contains, and check each command the README shows against the
-   binary. The README is packed into every archive, so what is tagged is what people
-   read.
+   version being released. While that version is not released, the status block also
+   says which version the install line installs and what is missing from it: take
+   that note out in this pull request. Read "What works today", `docs/checked.md` and
+   "Known limits" again against what this release contains, and check each command
+   the README shows against the binary. The README is packed into every archive, so
+   what is tagged is what people read. `docs/checked.md` is not packed: the archive's
+   README links to it.
 4. Note in the release notes draft: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`. Move the "Unreleased" entries of
    `CHANGELOG.md` under the new version in the same pull request.
@@ -143,9 +151,10 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    below before announcing the release. Then run the install script once on a clean
    machine or with `PEERHARNESS_INSTALL_DIR=$(mktemp -d)`: it only works for a
    published release of a public repository.
-7. Say in the README what was checked on the published release ("What works today",
-   the row about the install script and the release binaries), and what was not. Open
-   that pull request right away: it is part of the release, not a follow-up.
+7. Say what was checked on the published release, and what was not: in the README
+   ("What works today") and in `docs/checked.md` (the row about the install script
+   and the release binaries). Open that pull request right away: it is part of the
+   release, not a follow-up.
 8. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
    and tag again. Never replace the assets of a published release; publish a new patch
    version instead.

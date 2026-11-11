@@ -59,11 +59,13 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement through the
-repository's private reporting form, the one [SECURITY.md](SECURITY.md)
-describes (<https://github.com/aryehlev/peerharness/security/advisories/new>).
-Begin the report with the words "Conduct report". If the form is not available
-to you, open an issue that asks for a private contact and gives no details.
+reported to the community leaders responsible for enforcement. Open an issue
+that asks for a private contact and gives no details, wait for an answer there
+that gives one, and send the report through that. When the repository's
+Security tab offers "Report a vulnerability"
+(<https://github.com/aryehlev/peerharness/security/advisories/new>), that
+private form can be used instead: begin the report with the words "Conduct
+report". [SECURITY.md](SECURITY.md) says more about that form.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

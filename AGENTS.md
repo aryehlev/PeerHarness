@@ -96,6 +96,14 @@ stop, leave the feature disabled, and document the blocker.
   rationale typed for `proposal vote` is one line, checked before any preview or
   window. Where `proposal show` or an amendment's description prints several lines
   that a member wrote, every line goes behind a mark (`output::quoted`).
+* An amendment is drafted only on a node that holds every rule the charter in force
+  carries (ADR-041). `circle invite`, `remove`, `amend` and `device` fill `carried`
+  from the rules in force on the node, so they refuse while
+  `RuleSet::missing_carried` is not empty (`circle::holds_every_carried_rule`), and
+  no ballot on an amendment is put in a window on such a node
+  (`proposal::sole_admission`). `circle leave` is the one exception, because leaving
+  never waits: it copies the missing ids into `carried`. Never let a draft leave a
+  carried rule out because the node cannot name it.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
   windows turned on before ADR-037 were allowed for three steps, and keeping a rule has
@@ -123,6 +131,13 @@ stop, leave the feature disabled, and document the blocker.
   to pass `--yes` (`consent::no_terminal`).
 * Nothing is saved to the library, installed or signed before the confirmation it
   belongs to: build previews from drafts, and persist only after `confirm` returns.
+* A confirmation counts for what was shown (ADR-042). The owner's yes to an install
+  (`rule opt-in`, `proposal adopt`) is passed on as the id of the proposal that was
+  shown (`governance::Owner::confirmed`), and `apply_rules` counts it for that
+  proposal only. Never confirm an install by a rule's name: another proposal can take
+  the name while the owner reads. Inside a session, what is said about a held rule
+  does not name the commands that take a skill out or install the rule
+  (`HeldRule::explain_to`).
 * The reverse holds for an opt-out: it never waits for anyone. `rule opt-out --announce`
   and `circle leave` change the owner's machine first and ask about what is published
   after.

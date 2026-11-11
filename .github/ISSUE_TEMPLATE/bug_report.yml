@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Do not report a vulnerability here: SECURITY.md has the private channel.
+        Do not report a vulnerability here: SECURITY.md says how to report one.
 
         Leave out passphrases, private keys and any text of a rule or a prompt that is
         private. Use a throwaway home (`PEERHARNESS_HOME=$(mktemp -d)`) to reproduce

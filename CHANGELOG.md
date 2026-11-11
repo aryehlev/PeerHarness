@@ -19,7 +19,8 @@ database schema it writes.
   is refused by `keep` and stays with `review` and `skills install` (ADR-040).
 
 A check of 0.4.0 before any tag found defects, and the changes below fix some of them
-(ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). Several change what a
+(ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). A review of those fixes
+found more, and what was changed for them is in the same lists. Several change what a
 command prints, asks or accepts.
 
 **What a voter is shown**
@@ -32,15 +33,33 @@ command prints, asks or accepts.
   --json` has an `amendment` object. The lines `proposed roll: …` and `it also changes
   the rules of the vote`, and the warning that only counted rules, are gone (ADR-041).
 * `proposal vote <id> approve` on an amendment is refused, with `--yes` too, while the
-  node cannot show what the amendment would put in force: the text of a rule it
-  carries is not there, or it lists a proposal the node does not hold. `reject` and
-  `revise` are not refused.
+  node cannot show what the amendment would put in force or take out of force: the
+  text of a rule it carries is not there, it lists a proposal the node does not hold,
+  or it leaves out a rule that the charter in force carries and the node does not
+  hold. Such a rule is listed in the ballot by its proposal id, with the words that
+  this node cannot say which rule that is, and in `proposal show --json` its
+  `skill_name` is null. No such ballot is put in a window. `reject` and `revise` are
+  not refused.
+* `circle invite`, `circle remove`, `circle amend` and `circle device add` and `remove`
+  are refused on a node that lacks a rule the charter in force carries, before any
+  preview: an amendment drafted there would leave the rule out. The message says to
+  import the events file of a member who holds it. `circle leave` is not refused and
+  lists such a rule by its id.
+* When an amendment lists a second proposal under the name of a rule in force, the
+  ballot says which of the two would be in force afterwards: the rule "gets another
+  text without a vote of its own", or the rule in force "is the later one and stays as
+  it is". `proposal show --json` has `replaces` and `stays_behind` on each entry of
+  `rules_in_force.added`.
 * `proposal create` shows what the scanner found. A rule with a high-risk finding is
   proposed from a terminal only: inside a session it is refused, windows or not.
 * `proposal vote --rationale` takes one line of at most 200 characters without control
-  characters; anything else is a usage error. `proposal show` prints what other
-  members wrote (a rationale, a summary, the reason of an opt-out) on lines of their
-  own behind `| `, and names the proposer by member and device.
+  characters, invisible characters, blanks that are not spaces or characters the
+  preview would rewrite; anything else is a usage error. `proposal show` prints what
+  other members wrote (a rationale, a summary, the reason of an opt-out, the text of a
+  rule) on lines of their own behind `| `, and names the proposer by member and
+  device.
+* `keep` shows what the scanner found in a rule, in the terminal and in its window.
+  Without a finding its preview is unchanged.
 
 **What a vote may do to your own skills**
 
@@ -56,6 +75,18 @@ command prints, asks or accepts.
   more to put PeerHarness's own skill back.
 * `rule list --json` has `held` for each rule, and `events import --json` and `sync
   --json` have a `held` list.
+* The way out of a hold: `skills uninstall` takes out the skill that holds a rule, an
+  edited copy with `--allow-modified`. It still refuses a rule that a vote installed
+  and that you follow. For a rule that is held when you opt back in, the second step
+  is `rule opt-in` again. Inside a coding agent's session the hint does not name
+  these commands: it says that the choice is the owner's and to take nothing out.
+* Your yes to `rule opt-in` and to `proposal adopt` counts for the rule you were shown
+  and for no other rule of that name. If a newer proposal took the name while you
+  read, `rule opt-in` changes nothing and leaves your opt-out in place, and `proposal
+  adopt` says that the rule changed while it was being confirmed
+  (`changed_while_confirming` in its JSON).
+* A rule that is held or waits is reported once per exchange, and a daemon that
+  exchanged nothing prints nothing about a hold. `sync --json` lists a held rule once.
 
 **What runs inside a session**
 
@@ -74,6 +105,12 @@ command prints, asks or accepts.
 * A step that needs a confirmation and finds no terminal no longer says "re-run with
   --yes". It says that the decision is the owner's and that a coding agent stops and
   asks.
+* The preview that turns confirmation windows on no longer says without condition that
+  your agent cannot answer a window. It says that this holds inside the agent's
+  session, and that it guards against an agent that is trying to help, not against a
+  process that hides that it is one.
+* The `vote` tool of `peerharness mcp` takes a reason of one line of at most 200
+  characters, the limit of `proposal vote`.
 
 **First-run messages**
 
@@ -83,13 +120,18 @@ command prints, asks or accepts.
 * `--help` opens with the sentence the README opens with. `observe` and `hook` are no
   longer in its list of commands; both still run.
 * `init` and `note` name the next steps the guide teaches: `demo`, `note`, `keep`. An
-  `init` that fails before the node has a key takes away what it created.
+  `init` that fails before the node has a key takes away what it created, and puts
+  back a configuration file that was there. One `init` runs for a home at a time: a
+  second one is refused while the first is running. `init --help` gives the keystore
+  default for macOS and Linux.
 * `setup` without confirmation windows (on Linux, or with `--no-dialogs`) ends with
   what works from the terminal, and no longer suggests prompts for the agent. For a
   node that is already there it names the keystore and warns about a plaintext one.
   `setup --json` has `agent_can_ask` and `keystore`. On a machine that cannot show a
   window, a refused tool no longer points to `peerharness setup`: it names
-  [docs/terminal.md](docs/terminal.md). The install script says the same on Linux.
+  [docs/terminal.md](docs/terminal.md). The install script says the same on Linux. On
+  such a machine, a node whose settings allow windows is told which tools still run
+  and that `peerharness setup --no-dialogs` turns them off.
 * A rule that waits for your confirmation is printed the same way by every command,
   with the reason in words and the command that confirms it. `circle mode ask` no
   longer lists rules that are installed. `circle mode --json` has `waiting`.
@@ -99,7 +141,12 @@ command prints, asks or accepts.
   loopback only no longer says that it announces. A key that cannot be unlocked is
   reported once.
 * `reset` also lists the registration of the tools with Claude Code, with the command
-  that removes it, and the binary.
+  that removes it, and the binary. Before it deletes the node it says that `skills
+  uninstall` and `rule opt-out` need the node. Afterwards it lists the folders of the
+  skills that are still installed, to delete by hand (`installed_skill_folders_left`
+  in `reset --json`).
+* The help of `proposal adopt --accept-risk` and of `proposal release --yes` says that
+  each is accepted and has no effect.
 * `doctor` and `status` say when the binary is a debug build, which obeys the
   stand-ins the tests use. `status --json` has `debug_build`.
 * `demo/two-peers.sh` runs the binary named by `PEERHARNESS_BIN` and builds nothing
@@ -120,7 +167,9 @@ command prints, asks or accepts.
   PeerHarness's own guard. A rule with such a finding is decided in a terminal.
 
 Not decided: what a revocation does to ballots that were already counted (ADR-044).
-The behaviour is unchanged and is under Known limits in the README.
+The behaviour is unchanged and is under Known limits in the README. No way back is
+tested for a node that an import left on an old charter after a revocation.
+`peerharness reset` is not one: it deletes the device key that is on the roll.
 
 Protocol `0.1` and database schema 4, as in 0.3.0.
 

@@ -31,15 +31,16 @@ older minor versions.
 **Please report vulnerabilities privately. Do not put the details of a vulnerability in
 a public issue, pull request or discussion.**
 
-Use GitHub's private vulnerability reporting: open the repository's **Security** tab and
-choose **Report a vulnerability**
-(<https://github.com/aryehlev/peerharness/security/advisories/new>). This creates a
-private advisory visible only to you and the maintainers.
+Open an issue that says only that you have a security report and asks for a private
+contact. Give no details in it: no description, no affected command and no steps to
+reproduce. Wait for an answer there that gives a private contact, and send the details
+through that.
 
-If that form is not available to you, open an issue that says only that you have a
-security report and asks for a private contact. Give no details in it: no description,
-no affected command and no steps to reproduce. We will answer there with a way to
-reach us privately.
+When the repository's **Security** tab offers **Report a vulnerability**
+(<https://github.com/aryehlev/peerharness/security/advisories/new>), use that form
+instead of an issue. It creates a private advisory visible only to you and the
+maintainers. The form is a setting of the repository and was not switched on when
+this was written (2026-11-11).
 
 Please include:
 

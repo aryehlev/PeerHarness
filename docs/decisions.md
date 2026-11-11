@@ -958,14 +958,16 @@ amendment by the title its proposer wrote and by `amend the charter (N members)`
 launch audit of 0.4.0 (findings sec-1, sec-3, consent-5 and consent-6) reproduced what
 follows from that. An amendment titled "Admit dave" that also replaced another member's
 device key was approved by one honest member of three. So was one whose `carried` list
-named an `adopt` proposal nobody had voted on, which went round the refusal to approve
-a rule whose text is not on the node. With stock commands and nobody attacking, an
+named an `adopt` proposal nobody had voted on, which went round the refusal to approve a
+rule whose text is not on the node. With stock commands and nobody attacking, an
 admission left open while a rule passed dropped that rule when the last voter approved
 the admission, and that voter was told a count in `proposal show` and nothing in the
 ballot. `proposal create` never ran the scanner, so a rule with a high-risk finding was
 put to its proposer in a window. A `--rationale` with line breaks, which the session
 chooses, put a second "The rule, exactly as proposed" block above the real one in the
-vote window.
+vote window. The report of that audit is not in the repository: the finding ids in this
+entry and in ADR-042 to ADR-045 are the report's own, and what these entries say it
+found is all that is published of it.
 
 **Decision.** Five changes to what a person is shown before they sign, all in
 `apps/peerharness`. Nothing about what passes changed.
@@ -995,11 +997,11 @@ vote window.
   proposal can, so the refusal that held for an `adopt` ballot holds for it. `reject`
   and `revise` approve nothing and are never refused for this.
 * **The scanner runs when a rule is proposed.** `proposal create` shows the findings
-  after the rule text, in the lines a ballot and an install use. With a high-risk
-  finding it goes through `consent::confirm`, which asks in the terminal only: inside a
-  session it is refused, with windows on or off. "A rule with a high-risk finding is
-  never decided in a window" (ADR-033) now holds for all four window steps about a
-  rule: proposing, voting, installing and keeping.
+  after the rule text, in the lines a ballot in a window and an install use. With a
+  high-risk finding it goes through `consent::confirm`, which asks in the terminal only:
+  inside a session it is refused, with windows on or off. "A rule with a high-risk
+  finding is never decided in a window" (ADR-033) now holds for all four window steps
+  about a rule: proposing, voting, installing and keeping.
 * **A rationale is one line.** `proposal vote --rationale` signs one line of at most
   200 characters, the length of a title, without control characters, line and paragraph
   separators, bidirectional controls or zero-width characters, and runs of spaces
@@ -1014,11 +1016,15 @@ No signed bytes, wire type, schema or vector changed, and no existing test did.
 `proposal show --json` gained an `amendment` object. The text of `proposal show`
 changed shape for amendments, dissent, summaries and opt-out reasons.
 
-**Costs.** A node that lacks a proposal its own current charter carries sees an honest
-amendment as carrying a proposal it does not hold, and cannot approve until it has
-synced. The mark is per line of text, not per row of a terminal: one very long line
-wraps, and its continuation rows carry no mark. Wrapping member text by hand was
-rejected, because the rule text would no longer be shown exactly as proposed.
+**Costs.** A node that lacks a proposal its own current charter carries can approve no
+amendment under that charter. An honest amendment that keeps the rule is refused as
+carrying a rule proposal the node does not hold, and one that leaves it out is refused
+as described under "After a review" below. A sync ends that state only for a member
+whose scopes cover the rule. A member whose scopes do not is in it after every sync,
+until they import the events file of a member who holds the rule. The mark is per line
+of text, not per row of a terminal: one very long line wraps, and its continuation rows
+carry no mark. Wrapping member text by hand was rejected, because the rule text would no
+longer be shown exactly as proposed.
 
 **Not done.** What passes is unchanged. An amendment that reaches its threshold still
 makes the rule set exactly its `carried` list on every node, the founder's node still
@@ -1036,9 +1042,69 @@ had, which has the proposer's title in its second line above "What this amendmen
 changes, and nothing else:". Rule text is still printed without a mark in the previews
 of `proposal create`, `proposal vote` on an `adopt` proposal, `proposal adopt` and
 `keep`. `proposal list` and `inbox` still list an amendment by its title, and a repeal
-ballot still names its target by the proposer's title and a short id. The MCP server's
-own check still accepts a rationale of up to 2000 characters; the command it runs
-refuses a longer one than 200. `question answer --rationale` is unchanged.
+ballot still names its target by the proposer's title and a short id. `question answer
+--rationale` is unchanged. A ballot on a rule in a terminal shows the proposal's title
+and neither the rule's text nor a finding: `proposal show` prints the text, the number
+of findings and whether one is high-risk, not the findings. Printing them in the
+terminal ballot would change a consent preview and was left as a decision.
+
+**After a review of these changes.** A review of the changes above found cases they
+did not cover. What was changed for them, still in `apps/peerharness` only and with no
+signed byte, wire type or schema touched:
+
+* **A rule the node does not hold is said, and blocks the approval.** The rules were
+  compared only with what is in force on the voter's node. A proposal the charter in
+  force carries that the node does not hold (a join from an incomplete file, a rule
+  in a scope the node is not sent) is not among them, so an amendment that left it
+  out read "the rules in force stay as they are", in a window too. Such a proposal
+  (`RuleSet::missing_carried`) is now listed as dropped when `next.carried` leaves it
+  out: "a rule the charter in force carries, which this node does not hold, goes out
+  of force", with the proposal id and the words that this node cannot say which rule
+  that is. `Changes::unread` returns `Unread::Dropped` for it, so `approve` is refused
+  with `--yes` too, and `proposal::sole_admission` is `None` while the node lacks a
+  carried rule, so no such ballot is put in a window. `reject` and `revise` stay
+  possible. In the JSON, `rules_in_force.dropped[].skill_name` can be null.
+* **A node that lacks a carried rule drafts no amendment.** `circle invite`, `remove`,
+  `amend` and `device` fill `carried` from the rules in force on the node that drafts.
+  On a node that lacks a carried rule the draft left it out, under a preview that said
+  nothing about rules, and with enough approvals from nodes in the same state the rule
+  went out of force for everyone. The four commands are now refused there (exit 3,
+  before any preview or window), with the number of rules the node lacks and the way
+  out: import the events file of a member who holds them. `circle leave` is not
+  refused, because leaving never waits (`AGENTS.md`). It changes the machine first as
+  before, and the removal it puts to the vote adds the missing ids to `carried`, so
+  that it changes the roll and nothing else. The cost: a member whose scopes do not
+  cover a carried rule can draft a change to the charter only after such an import.
+* **A second proposal under the name of a rule in force is described by its
+  outcome.** One rule per name is in force, the later proposal (architecture 10.7).
+  An amendment that keeps a rule and also lists another proposal of its name was
+  described as "comes into force without a vote of its own", with nothing said about
+  the rule in force. If the listed proposal is the later one, the ballot now says that
+  the rule "gets another text without a vote of its own" and that the one in force
+  goes out of force, and shows the text. If it is the earlier one, the ballot says
+  that the rule in force "is the later one and stays as it is" and announces nothing
+  (`amendment::SameName`; `replaces` and `stays_behind` in the JSON).
+* **`proposal show` prints a rule's text behind the mark**, as `AGENTS.md` says it
+  does. The previews named under "Not done" are unchanged.
+* **A rationale is also refused for what shows as nothing.** Blanks that are not
+  spaces (U+2800, U+FFF9 to U+FFFB, U+1D159, U+1D173 to U+1D17A) and every character
+  the preview would rewrite (the soft hyphen and the Hangul fillers among them) are
+  refused with the same usage error, since padding with them could lay out a window
+  that wraps. Emoji variation selectors are let through. The `vote` tool of
+  `peerharness mcp` now checks its `rationale` against the same 200 characters.
+
+A limit that stays: a rule that passed under the current charter in a scope the node
+cannot read is neither in force on that node nor among what its charter carries. An
+amendment that leaves it out is described there as dropping nothing, and neither the
+approval nor a draft is refused. Closing that needs a decision about what a member
+with limited scopes is sent, which is the read rule (architecture 10.10), and was not
+made here.
+
+The node that lacks a carried rule is tested through the binary
+(`apps/peerharness/tests/amendment_ballots.rs`), with the amendment signed with a
+member's key as a modified client signs it. The two outcomes of a second proposal
+under one name are unit tests only, because such an amendment needs a hand-signed
+`carried` list.
 
 ## ADR-042: A vote never replaces a skill it did not install, the name of PeerHarness's own skill is reserved, and more steps are refused inside a session
 ADR-023 recorded the installs made because a rule passed in `rule_installs`, so that a
@@ -1133,6 +1199,52 @@ reads the two variables and no others, so all of this remains a guard against
 accidents, as ADR-022 says. Not checked by any test: the prompt of `rule opt-in` on a
 real terminal, which the tests answer with `--yes`.
 
+**After a review of these changes.**
+
+* **A yes counts for the proposal that was shown.** `rule opt-in` and `proposal adopt`
+  showed a rule's text, asked, and then confirmed the install by the rule's name. The
+  rules are read again after the answer, so a newer proposal of the same name that a
+  sync or an import stored while the prompt or the window waited was installed on
+  that yes: a text nobody was shown, a high-risk one included. The confirmation is
+  now the id of the proposal that was shown (`governance::Owner::confirmed`,
+  `settle`), which signs the name, the digest of the text and the scope, and
+  `apply_rules` counts it for that proposal only. A rule that took the name meanwhile
+  is treated as unconfirmed and asks for itself. `rule opt-in` also looks again
+  before it clears the opt-out and refuses when the rule changed ("nothing was
+  changed, and your opt-out stands"), and `proposal adopt` says that the rule changed
+  while it was being confirmed (`changed_while_confirming` in its JSON). A name was
+  considered as what the confirmation carries and rejected: the id is what was signed.
+* **The way out of a hold works where it is named.** `skills uninstall` refused a skill
+  that is a rule in force before it looked at `--allow-modified`, so the owner's own
+  edited copy of the rule's text, which holds the rule, could not be taken out as the
+  hint said. That refusal no longer applies to a skill that is itself why the rule is
+  held. A rule that a vote installed and the owner follows is refused as before. For
+  a rule that is held when its owner opts back in, the hint names `rule opt-in` as the
+  second step, because `proposal adopt` does not install an opted-out rule. The skill
+  in the way can be another circle's rule, so the hint says "the one that is there"
+  where it said "yours".
+* **A session is told whose choice it is, and not the way out.** The hint is read by the
+  agent too: in the refusal of `proposal adopt`, in `rule list` and after every command
+  that settles, an import and the MCP tools included. `skills uninstall` asks nobody,
+  and after it the next settle installs the circle's text. Inside a session the text now
+  says that which of the two this machine follows is the owner's choice, and to take
+  nothing out. The only command it names is `rule list`, which changes nothing. `skills
+  uninstall` itself is still not gated inside a session: that stays under "Not done",
+  and whether a session may run it is not decided here.
+* **Reported once.** One exchange settles a circle twice, and a daemon printed a
+  peer's report whenever its changes were not empty, which a hold made true on every
+  tick. A rule that is held or waits is reported once per exchange, and a hold alone
+  is no news: `rule list` shows it at any time. `sync --json` no longer lists a held
+  rule twice. The `Debug` of the report's changes prints the number of held rules and
+  not the names of their circles.
+
+Not checked for these: the race of `rule opt-in` at a real prompt, which needs a
+terminal and a second process (a unit test covers where the confirmation is counted,
+and a stand-in window that imports the newer rule before it answers covers `proposal
+adopt`, in debug builds). A hold caused by another circle's rule was reasoned from the
+code and not followed through the binary. The report of a hold was not run with a
+daemon over QUIC.
+
 ## ADR-043: A record from a file is parsed like a frame from the wire, a join from a file chooses the circle before the charter, and two more high-risk scanner rules
 ADR-019 and ADR-025 say the carrier is not trusted because every line is verified by
 `ingest`. That held for the event and not for the line. `import_lines` and the charter
@@ -1212,19 +1324,26 @@ both misses and matches too much.
 
 **Costs.** A file written by other software with duplicate keys, floats, extra members
 or nulls is refused line by line, with a count and no reason code. A rule text whose
-JSON-escaped form is over 1 MiB cannot travel as a file or directory record. Someone
-who can write to a shared directory can make a join without `--expect-fingerprint`
-stop with the usage error, by adding a second circle; the answer is the fingerprint.
-The scanner rules have false positives, which put a harmless rule before its owner in
-a terminal instead of a window. The scanner does not read negation, so "Never pass
---yes to peerharness" is found like an instruction. They certainly have false
-negatives: the same instruction in other words, a URL without a scheme or `www.`, or
-"the link in the README" has no finding. No corpus of real rules exists to measure
-either against.
+JSON-escaped form is over 1 MiB cannot travel as a file or directory record. Someone who
+can write to a shared directory can make a join without `--expect-fingerprint` stop with
+the usage error, by adding a second circle; the answer is the fingerprint. The scanner
+rules have false positives, which put a harmless rule before its owner in a terminal
+instead of a window. The scanner does not read negation, so "Never pass --yes to
+peerharness" is found like an instruction. `remote-instructions` also matches when the
+instruction to follow names something local, as in "Download the fixtures from
+https://example.dev/fixtures.tgz, then follow the steps in CONTRIBUTING.md." A review
+asked for that case to be left out, and it was not: narrowing a high-risk rule widens
+what a window may decide, and each narrower pattern that was worked through also let
+through a text that fetches a file and then follows it under its local name. They
+certainly have false negatives: the same instruction in other words, a URL without a
+scheme or `www.`, or "the link in the README" has no finding. No corpus of real rules
+exists to measure either against.
 
 **Not done.** A reason code for a line that is refused before `ingest`. Telling two
-root keys with the same 80-bit fingerprint apart. Showing findings that are not
-high-risk in the `keep` window. The join from a member's node still picks the newest
+root keys with the same 80-bit fingerprint apart. (Showing findings that are not
+high-risk in the `keep` window was on this list. It was done after a review: `keep`
+shows them in the terminal and in its window, and without a finding its window reads
+byte for byte as before.) The join from a member's node still picks the newest
 charter in an offer and then requires it to be the offered circle's, so a node that
 mixes in a foreign charter spoils its own offer and nothing else. The residual risk of
 security-model 4.10 is unchanged: a majority can put instructions into every following
@@ -1261,8 +1380,35 @@ repeated both.
   revocation before it has accepted a charter whose justifying RESULT the revoked
   device signed, or whose listed ballots it cast, cannot accept that charter or any
   later one. The verifier saw it in 3 of 6 imports of an exported file and in 6 of 6
-  syncs of a shared directory. Importing again changed nothing, and the way out was
-  `reset` and joining again. Nobody ran it over QUIC.
+  syncs of a shared directory. Importing again changed nothing. Nobody ran it over
+  QUIC. The audit named `reset` and joining again as the way out, and nobody ran that
+  either.
+
+**No way out is tested, and `reset` is not one.** It was run afterwards, by hand: in a
+review of these entries, and again on 2026-11-11 with a debug build of this tree,
+encrypted-file keystores and a shared directory. The circle was the founder, bob and
+carol at charter 3. The admission of dave passed with the founder's and bob's
+approval, and the founder's node issued charter 4. The founder then revoked bob's
+device. Carol's node had not synced since charter 3. It synced the directory and
+stayed on charter 3, and a second sync changed nothing.
+
+* `reset --confirm` deleted carol's device key. After `init` her node had a new key,
+  and `circle join` from the directory and from a fresh export was refused: "that
+  file holds no charter with this device on its roll".
+* `circle device add` for the new key, on the founder's node, stood at 1 of 4 with 3
+  needed. Dave's approval makes 2. Bob's device is revoked and carol's old key is
+  gone, so no third approval can be counted, for this amendment or for any other
+  proposal in that circle. Before the reset carol still held a key that is on the
+  roll.
+* On a copy of carol's stranded home, deleting only `peerharness.db`, then `init`
+  (which adopted the key that was still in the keystore) and `circle join` from the
+  fresh export, joined at charter 4 with the same device key. Her approval then
+  counted: an admission passed with 3 of 4, and the founder's node issued charter 5.
+
+The last of these is an observation, not a supported path. It was seen with the file
+keystore only. The notes, the library and every other circle on the node go with the
+database, and each circle has to be joined again. It has no test, and it was not
+tried with the OS keychain or over QUIC.
 
 **What it contradicts.** ADR-013 says "passed" is monotonic. `AGENTS.md` says an
 approval is never withdrawn and "passed" never reverts, and that counting, result
@@ -1324,7 +1470,14 @@ nothing. `init` and `note` named next steps the guide no longer teaches. A faile
   setup`), a machine that cannot show a window (the step is typed in a terminal, and
   the answer names `docs/terminal.md` and not `setup`), and a window that the owner has
   not allowed (run `peerharness setup`). The install script says the same on Linux.
-  Which tool runs at which level (`config::Asked`) is unchanged.
+  Which tool runs at which level (`config::Asked`) is unchanged. The closing lines
+  follow that level as well. On a machine that can show no window, a node whose
+  settings allow windows (a home that came from a machine with one) still runs the
+  tools that need none: the status and the inbox, and with the steps about a circle
+  allowed also founding a circle, the exchange over the public network and the
+  daemon. `setup` first ended with "That is all it does" there, which a review found
+  to be false. It now says that a step that would ask in a window is refused on this
+  machine, lists what still runs, and names `peerharness setup --no-dialogs`.
 * **`circle invite --role`, `--addr` and `--ttl-hours` are removed**, not hidden and
   not refused with a message of their own. An admission is an amendment that is voted
   on. It has no role and no expiry, and an option that looks like a security control
@@ -1332,9 +1485,14 @@ nothing. `init` and `note` named next steps the guide no longer teaches. A faile
   not released. Nothing in the repository passed them.
 * **`observe` and `hook` are hidden from `--help`, not removed.** The hooks installed
   in users' settings call `hook`, and tests use `observe`.
-* **An error names no circle**, the one the owner typed included (`AGENTS.md`: circle
-  names never appear in error strings). `find_circle` names `peerharness status`, which
-  lists them, and says how a joined circle is called.
+* **The error for a circle that is not on the node names no circle**, the one the
+  owner typed included (`AGENTS.md`: circle names never appear in error strings).
+  `find_circle` names `peerharness status`, which lists them, and says how a joined
+  circle is called. Only that message was changed. Four others still put the circle's
+  local name, which the owner typed, into an error: "no rule named … is in force in
+  …" of `rule opt-out --announce` and of `rule repeal`, "only the node that founded …
+  holds its root key" of `circle revoke`, and "… is a rule in force in …" of `skills
+  uninstall`. They are older than this change and were left as they are.
 * **A rule that is in place is not waiting.** `apply_rules` reports a rule as waiting
   for its owner only when it is not installed with the voted text. `circle mode ask`
   listed every installed rule as waiting, with a reason code and a literal `<id>`.
@@ -1345,6 +1503,20 @@ nothing. `init` and `note` named next steps the guide no longer teaches. A faile
   they are empty. Once any key is in the keystore nothing is removed, because the next
   `init` adopts that key and needs the configuration file to know which keystore holds
   it. Nothing is ever deleted from a keystore by this.
+* **One `init` per home at a time.** A review found what the bullet above left open.
+  What was there was recorded at the start and acted on later, so an `init` that
+  waited at its passphrase prompt and then failed removed the configuration file and
+  the database that a second `init` had created in the same home meanwhile. `init` now
+  holds an exclusive lock on the home directory itself while it runs (Unix), and a
+  second one is refused: "another `peerharness init` is running for this home: finish
+  or stop it first". What is missing is looked at under the lock, and only "not found"
+  counts as missing. Where the lock cannot be had (a file system without locks, or not
+  Unix), a failed run removes nothing. Nothing is removed either once the database
+  holds an identity. A configuration file that was there and that the failed run
+  rewrote gets its bytes back, with mode 0600. Two inits started together no longer
+  both report success: one makes the node and the other is refused. A lock file was
+  not used, so that nothing is left behind. Not checked: macOS, where the keychain
+  asks in place of the prompt, and a file system without locks.
 * **A debug build says that it is one and refuses nothing.** `doctor` and `status` have
   a line for it. A debug build obeys the `PEERHARNESS_TEST_*` stand-ins, and the test
   suite and the demo script run debug builds, so a refusal was not an option. The line
@@ -1357,19 +1529,27 @@ nothing. `init` and `note` named next steps the guide no longer teaches. A faile
   of `init`.
 * **`reset` names Claude Code's command for removing the tools and does not run it.**
   PeerHarness does not read or edit an agent's MCP configuration (ADR-038, ADR-039), so
-  the line is printed whether or not there is a registration.
+  the line is printed whether or not there is a registration. The commands that take
+  an installed skill out (`skills uninstall`, `rule opt-out`) need the node. They are
+  named before the reset, with the words that both have to be run first. After it the
+  report lists the folders of the skills that are still installed, to delete by hand
+  (`installed_skill_folders_left` in the JSON). It first repeated the two commands
+  there, for a node that no longer existed.
 
 Also in this change: `--help` opens with the sentence the README opens with;
 `daemon --notify` off macOS says that the daemon runs without it; `daemon --lan` on
 loopback only no longer says that it announces; an unlock failure is said once;
 `demo/two-peers.sh` runs the binary named by `PEERHARNESS_BIN` and builds nothing then.
 
-**Not done.** `proposal adopt --accept-risk` and `proposal release --yes` are parsed
-and never read. Whether `proposal adopt` should require `--accept-risk` for a high-risk
-rule, as `skills install` does, is a decision and was left open. `circle invite` still
-writes its events file into the current directory when the admission passes outside a
-session. A joiner's circle is still called `circle-<fingerprint>` unless they pass
-`--name`, and there is no command to rename it. A rule that cannot be installed is
-still printed with a reason code. Nothing here was run on macOS: the window and
-notification paths are unchanged there, and the install script's test asserts the
+**Not done.** `proposal adopt --accept-risk` and `proposal release --yes` are parsed and
+never read. Their help now says so ("Accepted and has no effect today", "Accepted and
+has no effect: this command asks nothing"), and both are still accepted. Whether
+`proposal adopt` should require `--accept-risk` for a high-risk rule, as `skills
+install` does, is a decision and was left open. The help of `init --keystore` gives the
+default for macOS and Linux and no longer names Windows, which is not supported. `circle
+invite` still writes its events file into the current directory when the admission
+passes outside a session. A joiner's circle is still called `circle-<fingerprint>`
+unless they pass `--name`, and there is no command to rename it. A rule that cannot be
+installed is still printed with a reason code. Nothing here was run on macOS: the window
+and notification paths are unchanged there, and the install script's test asserts the
 macOS lines only where it runs.

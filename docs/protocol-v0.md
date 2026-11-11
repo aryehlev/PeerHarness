@@ -549,9 +549,10 @@ error.
   proposal B that differs in anything. There is no separate `bundle_digest` member.
 * `rationale`: 0 to 2000 code points, multi-line. The reference client is stricter
   about what it signs (non-normative): one line of at most 200 code points, without
-  control or invisible characters, because the rationale is shown inside the preview
-  its user decides on. It accepts the longer form from others and prints it line by
-  line behind a mark.
+  control characters, invisible characters, blanks that are not spaces (U+2800 and a
+  few like it) or characters its preview would rewrite, because the rationale is shown
+  inside the preview its user decides on. It accepts the longer form from others and
+  prints it line by line behind a mark.
 * Only `approve` affects the count. `reject` and `revise` are the signed record of
   dissent and of requested changes (section 14.2).
 * Reference rule: `proposal_id` names a stored PROPOSAL in the same circle with the same
@@ -2041,10 +2042,16 @@ members admitted and removed with their device fingerprints and scopes, every de
 added to or taken from a member who stays, the thresholds old and new, and by skill
 name the rules the `carried` list drops and adds, an added rule with its exact text.
 It refuses to sign an approval of an amendment that would bring into force a rule
-whose text the node does not hold, or that lists an id the node does not hold as an
-`adopt` proposal. None of this changes what a node accepts: the steps below are the
-whole rule, and a `carried` list that is not exact still becomes the rule set when
-the amendment passes.
+whose text the node does not hold, that lists an id the node does not hold as an
+`adopt` proposal, or that leaves out a proposal the current charter carries and the
+node does not hold. A node can lack such a proposal after a join from an incomplete
+file, or because the proposal's scope is one it is not sent (section 13.3). On a node
+in
+that state the reference client drafts no amendment either, since its `carried` list
+would leave the proposal out; the one exception is the request to leave, which copies
+the missing ids from the current charter's `carried` list. None of this changes what
+a node accepts: the steps below are the whole rule, and a `carried` list that is not
+exact still becomes the rule set when the amendment passes.
 
 Once the amendment has reached its threshold, the holder of the circle root key signs
 the next charter and publishes it in a CHARTER event (section 8.6).
@@ -2218,7 +2225,8 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   that learns of a revocation before it has accepted a charter justified by such a
   RESULT cannot accept that charter or any later one. In the reference implementation
   this was reproduced when importing a file or a shared directory, whose records are
-  not in the order they were made. It is a defect, to be fixed.
+  not in the order they were made. It is a defect. No fix exists; what it should be
+  depends on the decision in ADR-044.
 * **An amendment replaces the rule set.** Nothing in section 14.5 requires `carried`
   to equal the rules in force. An amendment proposed before a rule passed, or before
   a repeal passed, undoes that vote when it passes, and a `carried` entry needs no
