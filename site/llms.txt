@@ -1,6 +1,6 @@
 # PeerHarness
 
-> Your team votes on how its AI coding agents behave. You correct your coding agent in Claude Code ("no, use pnpm, not npm"), and PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it. There is no server.
+> Your team votes on how its AI coding agents behave. You correct your coding agent ("no, use pnpm, not npm"), and PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it. There is no server.
 
 What it is, in facts:
 
@@ -15,11 +15,11 @@ What it is, in facts:
 - No server and nothing to sign up for. Each person runs their own node with their own keys, and every node checks every signature and counts every vote for itself.
 - Compared with a CLAUDE.md file in git: if the rule is about one repository and the team already reviews pull requests, commit the file. PeerHarness is for rules that follow people across repositories, for groups with no shared repository, and for members who want to see the exact text they vote on and to opt out of a rule alone.
 
-To set it up, paste the prompt from the README into Claude Code. The agent installs the release binary, and the person runs `~/.local/bin/peerharness setup` once in their own terminal.
+To set it up, paste the prompt from the README into the coding agent (Claude Code, Codex, opencode, Pi, Antigravity or DeepSeek Harness). The agent installs the release binary, and the person runs `~/.local/bin/peerharness setup` once in their own terminal.
 
 ## Documents
 
-- [README](https://raw.githubusercontent.com/aryehlev/PeerHarness/main/README.md): what it does, how to set it up and how to use it in Claude Code
+- [README](https://raw.githubusercontent.com/aryehlev/PeerHarness/main/README.md): what it does, how to set it up and how to use it in a coding agent
 - [PeerHarness from a terminal](https://raw.githubusercontent.com/aryehlev/PeerHarness/main/docs/terminal.md): every step as a command, and how to take it out again
 - [Limits](https://raw.githubusercontent.com/aryehlev/PeerHarness/main/docs/limits.md): what it does not do, or not yet
 - [Security model](https://raw.githubusercontent.com/aryehlev/PeerHarness/main/docs/security-model.md): threats, guarantees and limits

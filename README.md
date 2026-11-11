@@ -25,7 +25,8 @@ you can run it yourself without an agent. See [From a terminal](#from-a-terminal
 
 ## Set it up
 
-Paste this into Claude Code:
+Paste this into your coding agent (Claude Code, Codex, opencode, Pi, Antigravity or
+DeepSeek Harness):
 
 ```text
 Set up PeerHarness for me: https://github.com/aryehlev/peerharness
@@ -36,7 +37,7 @@ Set up PeerHarness for me: https://github.com/aryehlev/peerharness
    run it yourself: it would be refused. Ask me to run this in my own terminal:
    ~/.local/bin/peerharness setup
 
-Then tell me to start a new Claude Code session, and what I can ask you there.
+Then tell me to start a new session, and what I can ask you there.
 ```
 
 * **Your agent installs it.** The install line downloads the release binary for your
@@ -44,25 +45,26 @@ Then tell me to start a new Claude Code session, and what I can ask you there.
   No `sudo`, and nothing else is changed.
 * **You run `setup`, once.** It is where you allow what your agent may start for you,
   so your agent is refused it. It creates your key and database and connects
-  PeerHarness to Claude Code: two hooks, one skill and its tools. It shows each change
-  before it makes it and asks you to confirm.
+  PeerHarness to Claude Code (two hooks, one skill and its tools) and to the other
+  agents it finds. It shows each change before it makes it and asks you to confirm.
 * **What it stores.** One hook keeps a redacted copy of each prompt you type, so that
   corrections can be noticed. The copies stay on your machine, for 14 days by default,
   in a database that is not encrypted.
 
-Then start a new Claude Code session and [try it](#try-it-in-claude-code).
+Then start a new session of your agent and [try it](#try-it-in-your-agent).
 
-**Other coding agents.** `setup` also connects Codex, opencode, Pi, Google Antigravity
-and DeepSeek Harness when it finds them, each after a preview: your rules reach the
-skills each one reads, and it gets the same tools. You can say the same things to them.
-See [other coding agents](docs/terminal.md#other-coding-agents).
+**Other coding agents.** For Codex, opencode, Pi, Google Antigravity and DeepSeek
+Harness, `setup` shows a preview and then puts your rules in the skills each one reads
+and gives it the same tools. The hooks are Claude Code's alone, so in the others a
+correction is noted only when the agent notes it. See
+[other coding agents](docs/terminal.md#other-coding-agents).
 
 More: [what setup adds and stores](docs/terminal.md#what-setup-adds-and-what-is-stored)
 and [how to take it out again](docs/terminal.md#take-it-out-again).
 
-## Try it in Claude Code
+## Try it in your agent
 
-Start a new Claude Code session and say these, one at a time. You need no teammate
+Start a new session of your agent and say these, one at a time. You need no teammate
 for it.
 
 1. **"From now on, use pnpm here, not npm."** Your agent notes the rule ("Use pnpm,
