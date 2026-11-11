@@ -446,8 +446,9 @@ unlocked. It is signed the next time this circle is settled with the key unlocke
 behaves the same. `rule opt-in` installs what you confirmed in the same order. In
 `--json` the three have `device_key_locked`. Bringing your skills in line this way
 can also install another rule that passed on your node, in mode `follow`, before its
-result is signed. The text of the command does not name that rule; `--json` lists it
-under `installed`, and `peerharness rule list` shows it.
+result is signed. The command says so ("installed rule <name> for your agent"), as it
+says "removed rule <name>" for another rule that went in the same run; `--json` lists
+them under `installed` and `removed`.
 
 Your yes counts for the rule you were shown and for no other rule of that name. If a
 sync or an import stored a newer proposal of the same name while you read, `rule
@@ -572,21 +573,23 @@ a vote installed was edited on this machine and was left in place. `peerharness
 skills uninstall <name> --allow-modified` takes it out." For a copy in a project the
 command it names is `peerharness skills uninstall <name> --scope project
 --allow-modified`, run in that directory. From then on the copy is yours: it is not
-named again, and no vote removes it. Two cases name no command:
+named again, and no vote removes it. Two cases name no command that takes it out:
 
 * You moved the rule's scope from your user directory to a project and still follow
   the rule. `skills uninstall` refuses the edited copy in your user directory like
   every other copy of that text there, and the line says so: "You still follow a
-  rule with this text, and while you do `peerharness skills uninstall <name>`
-  refuses this copy as well and names the opt-out."
+  rule with this text, and while you do `peerharness skills uninstall <name> --scope
+  user` refuses this copy as well and names the opt-out."
 * Inside a coding agent's session the line says that the choice is yours, made in
   your own terminal, and tells the agent to take nothing out.
 
 In `--json` the names are in `kept_edited_rules` beside `not_removed_rules` (`circle
 leave`, `remove`, `amend`, `device`) and in `kept_edited` beside `not_removed`
-(`events import`, `sync`, `rule opt-out`, `rule opt-in`). `rule opt-in` prints
-neither line in its text: there the names are in `--json` only. The preview of `circle
-leave` still says that the rules the circle installed are removed. An edited copy is
+(`events import`, `sync`, `rule opt-out`, `rule opt-in`), and `circle mode`, `circle
+leave --undo` and `circle invite` have `kept_edited_rules` and `not_removed_rules`
+too. Every command that brings your skills in line prints both lines, these among
+them: the one run that finds an edited copy is the one that names it. The preview of
+`circle leave` still says that the rules the circle installed are removed. An edited copy is
 the exception, and the report names it. After `circle leave`, `rule list` shows that
 rule as `held` by your edited copy and names `proposal adopt`, which is not for a
 circle you left.
@@ -653,8 +656,9 @@ that no request was made. If you are off the roll by then, or your request is on
 record, it says so and signs nothing, and where your approval is not on that
 proposal it names the command that gives it. With a request on record it says
 "Nothing was changed and nothing was signed.", or "Nothing else was changed, and
-nothing was signed." when a rule was removed. In `--json` every second run has
-`removed_rules`, `not_removed_rules` and `kept_edited_rules`. A member whose node
+nothing was signed." when a rule was removed. In `--json` every second run that ends
+with a report has `removed_rules`, `not_removed_rules` and `kept_edited_rules`; one
+that ends in an error printed its lines on standard error before that. A member whose node
 holds the circle's rules can also propose your removal for you: `peerharness circle
 remove <you> --circle team`.
 

@@ -20,8 +20,8 @@ database schema it writes.
 
 A check of 0.4.0 before any tag found defects, and the changes below fix some of them
 (ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). A review of those fixes
-found more, and so did a second, a third and a fourth review. What was changed for
-them is in the same lists. Several change what a command prints, asks or accepts.
+found more, and so did a second, a third and a fourth review. A fifth found three
+things that a command did not say. What was changed for them is in the same lists. Several change what a command prints, asks or accepts.
 
 **What a voter is shown**
 
@@ -131,8 +131,8 @@ them is in the same lists. Several change what a command prints, asks or accepts
   `proposal_refused`, `off_the_roll` or `request_on_record`), also on the first run
   of a member who is already off the roll, which uses no key. With
   `request_on_record` it has the `proposal_id` and the count of the request on
-  record. A second run has `removed_rules`, `not_removed_rules` and
-  `kept_edited_rules` like the first.
+  record. A second run that ends with a report has `removed_rules`,
+  `not_removed_rules` and `kept_edited_rules` like the first.
 * `circle leave --undo` says in its preview whether a request to take you off the
   roll is on record, and names it. It no longer says that one stays on record when
   none was made.
@@ -218,7 +218,14 @@ them is in the same lists. Several change what a command prints, asks or accepts
   user directory, the line says that `skills uninstall` refuses it, and inside a
   coding agent's session it names no command. The JSON has `kept_edited_rules`
   beside `not_removed_rules` and `kept_edited` beside `not_removed`. The copy is
-  yours from then on.
+  yours from then on. `circle mode`, `circle leave --undo`, `rule opt-in` and the
+  commands that propose a change to the charter print these lines too: each can be
+  the first command to bring your skills in line after a vote, and an edited copy is
+  named by that run or by none.
+* `rule opt-out`, `proposal refuse` and `rule opt-in` say what else the same run did
+  to your skills: "installed rule <name> for your agent" for a rule that passed since
+  your node last settled the circle (in mode `follow`), and "removed rule <name>" for
+  one that went.
 * Your yes to `rule opt-in` and to `proposal adopt` counts for the rule you were shown
   and for no other rule of that name. If a newer proposal took the name while you
   read, `rule opt-in` changes nothing and leaves your opt-out in place, and `proposal

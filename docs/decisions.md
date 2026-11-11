@@ -1508,8 +1508,9 @@ schema touched.
   `follow`, an opt-out on such a node therefore also installs the rule that passed
   there, before its RESULT is signed. Whether a rule passed is decided by the count
   on the node, as everywhere, and with a key that unlocked the old code installed
-  that rule in the same command too. The text of `rule opt-out` does not name such a
-  rule: its JSON lists it under `installed`.
+  that rule in the same command too. The text of `rule opt-out` did not name such a
+  rule: its JSON listed it under `installed`. (It names it since the fifth review:
+  ADR-042, "After a fifth review".)
 * **An announcement that cannot be signed says what was done on the machine.**
   `rule opt-out --announce` and `rule opt-in --announce` change the machine before
   they sign the stance. With a key that did not unlock they ended with the key error
@@ -1546,8 +1547,9 @@ schema touched.
   could not be removed, or the line for a copy that was edited (ADR-042, "After a
   fourth review"). Then it does what it did about the request. Where a rule went
   and a request is on record, it says "Nothing else was changed, and nothing was
-  signed." in place of the sentence above. The JSON of every second run has
-  `removed_rules`, `not_removed_rules` and `kept_edited_rules`. Inside a session the
+  signed." in place of the sentence above. The JSON of every second run that ends
+  with a report has `removed_rules`, `not_removed_rules` and `kept_edited_rules`; a
+  run that ends in an error printed its lines on standard error. Inside a session the
   second run is
   refused as before, and before anything is removed: the first run changes nothing
   in a session either, because its confirmation refuses there before the circle is
@@ -2049,7 +2051,9 @@ old outcome, and three smaller things.
   `skills uninstall` refuses every copy with the text of a rule its owner follows,
   the edited one included. The line then says so: "You still follow a rule with
   this text, and while you do `peerharness skills uninstall <name>` refuses this
-  copy as well and names the opt-out." What took that copy out in a run by hand was
+  copy as well and names the opt-out." (The command is quoted with `--scope user`
+  since the fifth review: without a scope it asks which one is meant.) What took
+  that copy out in a run by hand was
   `rule opt-out`, then `skills uninstall <name> --scope user --allow-modified`, then
   `rule opt-in`. In the other states the named command was run and exited 0: after
   `circle leave`, a repeal and an opt-out, and for a copy in a project whose rule
@@ -2141,7 +2145,8 @@ the owner on it.
   rule but the one it was run for: its JSON has `not_removed` and `kept_edited`. An
   edited copy that its settle leaves in place is therefore named in `--json` only,
   and by no later command, because its record is cleared. This was read in the code
-  and not run.
+  and not run. (The fifth review ran it, found the same in `circle mode` and `circle
+  leave --undo`, and it was changed: "After a fifth review", below.)
 * A batch that finds the queue full is still dropped. A hold, a waiting rule and a
   skill that could not be removed come again with the next settle of the circle. An
   "installed rule", "removed rule" or "issued charter" line of a dropped batch is
@@ -2151,6 +2156,53 @@ the owner on it.
   from both paths: once for the push, and with each report of its own exchange.
 * Daemons started with `--lan` or `--internet`, and the one the MCP tool starts,
   were not run for this.
+
+Nothing was run on macOS.
+
+**After a fifth review.** Two reviews of the changes under "After a fourth review",
+one of the code and one of the documents, ran each of them through the binary again,
+with the key that does not unlock, at a real prompt on a pseudo-terminal, with files
+made unchangeable and with daemons that only answer. Neither found a case in which
+something was signed, installed or removed that its owner had not been shown, and
+the suite passed in both. They found three things that a command did not say.
+
+* **Every command that settles names a copy it leaves.** An edited copy is named by
+  the one run that finds it, because that run clears the record. `circle mode`,
+  `rule opt-in` and `circle leave --undo` settle the circle and printed nothing about
+  it, and `circle invite`, `remove`, `amend` and `device` had it in their JSON only.
+  The review edited a voted copy, let a repeal pass on the node through an import
+  whose key did not unlock, and ran `circle mode ask`: the command said only that
+  the mode had changed, the file stayed, the record was gone and no later command
+  named the copy. These commands now print the line for a skill that could not be
+  removed and the line for an edited copy (`Applied::left_in_place_lines`), and
+  "removed rule <name>" for a rule that went in the same run. The JSON of `circle
+  mode`, `circle leave --undo` and `circle invite` has `removed_rules`,
+  `not_removed_rules` and `kept_edited_rules`. `circle join` was not changed: a node
+  that joins holds no copy that a vote of that circle installed.
+* **An opt-out says what else it installed.** `rule opt-out`, `proposal refuse` and
+  `rule opt-in` bring the whole skills directory in line. In mode `follow` that
+  installs a rule that passed on the node since it last settled, and the text named
+  only the rule the command was run for. Since the fourth review's change this also
+  happens with a key that does not unlock. The three now print "installed rule
+  <name> for your agent" and "removed rule <name>" for every other rule the run
+  changed.
+* **The line for a moved scope quotes a command that answers as it says.** The line
+  for an edited copy in the user's directory of a rule that moved to a project
+  quoted `skills uninstall <name>`. That command asks which scope is meant, because
+  the rule's own copy is in the project by then. The line now quotes it with
+  `--scope user`, or with `--scope project` and the directory for a copy in a
+  project.
+
+Test: `a_command_that_settles_says_what_it_did_to_other_rules`
+(`apps/peerharness/tests/vote_and_own_skills.rs`), for `circle mode`, `rule opt-in`
+and `rule opt-out`; it fails on the code before the change. The review's own cases
+were run again by hand against the changed binary on Linux. `circle leave --undo`
+and the four commands that propose an amendment share the code and were not run for
+this.
+
+Not done. A second `circle leave` that ends in an error has printed what it removed
+on standard error and has no JSON report of it; the documents now say so. What the
+fourth review's parts list as not done stands.
 
 Nothing was run on macOS.
 
