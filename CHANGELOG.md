@@ -7,6 +7,18 @@ protocol ([docs/release.md](docs/release.md)). Each entry names the protocol ver
 the binary speaks ([docs/protocol-v0.md](docs/protocol-v0.md), section 15) and the
 database schema it writes.
 
+## Unreleased
+
+* Documents only. The README is shorter: what PeerHarness does, how to set it up and
+  how to use it, with a short list of limits. What it held beyond that moved without a
+  change of content: the known limits to [docs/limits.md](docs/limits.md), the summary
+  of what was tested, run by hand and never tried to
+  [docs/checked.md](docs/checked.md), and what setup adds and stores, the words and
+  the steps that take PeerHarness out again to [docs/terminal.md](docs/terminal.md).
+  Release archives pack `limits.md` as well (ADR-046).
+* `docs/checked.md` records the first run of a 0.4.0 release binary: the install
+  script with the aarch64 macOS one.
+
 ## 0.4.0 (2026-11-11)
 
 * `peerharness keep <candidate>` saves a noted rule to your library and installs it for

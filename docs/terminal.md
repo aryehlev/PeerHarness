@@ -8,9 +8,17 @@ page has the same steps as commands, and the ones that have no window.
 curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
 ```
 
-To read the script before you run it, download it first: the three lines are in the
-README under [See it run](../README.md#see-it-run). Or build from source, with Rust
-1.89 or newer:
+It downloads the release binary for your machine, checks it against the release's
+`SHA256SUMS` and puts it in `~/.local/bin`. No `sudo`, and nothing else is changed. To
+read the script before you run it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+
+Or build from source, with Rust 1.89 or newer:
 `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
 That builds whatever is on `main`; add `--tag v0.4.0` to build this release.
 `peerharness status` and `peerharness doctor` show where your node stands, and every
@@ -19,7 +27,14 @@ development and tests: it obeys the stand-in programs the tests use in place of 
 confirmation window, and `doctor` and `status` say that it is one.
 
 This page says "circle" where the README says "team": it is the word the commands
-use. The README has the other words under [Words](../README.md#words).
+use. The other words:
+
+| Word | What it is | Who gives it to whom |
+|---|---|---|
+| charter, roll | The charter is the signed document every member holds: the thresholds of the vote and the roll, the list of members with their device keys | Every node holds a copy and checks it for itself |
+| device key | Your node's public key (`ed25519:…`). It is not a secret | Whoever wants to join sends theirs to the member who invites them, by any channel |
+| peer id | Your node's name on the network (`12D3…`), made from the same key | The member who invited sends theirs to the person joining, by any channel |
+| root fingerprint | A short form of the team's root key (`8e8d-…`). It is how you know a team is the one you mean | The founder tells it to the person joining, by phone or in person, apart from the rest |
 
 ## A rule of your own
 
@@ -81,8 +96,8 @@ peerharness watch claude --remove              # take the hooks and the skill ou
 
 `watch claude --install` shows what it adds before it adds anything: two hooks and a
 small skill that asks the agent to note a rule when you correct it. One of the hooks
-keeps a redacted copy of each prompt you type, on your machine only; the README says
-[what is stored and for how long](../README.md#what-setup-adds-and-what-is-stored).
+keeps a redacted copy of each prompt you type, on your machine only:
+[what is stored and for how long](#what-setup-adds-and-what-is-stored).
 The note waits in `peerharness inbox`; approving it stays yours.
 
 With `--dialogs` your agent may ask you in a window on your screen. (The flag used to
@@ -92,7 +107,9 @@ counts there: inside its session your agent cannot answer the window, and `--yes
 not skip it there. It covers keeping a rule for yourself, proposing a rule,
 your ballot on one, installing one that passed, inviting someone, your ballot on
 admitting someone and joining a circle. Everything else, and any text too long to show
-in full, needs your own terminal. Inside an agent's session those steps are refused,
+in full, needs your own terminal: the roll of a circle of more than about five members
+does not fit a window on a laptop screen, so such a circle is joined from the terminal.
+Inside an agent's session those steps are refused,
 and so is `setup` itself. A rule with a high-risk scanner finding is never decided in
 a window: not when it is proposed, voted on, installed or kept.
 
@@ -116,8 +133,7 @@ This guards against an agent that is trying to help. It is not a sandbox: a sess
 is recognized by an environment variable (`CLAUDECODE`, which Claude Code sets, or
 `PEERHARNESS_AGENT_SESSION`), so a process running as you that hides it can run the
 same commands with `--yes`. The table under
-[Known limits](../README.md#known-limits) in the README says what is stopped and what
-is not.
+[Known limits](limits.md) says what is stopped and what is not.
 
 `peerharness mcp` gives an agent the same steps as tools. Without it the agent runs
 the commands it read in the skill. Other agents that speak MCP can use it too; only
@@ -127,6 +143,28 @@ your own terminal. Inside a session `circle join` itself reads no argument as a 
 when it is a peer id or an address, also when a file of that name exists. The tool
 that votes takes a reason of one line of at most 200 characters, the limit of
 `proposal vote`.
+
+### What setup adds, and what is stored
+
+* **Your node**: a key in your keystore (the OS keychain on macOS, an encrypted file
+  on Linux), and a database and a configuration file in `~/.peerharness`.
+* **Two hooks** in Claude Code's settings, after a backup of the file.
+  `UserPromptSubmit` keeps a redacted copy of each prompt you type, at most 4 KiB of
+  it, in `~/.peerharness`. The built-in detector reads the copies to notice
+  corrections. `Stop` stores no text; it prints the line that says how many proposals
+  or notes wait for you.
+* **One skill**, `peerharness-notes`, which asks your agent to note a rule when you
+  correct it.
+* **The tools**: the line `claude mcp add --scope user peerharness -- … mcp`, which
+  setup shows you before it runs it.
+
+The copies of your prompts stay on your machine and are never sent anywhere. Each
+expires after 14 days by default (`[retention] observation_days` in
+`~/.peerharness/config.toml`) and is deleted the next time the inbox is read. The
+database is not encrypted: it relies on file permissions and on your disk's
+encryption. To stop the recording, take the hooks out with `peerharness watch claude
+--remove`. There is no switch for the hooks alone: that command also removes the skill
+and turns the windows off.
 
 ### Without windows
 
@@ -442,7 +480,7 @@ peerharness circle revoke <member or device key> --circle team
 ```
 
 What a revocation does to results that had passed, and what can go wrong with an
-import afterwards, is under [Known limits](../README.md#known-limits) in the README.
+import afterwards, is under [Known limits](limits.md).
 Whether it should stay that way is an open decision (ADR-044 in
 [decisions.md](decisions.md)).
 
@@ -702,8 +740,38 @@ leaving is refused, the second run too, before anything on the machine is change
 
 ## Take it out again
 
-The README lists every step in order, from the installed rules to the binary:
-[Take it out again](../README.md#take-it-out-again).
+Every step, in this order. The first two need the node, so `reset` comes after them.
+
+```sh
+# 1. The rules installed for your agent.
+peerharness skills list                               # the ones you kept for yourself
+peerharness skills uninstall <name>
+peerharness rule list                                 # the ones a team's vote installed
+peerharness rule opt-out <name> --circle <team>       # one rule
+peerharness circle leave --circle <team>              # or all of that team's rules
+
+# 2. The two hooks and the skill. This also turns the windows off.
+peerharness watch claude --remove
+
+# 3. The tools.
+claude mcp remove peerharness --scope user
+
+# 4. The node: your key and your database. Without --confirm it only says what would go.
+peerharness reset
+peerharness reset --confirm
+
+# 5. The binary.
+rm ~/.local/bin/peerharness
+```
+
+`circle leave` also asks the members to take you off the roll, and signs that request
+only as its preview showed it. Where it makes no request, it says so and why, and
+running it again once the cause is gone shows the request and makes it. A team's
+only member cannot leave it: opt out of its rules one by one. `reset --confirm` cannot
+be undone, and ballots you already cast stay on the other members' nodes. A skill
+that is still installed when you reset stays where it is, and the report lists its
+folder for you to delete by hand. If you founded a team, its root key is deleted with
+your node, and nobody can be admitted to that team or removed from it afterwards.
 
 ## Try it without touching your setup
 

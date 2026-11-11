@@ -52,15 +52,16 @@ For each target, `peerharness-<tag>-<target>.tar.gz` containing:
 
 * `peerharness-<tag>-<target>/peerharness` (the binary),
 * `LICENSE-MIT`, `LICENSE-APACHE`,
-* `README.md`, `security-model.md`, `release.md` and `checked.md` when present.
+* `README.md`, `security-model.md`, `release.md`, `checked.md` and `limits.md` when
+  present.
 
 Plus one `SHA256SUMS` file covering every archive, and auto-generated release notes.
 
-The three documents sit next to the README in the archive, not in a `docs/` folder,
+The four documents sit next to the README in the archive, not in a `docs/` folder,
 and no other document is packed. So the README's links to `docs/…`, `CHANGELOG.md`,
 `SECURITY.md` and `CONTRIBUTING.md` do not resolve
-inside the archive, and neither do the links of the three documents to
-`../README.md`, `../SECURITY.md` and `decisions.md`. Every link works in the
+inside the archive, and neither do the links of the four documents to
+`../README.md`, `../SECURITY.md`, `decisions.md` and `terminal.md`. Every link works in the
 repository at the release's tag: read the documents there when you need to follow
 one.
 
@@ -143,11 +144,13 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    version being released. While that version is not released, the status block also
    says which version the install line installs and what that version does
    differently, and `docs/terminal.md` has a short note of the same before its first
-   use of `keep`. Both notes come out in this pull request. Read "What works today",
-   `docs/checked.md` and "Known limits" again against what this release contains, and
-   check each command the README shows against the binary. The README is packed into
-   every archive, so what is tagged is what people read, and `docs/checked.md` is
-   packed next to it.
+   use of `keep`. Both notes come out in this pull request. Read the README's "Limits",
+   `docs/limits.md` and `docs/checked.md` again against what this release contains,
+   and check each command the README shows against the binary. The README is packed
+   into every archive, so what is tagged is what people read, and `docs/limits.md`
+   and `docs/checked.md` are packed next to it. Keep the README to what PeerHarness
+   does and how it is used: a new limit goes into `docs/limits.md`, a new check into
+   `docs/checked.md`, and a new command into `docs/terminal.md`.
 4. Write into `CHANGELOG.md`: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`. Move its "Unreleased" entries
    under the new version in the same pull request. The workflow publishes the
@@ -164,9 +167,10 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    below before announcing the release. Then run the install script once on a clean
    machine or with `PEERHARNESS_INSTALL_DIR=$(mktemp -d)`: it only works for a
    published release of a public repository.
-7. Say what was checked on the published release, and what was not: in the README
-   ("What works today") and in `docs/checked.md` (the row about the install script
-   and the release binaries). Open that pull request right away: it is part of the
+7. Say what was checked on the published release, and what was not: in
+   `docs/checked.md` (its summary and the row about the install script and the
+   release binaries), and in the README's "Limits" where that changes what is listed
+   there as not tried. Open that pull request right away: it is part of the
    release, not a follow-up.
 8. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
    and tag again. Never replace the assets of a published release; publish a new patch

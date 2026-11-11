@@ -14,8 +14,9 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Read first
 
-* [`README.md`](README.md): what the product does today, how each part was checked,
-  and its known limits.
+* [`README.md`](README.md): what the product does today and how it is used.
+* [`docs/limits.md`](docs/limits.md) and [`docs/checked.md`](docs/checked.md): its
+  known limits, and how each part was checked.
 * [`docs/architecture.md`](docs/architecture.md): the internal contract between crates.
 * [`docs/decisions.md`](docs/decisions.md): ADRs and deviations from the specification.
 * [`docs/spec.md`](docs/spec.md): the original brief, kept for history. Its first
@@ -133,7 +134,7 @@ command output or say plainly what you did not run.
    `CHANGELOG.md`, and an ADR in `docs/decisions.md` for every decision or deviation.
 5. **Keep commits to one logical increment each.**
 6. **Say what you did not do.** Known limitations go in the pull request and, if they
-   concern users, in the README's "Known limits".
+   concern users, in [`docs/limits.md`](docs/limits.md).
 
 **Do not loosen a security requirement to finish a feature.** If a requirement cannot
 be met safely, leave the feature disabled, document the blocker, and continue with the

@@ -2829,7 +2829,7 @@ ADR-013 still state the principle.
   vectors and a protocol document update. The founder then chooses which earlier
   ballots stand, a finer power than the one the root key has today.
 
-**Until it is decided.** The behaviour is listed under Known limits in the README and
+**Until it is decided.** The behaviour is listed in `docs/limits.md` and
 in sections 4.16 and 4.20 of the security model, 10.12 of the architecture and 14.9 of
 the protocol document, which tells a second implementation not to rely on either
 answer. The test named above, and
@@ -3075,3 +3075,37 @@ repository records a decision of the owner on it.
 Nothing was run on macOS.
 (CI has since run the suite on macOS, at the head of pull request #7: ADR-041,
 "After a review of the pull request". The runs by hand were not made there.)
+
+## ADR-046: The README says what PeerHarness does and how it is used, and the rest is in `docs/`
+After the launch audit and its reviews the README had 543 lines and about 5,100
+words. Each finding that concerned users had been written into it: every known limit
+with its mechanism, how each part was checked, what setup stores, the steps that take
+it out again. The owner called the result a mess and asked for a README that says,
+concisely and clearly, what the product does and how to use it.
+
+**Decision.** The README keeps, in this order: what PeerHarness does, its status,
+setting it up, using it through an agent, a team, the demo, how a vote works, why not
+a file in git, and a short list of limits. It has 235 lines and about 1,850 words.
+What it held beyond that moved, without a change of content:
+
+* the known limits, to `docs/limits.md`, which the release archives now pack next to
+  the README;
+* the summary of what was tested, run by hand and never tried, and the last run of
+  the suite, to `docs/checked.md`;
+* what setup adds and stores, the table of words, the three lines that read the
+  install script before running it, and the steps that take PeerHarness out again,
+  to `docs/terminal.md`.
+
+The README's own list keeps what a person should know before the first run: what
+the agent guard does not stop, that a rule is text an agent acts on, that joining
+installs rules that were not shown, the founder's revocation, the open ballot, when a node
+is reachable, what internet mode shows, and what was never tried.
+
+**Rejected.** Cutting limits instead of moving them: a limit that is written nowhere
+is not stated, and the brief asks for an honest README. Folding the long lists away
+on the same page (`<details>`): the page is as long for whoever opens them, and the
+next finding is appended there again.
+
+**From now on.** A new limit goes into `docs/limits.md`, a new check into
+`docs/checked.md` and a new command into `docs/terminal.md`. The README changes when
+what the product does, or how it is used, changes (`docs/release.md`, step 3).

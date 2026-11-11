@@ -1,18 +1,49 @@
 # What was checked, and how
 
-This is the table behind [What works today](../README.md#what-works-today) in the
-README. The README has the summary and the runs of the whole suite. This page says,
-part by part, what a test covers, what was run by hand and what was never tried, and
-at its end what followed the pre-launch check.
+The [README](../README.md#limits) names what was never tried. This page has the
+summary, then the table that says, part by part, what a test covers, what was run by
+hand and what was never tried, and at its end what followed the pre-launch check and
+the runs of the whole suite.
 
 *Tested* means an automated test covers it. *By hand* means a run during development
 that [decisions.md](decisions.md), the README's history or the pre-launch check
 records, on the version named. *Not tried* means no run is recorded.
 
-The pre-launch check is the one the README names: a check of the 0.4.0 tree as it
-was before the fixes, made with AI coding agents on 2026-11-10, which [decisions.md](decisions.md) calls the launch
-audit. Its report is not in the repository. What this page and the ADRs say it ran is
+The pre-launch check is a check of the 0.4.0 tree as it was before the fixes, made
+with AI coding agents on 2026-11-10, which [decisions.md](decisions.md) calls the
+launch audit. Its report is not in the repository. What this page and the ADRs say it ran is
 all that is published of it.
+
+## In short
+
+* **Tested.** Voting, one person's loop, a circle's life and the exchange over QUIC,
+  by shared directory and by file: the tests with several nodes run them as separate
+  processes. What a ballot shows, that a change to the charter is signed only as it
+  was shown, what a vote may do to your own skills and what a session is refused.
+  Setup, the tools, the windows, the notification, internet mode and the install
+  script, each against a stand-in: for Claude Code's `claude` command, for an MCP
+  client, for the window, for the notification, for the public network and for a
+  release.
+* **By hand.** The real window on macOS 14.2, before v0.1.0: it opened, closed
+  unanswered and refused a text that does not fit. Internet mode on the real network,
+  before v0.1.0, from one machine with both ends behind the same router. The tools
+  with Claude Code 2.1.322 on macOS, before v0.2.0, in three runs. The real
+  notification on macOS, once. `--lan` worked on macOS when it was built, before
+  v0.1.0; no run of its tests is recorded. The install script with the v0.3.0 x86_64
+  Linux binary, in a container. The install script with the v0.4.0 aarch64 macOS
+  binary, on macOS 14.2 on 2026-11-11, after the release was published. On Linux,
+  with a debug build of this tree, on a pseudo-terminal: when the records of a rule
+  that passed arrive on a node while its owner answers a prompt or types a
+  passphrase, nothing is signed for a change to the charter, an approval of one, a
+  repeal or an announced opt-out.
+* **Not tried.** Clicking the buttons of the real window. The setup prompt of the
+  README through an agent. A real agent noting, keeping, proposing, voting or joining.
+  Internet mode between two different routers, over IPv6 or on Linux. `--lan` on
+  Linux. The aarch64 Linux binary. The x86_64 macOS binary since v0.2.0. Of the
+  release binaries of 0.4.0, the three that are not the aarch64 macOS one. MCP
+  clients other than Claude Code. Windows is not supported.
+
+## Part by part
 
 Where each threat of the security model is tested, test by test, is in the last
 section of [security-model.md](security-model.md#test-coverage).
@@ -27,7 +58,7 @@ section of [security-model.md](security-model.md#test-coverage).
 | A vote and the skills you already have | tested, with three separate nodes: a rule named like PeerHarness's own skill, signed the way a modified client can, is never installed, and a rule kept with `keep` is neither replaced nor removed by a vote on its name. A yes counts for the rule that was shown: a stand-in window imports a newer rule of the same name before it answers Proceed, and nothing is installed. `proposal adopt` is refused then. The way out of a hold is followed step by step in two states. With a rule held in a project, the copy a vote installed for every project cannot be taken out with `skills uninstall`, as the person or in a session. In a project, a copy a vote installed there is refused in the same way, with and without `--scope`, while a copy the owner installed in another project is theirs to remove (`a_voted_copy_in_a_project_is_not_taken_out_by_skills_uninstall`); and where the skill that holds a rule in a project is another circle's voted rule, the command the hold names is refused and names that circle, whose opt-out then lets the held rule be adopted (`the_way_out_of_a_hold_does_not_take_out_another_circles_rule_unasked`). A skill that cannot be removed keeps its record, is reported and is tried again: a unit test (`a_skill_that_cannot_be_removed_stays_on_record_and_is_tried_again`, unix), and through the binary for a copy in a project, whose skills directory the test turns into a link that leads out of the project (`leaving_names_what_it_left_in_place_and_a_second_run_tries_again`); by hand on Linux with a file made unchangeable (`chattr +i`) while its owner left the circle. When the owner takes such a leftover out with `skills uninstall`, the vote's record goes with it, and the same text installed by the owner afterwards survives the next import, after a repeal and after an opt-out (`a_record_of_a_vote_goes_with_the_copy_its_owner_takes_out`). `skills uninstall` refuses a copy of a rule its owner follows, and not one of a rule that no longer binds them: a member voted off the roll, and a member who left, in a project and in the user's directory (`a_copy_of_a_rule_that_no_longer_binds_its_owner_is_theirs_to_take_out`). A voted copy that its owner edited is left in place and named, in the user's directory and in a project, and the command the line names takes it out (`leaving_names_what_it_left_in_place_and_a_second_run_tries_again`), also where `circle mode` or `rule opt-in` is the first command to settle after the repeal, and a `rule opt-out` names another rule it installs (`a_command_that_settles_says_what_it_did_to_other_rules`); an opt-out, a repeal, a moved scope and the wording inside a session are a unit test (`a_voted_copy_that_was_edited_is_left_in_place_and_named_once`), and were run by hand through the binary. No test for: the same race at the prompt of `rule opt-in`, which needs a terminal and a second process (a unit test covers where the confirmation is counted), a hold caused by another circle's rule in the user's skills directory, and the refusal in the user's directory of a copy the owner installed themselves while the rule lives in a project (by hand in the fourth review; not changed). The first two were run by hand in the second review, on Linux with a debug build: at a real prompt on a pseudo-terminal, a newer rule of the same name and a repeal each gave the refusal and left the opt-out in place; and the way out of a hold caused by another circle's rule was followed through the binary. Not reproduced: a rule that takes the name while `proposal adopt` applies the rules; a unit test covers which sentence it then says |
 | What a session is refused beyond the windows: `rule opt-in`, `export --local`, a plaintext `init`, a file path given to the join tool, a join that cannot be put in a window | tested, the first three with each of the two session variables. Inside a session `circle join` reads no argument as a file when it reads as a peer id, also when a file of that name exists and holds a real invitation: tested with each of the two session variables, and in the person's terminal the same argument joins from the file (`inside_a_session_a_peer_id_is_never_read_as_a_file`). An argument that reads as an address goes the same way in the code and has no test of its own. The join by peer id is tested against a private stand-in network, which sees no connection and no lookup from the session's command and does see the same command run by the person; with windows allowed and no window on the machine, the join tool is refused the same way (not on macOS). No test for: the prompt of `rule opt-in` on a real terminal, which the tests answer with `--yes` |
 | Exchange by address over QUIC, by shared directory, by file | tested, with separate processes. A line or record file that is not strict JSON is refused, and a join from a file that holds several circles takes the one whose fingerprint you gave: both tested. That a held or waiting rule is reported once per exchange has unit tests only, and so has what a sync report keeps of a skill that could not be removed: only a later settle of the same circle that removed the skill takes the line back, and another circle's removal of a copy of that name does not, in either order (`a_failed_removal_is_taken_back_only_by_the_same_circle`). Two circles with a rule of one name in two places were run through the binary by hand, in both orders, with a one-shot `sync`, a daemon that syncs on a timer and one that only answers: both lines each time. A daemon prints each hold once per run: tested for a hold that a peer's push created, with three separate processes and a daemon that has no sync interval and knows no peer (`a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once`); for a hold that the daemon's own exchange finds, unit tests only (`a_daemon_prints_a_hold_with_one_report_and_no_later_one`, `a_daemon_tells_a_hold_once_when_it_is_new`). What such a daemon prints for a rule that a push installed, removed or left waiting for its owner: tested with three separate processes, each line once over four pushes (`a_daemon_that_only_answers_tells_what_a_push_installed_and_what_waits`), and a unit test (`a_daemon_tells_what_a_push_changed_and_each_state_once`). By hand on 2026-11-11, on Linux, with debug builds: two daemons over QUIC on loopback, for four ticks of 30 seconds after a peer's push made a rule held on one of them. The binary before the second review's change printed nothing about the hold; the one after it printed the report with the hold once. After the third review's change, again by hand: two daemons where a later report was printed for new events, with one hold line where the third review had counted two, and a daemon that dials nobody, with and without `--sync-every 30`, with one hold line after a push. After the fourth review's change, again by hand: a daemon with `--sync-every 30` that knows no peer, its owner in mode `ask`, printed one line for the rule a push left waiting, where the fourth review had seen none through two ticks; and a daemon without a sync interval printed one line for each of two rules a push installed. Not tried: a report dropped from a full queue (64), and daemons started with `--lan`, with `--internet` or by the MCP tool. After a revocation an import can go wrong: see the next row |
-| A node left on an old charter after a revocation ([Known limits](../README.md#known-limits)) | no test. By hand on 2026-11-11, on Linux, with a debug build of this tree, encrypted-file keystores and a shared directory, in a circle of four with one device revoked: the node stayed on charter 3, and a second import changed nothing. After `reset` and `init` its join was refused. The amendment that would add its new key needs 3 of 4, and only two members had a device that still counted. On a copy of the home, deleting only the database, then `init` and `circle join`, joined at charter 4 with the same key ([ADR-044](decisions.md)). Not tried: the OS keychain, a node in several circles, the same over QUIC |
+| A node left on an old charter after a revocation ([Known limits](limits.md)) | no test. By hand on 2026-11-11, on Linux, with a debug build of this tree, encrypted-file keystores and a shared directory, in a circle of four with one device revoked: the node stayed on charter 3, and a second import changed nothing. After `reset` and `init` its join was refused. The amendment that would add its new key needs 3 of 4, and only two members had a device that still counted. On a copy of the home, deleting only the database, then `init` and `circle join`, joined at charter 4 with the same key ([ADR-044](decisions.md)). Not tried: the OS keychain, a node in several circles, the same over QUIC |
 | Exchange across the internet (`--internet`) | tested against a private stand-in network. By hand on the real network on 2026-11-10, before v0.1.0, from one machine with both ends behind the same router. Not tried: two different routers, IPv6, Linux |
 | Finding members on a local network (`--lan`) | worked on macOS when it was built, before v0.1.0. Its tests need real multicast and do not run in CI, and no run of them is recorded. Not tried on Linux |
 | Noticing corrections by itself | best effort. Your agent reports a correction when it notices one. The built-in detector recognizes corrections that name a tool to use or avoid (46 of 70 in our test set, none of 52 ordinary prompts), not whole-sentence rules such as "always run the tests first". You can always write the rule down yourself |
@@ -36,7 +67,7 @@ section of [security-model.md](security-model.md#test-coverage).
 | Being told that a vote waits (`daemon --notify`, and the end-of-turn line in Claude Code) | `--notify` is macOS only. Tested with separate processes and a stand-in notification. By hand, once: macOS accepted the real notification, and whether the banner shows depends on your notification settings for Script Editor. The timer of `--sync-every` has no test beyond its argument |
 | Setting up (`peerharness setup`, and the prompt in [Set it up](../README.md#set-it-up)) | tested with a stand-in for Claude Code's `claude` command: it creates the node, connects the agent, registers the tools, changes nothing on a second run and is refused inside an agent's session. Without windows it ends with what works from the terminal, tested on Linux. A home whose settings allow windows, run where none can be shown: it says what still runs and how to turn that off, tested on Linux. A home that an interrupted `init` left, with a configuration file and a database without an identity: `setup` completes it, tested with a home made that way. The interruption itself, Ctrl-C at the passphrase prompt, was run by hand on a pseudo-terminal on Linux, before that fix. By hand: the three `claude mcp` commands it relies on, against Claude Code 2.1.322 with a throwaway configuration. Not tried: the prompt through an agent |
 | Taking it out (`reset`) | tested: it explains first, deletes only when a person confirms, refuses a home that is a link, and afterwards lists the folder of each skill that is still installed |
-| The install script and the release binaries | the script is tested against a stand-in release: a matching checksum installs, a changed archive does not. In the pre-launch check, on 2026-11-10, the script installed the v0.3.0 x86_64 Linux binary in a container: the checksum matched, and the binary ran `demo` and two processes voting over QUIC on loopback. The aarch64 Linux binary has not been run. For the macOS binaries the last run on record is of v0.2.0. The release binaries of 0.4.0 are built from the tag by the release workflow: none had been run when this page was tagged |
+| The install script and the release binaries | the script is tested against a stand-in release: a matching checksum installs, a changed archive does not. In the pre-launch check, on 2026-11-10, the script installed the v0.3.0 x86_64 Linux binary in a container: the checksum matched, and the binary ran `demo` and two processes voting over QUIC on loopback. The aarch64 Linux binary has not been run. On 2026-11-11, after v0.4.0 was published, the script installed the v0.4.0 aarch64 macOS binary into a temporary folder on macOS 14.2 (Apple Silicon): the checksum matched, and the binary ran `demo` to its end. For the x86_64 macOS binary the last run on record is of v0.2.0. The three other binaries of 0.4.0 have not been run |
 | The two-process demo script (`demo/two-peers.sh`) | tested on Linux with the binary of this tree named by `PEERHARNESS_BIN` and a `cargo` that fails if it is called; the test asserts that the step that reads the rule prints its name and description. By hand in the second review: the script with the v0.3.0 x86_64 Linux release binary, and the filter of that step against that binary and a build of this tree, with the same nine lines from both. The release binaries of 0.4.0 had not been run with this script when this page was tagged |
 | Windows | not supported |
 
@@ -81,8 +112,9 @@ After the fixes for the fourth review it was run at commit `6431fa6`: 972 passed
 none failed and the same 10 were skipped. That is a run of the whole suite at the
 last of those commits; each commit before it was checked with `cargo fmt`, `cargo
 clippy` and the tests of the files it touches. After the changes for the fifth
-review 973 passed, none failed and the same 10 were skipped. The run after the
-changes for the review of the pull request is the one the README gives.
+review 973 passed, none failed and the same 10 were skipped. After the
+changes for the review of the pull request it was run again on Linux on 2026-11-11:
+983 passed, none failed and the same 10 were skipped.
 
 CI runs the same suite on Linux and macOS. It ran for pull request #7 at commit
 `0ffc90e`, on the merge of that commit with `main` (`e6fae27`), on 2026-11-11. On
@@ -96,7 +128,9 @@ ran again with those changes, at commit `400fd20` on the merge of that commit wi
 `main`, on the same day and the same runner images: 983 tests passed on Linux and
 978 on macOS, none failed and 10 were skipped on each, and `cargo deny`, `cargo
 audit` and the check with Rust 1.89 passed. No run by hand was made on macOS for any
-of the fixes.
+of the fixes. Outside CI the suite was run once on a Mac, on 2026-11-11 at the commit
+that is tagged v0.4.0 (macOS 14.2, arm64, the stable toolchain): 978 passed, none
+failed and 10 were skipped.
 
 One test was found to fail now and then, and was changed: the control of
 `a_join_nobody_can_be_asked_about_goes_nowhere_near_the_network` waited for a

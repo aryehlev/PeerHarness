@@ -133,7 +133,7 @@ jobs:
           mkdir -p "dist/${name}"
           cp "target/${{ matrix.target }}/release/peerharness" "dist/${name}/"
           cp LICENSE-MIT LICENSE-APACHE "dist/${name}/"
-          for f in README.md docs/security-model.md docs/release.md docs/checked.md; do
+          for f in README.md docs/security-model.md docs/release.md docs/checked.md docs/limits.md; do
             if [ -f "$f" ]; then cp "$f" "dist/${name}/"; fi
           done
           cd dist
