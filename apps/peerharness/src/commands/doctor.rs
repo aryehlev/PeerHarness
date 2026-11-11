@@ -280,6 +280,39 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         Err(e) => c.add("skills dir", Level::Warn, e.to_string()),
     }
 
+    // The other agents (ADR-050): where their copies are, and what could not follow.
+    if let Ok(config) = crate::config::Config::load(home) {
+        let store = crate::node::Node::open(home).ok();
+        let synced = crate::copies::sync(&config, store.as_ref().map(|n| &n.store));
+        for agent in &config.agents.connected {
+            let name = agent.check_name();
+            match agent.paths() {
+                None => c.add(
+                    name,
+                    Level::Warn,
+                    format!(
+                        "connected, but this build looks for its files only under {}",
+                        crate::agents::AGENTS_HOME_ENV
+                    ),
+                ),
+                Some(p) => match p.skills {
+                    None => c.add(name, Level::Ok, "connected; reads Claude Code's skills"),
+                    Some(dir) => {
+                        let mine: Vec<_> =
+                            synced.iter().filter(|s| s.agents.contains(agent)).collect();
+                        let blocked: usize = mine.iter().map(|s| s.report.blocked.len()).sum();
+                        let level = if blocked == 0 { Level::Ok } else { Level::Warn };
+                        let mut detail = format!("connected; copies in {}", dir.display());
+                        if blocked > 0 {
+                            detail.push_str(&format!(" ({blocked} skill(s) could not follow: see the warnings after any command that changes a rule)"));
+                        }
+                        c.add(name, level, detail);
+                    }
+                },
+            }
+        }
+    }
+
     // Daemon file.
     match (DaemonInfo::running(home), DaemonInfo::read(home)) {
         (Some(d), _) => {

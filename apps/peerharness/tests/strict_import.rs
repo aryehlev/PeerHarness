@@ -79,6 +79,14 @@ impl Node {
             .env("USER", self.name)
             .env_remove("CLAUDECODE")
             .env_remove("PEERHARNESS_AGENT_SESSION")
+            .env_remove("CODEX_CI")
+            .env_remove("CODEX_TOOL_CALL_ID")
+            .env_remove("CODEX_THREAD_ID")
+            .env_remove("OPENCODE")
+            .env_remove("PI_CODING_AGENT")
+            .env_remove("AI_AGENT")
+            .env_remove("ANTIGRAVITY_AGENT")
+            .env_remove("DSH_SHELL")
             .arg("--json")
             .args(args);
         cmd

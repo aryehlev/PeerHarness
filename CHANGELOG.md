@@ -9,6 +9,20 @@ database schema it writes.
 
 ## Unreleased
 
+* PeerHarness connects Codex, opencode, Pi, Google Antigravity and DeepSeek Harness
+  besides Claude Code. `peerharness setup` connects each one it finds, after a preview
+  of its own, and `peerharness watch <agent> --install | --remove | --status` does it
+  for one (`--agent` names them for `setup`). A connected agent gets copies of the
+  skills PeerHarness manages, where it reads skills (`~/.agents/skills`,
+  `~/.gemini/config/skills`, a project's `.agents/skills`; opencode reads Claude
+  Code's), kept the same after every command; and `peerharness mcp` in its
+  configuration file, after a backup (DeepSeek Harness's entry is shown for you to
+  add). The variables these agents set in the commands they run now mark an agent's
+  session, so a decision started there is refused or asked in a window
+  (`CODEX_CI`, `CODEX_TOOL_CALL_ID`, `CODEX_THREAD_ID`, `OPENCODE`,
+  `PI_CODING_AGENT`, `AI_AGENT`, `ANTIGRAVITY_AGENT`, `DSH_SHELL`). The settings have
+  a new section, `[agents] connected` (ADR-050). The protocol and the database schema
+  are unchanged.
 * Documents only. The README is shorter: what PeerHarness does, how to set it up and
   how to use it, with a short list of limits. What it held beyond that moved without a
   change of content: the known limits to [docs/limits.md](docs/limits.md), the summary

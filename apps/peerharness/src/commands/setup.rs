@@ -9,7 +9,9 @@
 //!    show one and the owner did not pass `--no-dialogs`. Its preview and its
 //!    confirmation are the ones of that command;
 //! 3. `claude mcp add --scope user peerharness -- <this binary> mcp`, Claude Code's own
-//!    command for registering an MCP server, after showing the line and asking.
+//!    command for registering an MCP server, after showing the line and asking;
+//! 4. `watch <agent> --install` for each other coding agent named with `--agent`, or
+//!    else for each one found on this machine (ADR-050), each with its own preview.
 //!
 //! Inside a coding agent's session it is refused as a whole: step 2 is where the owner
 //! allows what their agent may start, and no session takes that step for them.
@@ -44,7 +46,8 @@ use ph_identity::KeystoreBackend;
 use serde_json::{json, Value};
 
 use super::Ctx;
-use crate::cli::{SetupArgs, WatchClaudeArgs};
+use crate::agents::Agent;
+use crate::cli::{SetupArgs, WatchClaudeArgs, WatchOtherArgs};
 use crate::consent::{confirm, human_only};
 use crate::output::{Report, Text};
 use crate::window::Window;
@@ -130,14 +133,60 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
     let tools = register(ctx, a.yes)?;
     t.line(format!("3. The tools: {}", tools.says()));
 
+    // 4. The other agents: the ones named, or every one found here (ADR-050). Each is
+    // its own preview and confirmation (`watch <agent> --install`).
+    let others: Vec<Agent> = if a.agent.is_empty() {
+        Agent::ALL.into_iter().filter(|x| x.detected()).collect()
+    } else {
+        let mut chosen = a.agent.clone();
+        chosen.sort();
+        chosen.dedup();
+        chosen
+    };
+    let mut other_json = Vec::new();
+    if others.is_empty() {
+        t.line(format!(
+            "4. Other agents: none found here ({}). To connect one later:              `peerharness watch <agent> --install`.",
+            crate::agents::names(&Agent::ALL)
+        ));
+    } else {
+        t.line("4. Other agents:");
+    }
+    for other in others {
+        let r = super::agent::run(
+            ctx,
+            other,
+            &WatchOtherArgs {
+                install: true,
+                remove: false,
+                status: false,
+                yes: a.yes,
+            },
+        )?;
+        t.line(format!(
+            "  {}: {}",
+            other.name(),
+            if r.json["changed"] == true {
+                "connected."
+            } else {
+                "already connected."
+            }
+        ));
+        for line in r.text.lines().skip(1) {
+            t.line(format!("  {line}"));
+        }
+        other_json.push(r.json);
+    }
+
     // What the owner can do now. With the windows off, every tool but `note` answers
     // that the step is the owner's. What a tool may run is read from the settings
     // alone, so where they are on and no window can be shown, the tools that need no
     // window still run.
     let agent_can_ask = agent.json["windows"] == true && Window::find().is_some();
-    let allowed = crate::config::Config::load(&ctx.home)?.agent.asked();
+    let config = crate::config::Config::load(&ctx.home)?;
+    let allowed = config.agent.asked();
     t.line("");
-    for line in next_steps(agent_can_ask, allowed) {
+    for line in next_steps(agent_can_ask, allowed, &config.agents.connected) {
         t.line(line);
     }
     Ok(Report::new(
@@ -149,6 +198,7 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
             "agent_can_ask": agent_can_ask,
             "tools": tools.code(),
             "tools_command": command_line(&server_command(ctx)?),
+            "other_agents": other_json,
         }),
         t.finish(),
     ))
@@ -178,12 +228,20 @@ const PLAINTEXT_WARNING: &str = "this node's private keys are stored in PLAINTEX
 /// decision in front of the owner (`agent_can_ask`), and on what the settings allow
 /// the agent's tools (`allowed`), which is what they run at whether or not this
 /// machine can show a window.
-fn next_steps(agent_can_ask: bool, allowed: crate::config::Asked) -> Vec<String> {
+fn next_steps(agent_can_ask: bool, allowed: crate::config::Asked, others: &[Agent]) -> Vec<String> {
     use crate::config::Asked;
 
     if agent_can_ask {
+        let session = if others.is_empty() {
+            "Start a new Claude Code session and ask it, for example:".to_owned()
+        } else {
+            format!(
+                "Start a new session of Claude Code (or {}) and ask it, for example:",
+                crate::agents::names(others).replace(" and ", " or ")
+            )
+        };
         return vec![
-            "Start a new Claude Code session and ask it, for example:".to_owned(),
+            session,
             "  \"What is my PeerHarness device key?\"".to_owned(),
             "  \"Create a PeerHarness team called acme.\"".to_owned(),
         ];
@@ -269,7 +327,7 @@ impl Tools {
 }
 
 /// What Claude Code is told to start: this binary, for this home, as an MCP server.
-fn server_command(ctx: &Ctx) -> Result<Vec<OsString>> {
+pub fn server_command(ctx: &Ctx) -> Result<Vec<OsString>> {
     let exe = std::env::current_exe()
         .and_then(|p| p.canonicalize())
         .map_err(|_| anyhow::anyhow!("cannot determine the path of this executable"))?;
@@ -294,7 +352,16 @@ fn add_arguments(server: &[OsString]) -> Vec<OsString> {
 
 /// A command as a person would type it, for showing.
 fn command_line(server: &[OsString]) -> String {
-    let mut line = format!("claude mcp add --scope user {SERVER_NAME} --");
+    format!(
+        "claude mcp add --scope user {SERVER_NAME} --{}",
+        shell_words(server)
+    )
+}
+
+/// Words as a POSIX shell reads them, each after a space: plain where that is safe, else
+/// single-quoted.
+pub fn shell_words(server: &[OsString]) -> String {
+    let mut line = String::new();
     for word in server {
         let word = word.to_string_lossy();
         line.push(' ');
@@ -453,11 +520,16 @@ mod tests {
         use crate::config::Asked;
 
         // With windows: something to ask the agent.
-        let with = next_steps(true, Asked::All).join("\n");
+        let with = next_steps(true, Asked::All, &[]).join("\n");
         assert!(with.contains("Start a new Claude Code session"));
+        let with_others = next_steps(true, Asked::All, &[Agent::Codex, Agent::Pi]).join("\n");
+        assert!(
+            with_others.contains("session of Claude Code (or Codex or Pi)"),
+            "{with_others}"
+        );
         assert!(!with.contains("terminal.md"));
         // Without: what works, where the commands are, and no prompt for the agent.
-        let without = next_steps(false, Asked::Nothing).join("\n");
+        let without = next_steps(false, Asked::Nothing, &[]).join("\n");
         assert!(without.contains("Your agent notes a rule"));
         assert!(without.contains("That is all it does"));
         assert!(without.contains("typed in your own terminal"));
@@ -468,7 +540,7 @@ mod tests {
         // run at the level the settings allow, so "that is all it does" would be false.
         // What still runs is named, per level, with the command that turns it off.
         for allowed in [Asked::Rules, Asked::RulesAndCircle, Asked::All] {
-            let between = next_steps(false, allowed).join("\n");
+            let between = next_steps(false, allowed, &[]).join("\n");
             assert!(!between.contains("That is all it does"), "{between}");
             assert!(between.contains("is refused on this machine"), "{between}");
             assert!(

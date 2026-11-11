@@ -7,8 +7,9 @@
 //! again.
 //!
 //! What it leaves alone, and says so with the command that removes each: skills
-//! installed in the agent's directory, the hooks in the agent's settings, and the
-//! registration of the MCP server with Claude Code. All three belong to the agent's
+//! installed in the agent's directory, the hooks in the agent's settings, the
+//! registration of the MCP server with Claude Code, and for each other connected agent
+//! its copies of the rules and its tools entry (ADR-050). All three belong to the agent's
 //! configuration. The registration is named whether or not there is one: PeerHarness
 //! does not read Claude Code's configuration to find out.
 //!
@@ -109,6 +110,19 @@ pub fn run(ctx: &Ctx, args: ResetArgs) -> Result<Report> {
         ),
         "  the peerharness program, which is one file: delete it where it was installed".to_owned(),
     ];
+    // The other agents: their copies and tools entries need the node to be found, so
+    // the command is named before the reset.
+    let connected = node.config.agents.connected.clone();
+    let left: Vec<String> = left
+        .into_iter()
+        .chain(connected.iter().map(|a| {
+            format!(
+                "  for {}, the copies of your rules and its tools entry                  (`peerharness watch {} --remove`: run it before the reset)",
+                a.name(),
+                a.id()
+            )
+        }))
+        .collect();
     for line in &left {
         t.line(line);
     }
