@@ -318,6 +318,25 @@ const RULE_CHANGED: &str =
      rule in force, and nothing was installed on your confirmation. `peerharness rule list` \
      shows the rule as it is now.";
 
+/// The refusal of `proposal adopt` when the rule it showed was installed on the
+/// owner's confirmation and another rule took the name before the command was done.
+/// Names nothing a member wrote.
+const RULE_CHANGED_SINCE: &str =
+    "the rule was installed as you were shown it, and another rule of that name is in force \
+     since: it took the name while this command ran. What is installed now is the text you \
+     confirmed, not the rule in force. `peerharness rule list` shows the rule as it is now.";
+
+/// What `proposal adopt` says when its look after settling finds that the rule of the
+/// name is no longer the one it showed. `installed_as_shown`: the settle installed the
+/// text the owner confirmed. Then that is said, and not that nothing was installed.
+const fn changed_after_settling(installed_as_shown: bool) -> &'static str {
+    if installed_as_shown {
+        RULE_CHANGED_SINCE
+    } else {
+        RULE_CHANGED
+    }
+}
+
 /// Why this node cannot say what an amendment changes. (A proposal is stored only once
 /// the charter it names is here, so this is a damaged store, not an everyday case.)
 const NO_NAMED_CHARTER: &str = "this node does not hold the charter that amendment names";
@@ -945,16 +964,31 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
     // `apply_rules` reads the rules once more and counts the confirmation for this
     // proposal only, so a rule that takes the name in the instant between is not
     // installed on it either. That is looked at afterwards.
-    let settled = governance::settle(
-        &node,
-        &circle,
-        &governance::user_installer()?,
-        &[p.event_id()],
-    )?;
-    if !still_the_rule(&node)? {
-        return Err(refused(RULE_CHANGED));
-    }
+    let installer = governance::user_installer()?;
+    let settled = governance::settle(&node, &circle, &installer, &[p.event_id()])?;
     let installed = settled.applied.installed.contains(&name);
+    if !still_the_rule(&node)? {
+        // Another rule has the name now. What the settle did is said as it is: when it
+        // installed something under the name and the text that is there is the one
+        // that was shown, the owner's confirmation was used, and for that text.
+        let target =
+            governance::rule_target(&node.store, &circle.circle_id, &installer, rule.scope())?;
+        let installed_as_shown = installed
+            && matches!(
+                target.installer.status(&name),
+                Ok(ph_skills::InstallState::Managed { digest, modified: false })
+                    if digest == rule.bundle_digest()
+            );
+        if installed_as_shown {
+            // Everything else the settle did, as after any other adopt. These lines
+            // can name the circle, so they are no part of the error that follows.
+            let mut t = Text::new();
+            t.line(format!("Installed rule {name}, as you were shown it."));
+            settled_lines(&mut t, &settled, &circle);
+            ctx.out.note(t.finish().trim_end());
+        }
+        return Err(refused(changed_after_settling(installed_as_shown)));
+    }
     let mut t = Text::new();
     if installed {
         t.line(format!("Installed rule {name}."));
@@ -1063,6 +1097,22 @@ mod tests {
         assert_eq!(typed.chars().count(), MAX_RATIONALE_CHARS);
         assert!(ph_core::redact(&typed).text.chars().count() > MAX_RATIONALE_CHARS);
         assert!(one_line_rationale(Some(&typed)).is_err());
+    }
+
+    /// `proposal adopt` looks twice at whether the rule it showed is still the rule of
+    /// that name: before it settles, and after. The first look refuses with "nothing
+    /// was installed on your confirmation", which is true then. After settling it is
+    /// true only when the settle did not install the shown text: where it did, the
+    /// command says that it was installed as shown and has been overtaken since.
+    #[test]
+    fn adopt_says_what_was_installed_when_the_rule_changed_after_settling() {
+        assert_eq!(changed_after_settling(false), RULE_CHANGED);
+        assert!(RULE_CHANGED.contains("nothing was installed on your confirmation"));
+        let said = changed_after_settling(true);
+        assert!(said.contains("the rule was installed as you were shown it"));
+        assert!(said.contains("another rule of that name is in force since"));
+        assert!(!said.contains("nothing was installed"));
+        assert!(said.contains("`peerharness rule list`"));
     }
 
     #[test]
