@@ -169,6 +169,10 @@ across repositories, for groups with no shared repository or nobody who administ
 one, and for members who want to see the exact text they vote on and to opt out of a
 rule alone.
 
+It is also more dynamic and more democratic. A rule starts as a correction in the
+middle of work, with no file to edit and no pull request to open. And it passes by a
+majority of everyone, not by the say of whoever can merge.
+
 ## Limits
 
 * **The agent guard is not a sandbox.** A session is recognized by an environment
@@ -226,8 +230,8 @@ nothing in your home or in `~/.claude`.
 
 ## Development
 
-Written from 9 to 11 November 2026 with an AI coding agent, as the commit trailers
-say, from the brief in [docs/spec.md](docs/spec.md). To build and test, see
+Written from 9 to 11 November 2026 with Claude Code, as the commit trailers say,
+from the brief in [docs/spec.md](docs/spec.md). To build and test, see
 [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see
 [SECURITY.md](SECURITY.md).
 
