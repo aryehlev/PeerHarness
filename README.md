@@ -35,28 +35,21 @@ Set up PeerHarness for me: https://github.com/aryehlev/peerharness
 Then tell me to start a new Claude Code session, and what I can ask you there.
 ```
 
-Or run the two lines yourself:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
-~/.local/bin/peerharness setup
-```
-
-* **The first line** downloads the release binary for your machine, checks it against
-  the release's `SHA256SUMS` and puts it in `~/.local/bin`. No `sudo`, and nothing
-  else is changed.
-* **`setup`** creates your key and database and connects PeerHarness to Claude Code:
-  two hooks, one skill and its tools. It shows each change before it makes it and asks
-  you to confirm.
+* **Your agent installs it.** The install line downloads the release binary for your
+  machine, checks it against the release's `SHA256SUMS` and puts it in `~/.local/bin`.
+  No `sudo`, and nothing else is changed.
+* **You run `setup`, once.** It is where you allow what your agent may start for you,
+  so your agent is refused it. It creates your key and database and connects
+  PeerHarness to Claude Code: two hooks, one skill and its tools. It shows each change
+  before it makes it and asks you to confirm.
 * **What it stores.** One hook keeps a redacted copy of each prompt you type, so that
   corrections can be noticed. The copies stay on your machine, for 14 days by default,
   in a database that is not encrypted.
 
 Then start a new Claude Code session and [try it](#try-it-in-claude-code).
 
-More: [what setup adds and stores](docs/terminal.md#what-setup-adds-and-what-is-stored),
-[how to take it out again](docs/terminal.md#take-it-out-again), and
-[Linux, another agent or none](docs/terminal.md).
+More: [what setup adds and stores](docs/terminal.md#what-setup-adds-and-what-is-stored)
+and [how to take it out again](docs/terminal.md#take-it-out-again).
 
 ## Try it in Claude Code
 
@@ -103,8 +96,8 @@ exchanges with the other members first.
 A rule is never installed by itself: you keep it, or your team votes it in. A rule
 your team passed is installed for every member's agent as an
 [Agent Skill](https://agentskills.io/specification) when their node learns of it,
-without a window. `peerharness circle mode ask --circle <team>` makes your node ask
-you first, and you can opt out of any single rule on your own machine.
+without a window. You can have your node ask you first, and you can opt out of any
+single rule on your own machine.
 
 ### Add a teammate
 
@@ -120,29 +113,14 @@ Dana wants to join acme. She sets PeerHarness up as above, and then:
 
 The fingerprint is how Dana knows the team is yours, so it travels apart from the
 rest. From then on a rule needs both of your votes, and so does admitting a third
-member, asked in the same kind of window. The commands call a team a *circle*.
+member, asked in the same kind of window. PeerHarness's own word for a team is a
+*circle*.
 
-### What needs your terminal
+A few steps are still done in a terminal: they are [at the bottom](#from-a-terminal).
 
-* **A node that stays reachable.** Your agent keeps it reachable only while its
-  session is open. For one that stays up:
-  `peerharness daemon --internet --sync-every 60`, and on macOS add `--notify`.
-* **Removing a member, leaving, changing the rules of the vote and repealing a rule.**
-* **Editing or rejecting a noted rule**, and anything about a rule that the scanner
-  calls high-risk.
-* **Every decision on Linux**, where no window can be shown.
+## How a vote works
 
-Each step as a command is in [PeerHarness from a terminal](docs/terminal.md).
-
-## See it run
-
-```sh
-peerharness demo
-```
-
-The demo needs only the binary. It creates three members and one outsider in a
-temporary folder, each with its own key and database, and nothing in your home or in
-`~/.claude` is read or changed. The second half of its output, abridged:
+A vote among three members, from the output of the built-in demo, abridged:
 
 ```text
 5. Alice puts it to the vote.
@@ -162,8 +140,6 @@ temporary folder, each with its own key and database, and nothing in your home o
     The founder's root key signs a charter that adds Mallory without a vote.
     The signature is valid and every node still refuses it: the key is a notary, not a ruler.
 ```
-
-## How a vote works
 
 * **One person, one vote**, however many devices they have.
 * **A majority of everyone entitled to vote.** Not voting counts as not approving.
@@ -214,6 +190,28 @@ rule alone.
   volunteers.
 
 The full list is in [docs/limits.md](docs/limits.md).
+
+## From a terminal
+
+Every step above is also a command: [PeerHarness from a terminal](docs/terminal.md)
+has each one. These are done there and not through your agent:
+
+* **A node that stays reachable.** Your agent keeps yours reachable only while its
+  session is open. For one that stays up:
+  `peerharness daemon --internet --sync-every 60`, and on macOS add `--notify`.
+* **Being asked before a passed rule is installed**
+  (`peerharness circle mode ask --circle <team>`), and opting out of one rule
+  (`peerharness rule opt-out <name> --circle <team>`).
+* **Removing a member, leaving, changing the rules of the vote and repealing a rule.**
+* **Editing or rejecting a noted rule**, and anything about a rule that the scanner
+  calls high-risk.
+* **Every decision on Linux**, where no window can be shown.
+
+Without the prompt, run the `curl` line from [Set it up](#set-it-up) and then
+`~/.local/bin/peerharness setup`. To see the vote above run on your machine:
+`peerharness demo`. It needs only the binary, creates three members and one outsider
+in a temporary folder, each with its own key and database, and reads or changes
+nothing in your home or in `~/.claude`.
 
 ## Documentation
 
