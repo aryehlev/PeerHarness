@@ -965,14 +965,26 @@ fn plan_request(
     })
 }
 
+/// Why a first `circle leave` signed no request, with the request and its count when
+/// the reason is that one is on record ([`NoRequest::OnRecord`]).
+type NotRequested = (NoRequest, Option<Box<(ProposalView, Tally)>>);
+
 /// Signs the request a first `circle leave` previewed: the removal `next`, drafted from
 /// `from` before the owner was asked, under the charter it was drafted from. `key` is
-/// the unlocked device key, so no prompt lies between the check here and the signature.
+/// the unlocked device key, so no prompt lies between the checks here and the
+/// signature.
 ///
-/// The check is the one every change to a charter gets ([`governance::as_drafted`]).
-/// When this node no longer holds what the preview was built from, nothing is signed
-/// and the reason is [`NoRequest::Changed`]: the draft is not made anew from what the
-/// node holds now, because nobody was shown that.
+/// The first check is the one every change to a charter gets
+/// ([`governance::as_drafted`]). When this node no longer holds what the preview was
+/// built from, nothing is signed and the reason is [`NoRequest::Changed`]: the draft is
+/// not made anew from what the node holds now, because nobody was shown that.
+///
+/// The second is about what is on record. `as_drafted` compares the charter and the
+/// rules in force, not the proposals, and a member's `circle remove` of this very
+/// member can arrive while the owner reads or types a passphrase. A second, identical
+/// removal would split the members' approvals between two proposals, so when exactly
+/// this removal is on record now nothing is signed, and the reason is
+/// [`NoRequest::OnRecord`] with that proposal.
 fn sign_removal(
     store: &Store,
     key: &SigningKey,
@@ -981,12 +993,17 @@ fn sign_removal(
     next: CharterContent,
     from: &Drafted<'_>,
     now: Timestamp,
-) -> Result<std::result::Result<ProposalView, NoRequest>> {
+) -> Result<std::result::Result<ProposalView, NotRequested>> {
     let drafted = match governance::as_drafted(store, key, circle, from.current, from.rules) {
         Ok(drafted) => drafted,
-        Err(e) if exit_kind(&e) == ExitKind::Refused => return Ok(Err(NoRequest::Changed)),
+        Err(e) if exit_kind(&e) == ExitKind::Refused => return Ok(Err((NoRequest::Changed, None))),
         Err(e) => return Err(e),
     };
+    let me = DeviceKey::from_signing_key(key);
+    let on_record = removals_on_record(store, &me, from.current, Some(&next), member)?;
+    if let Some(found) = on_record.request {
+        return Ok(Err((NoRequest::OnRecord, Some(Box::new(found)))));
+    }
     let title = format!("Remove {member}");
     let signed = governance::propose_under(
         store,
@@ -1003,7 +1020,7 @@ fn sign_removal(
     );
     match signed {
         Ok(proposal) => Ok(Ok(proposal)),
-        Err(e) if exit_kind(&e) == ExitKind::Refused => Ok(Err(NoRequest::Refused)),
+        Err(e) if exit_kind(&e) == ExitKind::Refused => Ok(Err((NoRequest::Refused, None))),
         Err(e) => Err(e),
     }
 }
@@ -1020,10 +1037,10 @@ fn request_removal(
     member: &str,
     next: CharterContent,
     from: &Drafted<'_>,
-) -> Result<std::result::Result<Put, NoRequest>> {
-    // A passphrase prompt, where the keystore has one, is here: before the check.
+) -> Result<std::result::Result<Put, NotRequested>> {
+    // A passphrase prompt, where the keystore has one, is here: before the checks.
     let Ok(device) = node.device() else {
-        return Ok(Err(NoRequest::KeyLocked));
+        return Ok(Err((NoRequest::KeyLocked, None)));
     };
     let signed = sign_removal(
         &node.store,
@@ -1112,7 +1129,8 @@ fn follow_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result
 /// no key: the circle is marked as left and the rules it installed are removed before
 /// anything is signed. The request comes after, and is signed only if it is still what
 /// the preview said: the key is unlocked, the node is checked against what the preview
-/// was built from, and the removal that was drafted for the preview is signed. A
+/// was built from, and the removal that was drafted for the preview is signed, unless
+/// exactly that removal has arrived on record meanwhile ([`sign_removal`]). A
 /// request that was not made (a node that lacks a carried rule, a key that does not
 /// unlock, a node that changed meanwhile) leaves the owner off this machine and on the
 /// roll, and running the command again shows and makes it ([`leave_again`]).
@@ -1243,15 +1261,13 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         rules: &rules,
     };
     let outcome = match plan {
-        RequestPlan::Make => {
-            request_removal(&node, &circle, &member, draft, &from)?.map_err(|why| (why, None))
-        }
+        RequestPlan::Make => request_removal(&node, &circle, &member, draft, &from)?,
         RequestPlan::None(why) => Err((unless_changed(&node, &from, why)?, None)),
         RequestPlan::OnRecord(proposal) => {
             let why = unless_changed(&node, &from, NoRequest::OnRecord)?;
             let (_, tally) =
                 governance::count(&node.store, &proposal).context(LEFT_WITHOUT_REQUEST)?;
-            Err((why, Some((proposal, tally))))
+            Err((why, Some(Box::new((*proposal, tally)))))
         }
     };
     let mut t = Text::new();
@@ -1310,7 +1326,8 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
             }
             let mut json = json!({ "requested": false, "reason": why.code() });
             match on_record.filter(|_| why == NoRequest::OnRecord) {
-                Some((proposal, tally)) => {
+                Some(found) => {
+                    let (proposal, tally) = *found;
                     t.line(format!(
                         "No request to take you off the roll was made by this run: one is \
                          on record already, under charter {} (proposal {}):",
@@ -2438,7 +2455,7 @@ mod tests {
         let rule = adopt(&store, &circle, "*", now);
         pass(&store, &rule, now);
         let before = proposals(&store);
-        assert_eq!(sign(&draft, &from).unwrap_err(), NoRequest::Changed);
+        assert_eq!(sign(&draft, &from).unwrap_err().0, NoRequest::Changed);
         assert_eq!(NoRequest::Changed.code(), "changed_while_confirming");
         assert_eq!(proposals(&store), before, "nothing was signed or stored");
         // The sentence says what happened and what to run, and names the circle only
@@ -2475,8 +2492,52 @@ mod tests {
         let stored = proposals(&store);
         let outcome =
             sign_removal(&store, &key(3), &circle, "carol", carol_goes, &from, now).unwrap();
-        assert_eq!(outcome.unwrap_err(), NoRequest::Changed);
+        assert_eq!(outcome.unwrap_err().0, NoRequest::Changed);
         assert_eq!(proposals(&store), stored);
+    }
+
+    /// A member's exact removal of the one who leaves can arrive while that one reads
+    /// the preview or types a passphrase: the plan was to make the request, and by the
+    /// time the key is unlocked the request is on record. The charter and the rules in
+    /// force are what they were, so the check every draft gets passes. A first run
+    /// used to sign a second, identical removal there, and the members had two to
+    /// split their approvals between. Now nothing is signed, and the reason comes with
+    /// the proposal that is on record, as when the plan had found it.
+    #[test]
+    fn a_request_that_arrived_while_the_owner_was_asked_is_not_made_a_second_time() {
+        let (store, circle, now) = node();
+        let bob = device(2);
+        let proposals = |store: &Store| store.proposals(&circle).unwrap().len();
+        let (current, rules) = read(&store, &circle);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+        let from = Drafted {
+            current: &current,
+            rules: &rules,
+        };
+        // Before the owner is asked nothing is on record: the plan is the request.
+        let (plan, _) = plan_request(&store, &bob, &current, &rules, &draft, "bob").unwrap();
+        assert!(matches!(plan, RequestPlan::Make));
+
+        // A removal that also takes carol off arrives. It is not this request, and
+        // would not stop it (see the next test); the exact one that follows does.
+        let mut more = draft.clone();
+        more.roll.retain(|e| e.member != "carol");
+        amendment(&store, 1, &current, "Remove bob", more, now);
+        let by_alice = amendment(&store, 1, &current, "Remove bob", draft.clone(), now);
+        let before = proposals(&store);
+
+        let (why, on_record) =
+            sign_removal(&store, &key(2), &circle, "bob", draft.clone(), &from, now)
+                .unwrap()
+                .unwrap_err();
+        assert_eq!(why, NoRequest::OnRecord);
+        assert_eq!(why.code(), "request_on_record");
+        let (found, tally) = *on_record.expect("the request that is on record");
+        assert_eq!(found.event_id(), by_alice.event_id());
+        assert!(tally.approvals().is_empty(), "bob's approval is not on it");
+        assert_eq!(proposals(&store), before, "nothing was signed or stored");
+        // The node itself did not change: the other check still passes.
+        assert!(governance::as_drafted(&store, &key(2), &circle, &current, &rules).is_ok());
     }
 
     /// Only a proposal that is exactly the removal this node would draft now counts as
