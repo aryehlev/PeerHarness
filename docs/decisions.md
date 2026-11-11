@@ -3464,3 +3464,34 @@ screen given and the script ended where the dialog would begin.
 `the_whole_script_compiles` compiles the script as it is given to `osascript`
 (`apps/peerharness/src/window.rs`). Both run on macOS only.
 
+### A member's words cannot pass for a line of a listing
+
+**Found.** A QUESTION's text, an ANSWER's rationale and a STANCE's reason may hold
+several lines by the protocol, and the stock commands send them as typed. `inbox`,
+`question list` and `rule list` printed them made safe for a terminal and otherwise
+as they came. A member could so add rows to what another member reads: a question
+whose second line is "Proposals waiting for your vote (1):" followed by a proposal
+and the command that approves it, an answer that adds another member's answer, a
+reason that adds a rule to `rule list` or a name to those who opted out. The same
+lines went to a coding agent through the `inbox` tool. And what PeerHarness said
+about a row (who a question is from) stood after the text, so the text could end
+with a sender of its own and push the real one out of sight.
+
+ADR-041 had closed this for `proposal show` and for ballots (`output::quoted`). The
+listings were left.
+
+**Decision.** In a listing, every line of a member's text after the first begins
+with a mark (`output::continued`, the mark is `output::MEMBERS_WORDS`). What
+PeerHarness says about the row stands before the text: `from <key>, scope <s>:` and
+the counts in `inbox` and `question list`, the label of a note in `inbox`. Those who
+opted out of a rule are listed one a line, the name first and the reason last. The
+preview of `question answer` shows the question, which is another member's text,
+and the rationale behind the mark, line by line.
+
+**Not changed.** The protocol and the commands still take several lines: a question
+can need them. The JSON output carries the text as it is, as one string.
+
+**Tests.** `a_members_words_cannot_pass_for_a_line_of_a_listing`
+(`apps/peerharness/tests/circle_life.rs`). By hand: the three reproductions of the
+audit with the new build.
+

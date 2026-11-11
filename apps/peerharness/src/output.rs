@@ -139,6 +139,23 @@ pub fn quoted(text: &str, prefix: &str) -> String {
         .join("\n")
 }
 
+/// The mark in front of a line that a member wrote, in a listing.
+pub const MEMBERS_WORDS: &str = "        | ";
+
+/// Text a member wrote, placed inside one of PeerHarness's own lines: a question in a
+/// listing, a reason after a name. It is made safe for a terminal ([`safe`]), and every
+/// line after the first begins with `prefix`. The first line stands where the caller
+/// puts it. Without the mark, a second line of the text could pass for the next row of
+/// the listing: another question, another member's answer, a proposal that waits
+/// (ADR-050).
+pub fn continued(text: &str, prefix: &str) -> String {
+    safe(text)
+        .trim_end()
+        .split('\n')
+        .collect::<Vec<_>>()
+        .join(&format!("\n{prefix}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

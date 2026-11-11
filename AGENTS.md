@@ -96,6 +96,13 @@ stop, leave the feature disabled, and document the blocker.
   rationale typed for `proposal vote` is one line, checked before any preview or
   window. Where `proposal show` or an amendment's description prints several lines
   that a member wrote, every line goes behind a mark (`output::quoted`).
+* The same holds for every listing (ADR-050). A question, an answer's rationale, a
+  stance's reason and a candidate's statement can hold several lines. In `inbox`,
+  `question list` and `rule list` every line after the first goes behind a mark
+  (`output::continued`), and what PeerHarness itself says about a row (who it is
+  from, its scope, its counts, its label) stands before the member's words, never
+  after them. Do not print text a member wrote with `output::safe` alone where a
+  second line of it would stand among PeerHarness's own.
 * An amendment is drafted only on a node that holds every rule the charter in force
   carries (ADR-041). `circle invite`, `remove`, `amend` and `device` fill `carried`
   from the rules in force on the node, so they refuse while

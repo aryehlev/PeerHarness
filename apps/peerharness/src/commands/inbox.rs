@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use super::Ctx;
 use crate::cli::InboxArgs;
 use crate::detect;
-use crate::output::{safe, short_id, Report, Text};
+use crate::output::{continued, safe, short_id, Report, Text, MEMBERS_WORDS};
 
 pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
     let node = ctx.open_node()?;
@@ -111,11 +111,13 @@ pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
                     c.evidence.len()
                 )
             };
+            // What PeerHarness says about a row stands before the text of the row
+            // (ADR-050): a statement cannot end with a label of its own.
             t.line(format!(
-                "  {}  \"{}\"  ({how}, repo {})",
+                "  {}  ({how}, repo {})  \"{}\"",
                 c.id,
-                safe(&c.statement),
-                safe(&c.repo_key)
+                safe(&c.repo_key),
+                continued(&c.statement, MEMBERS_WORDS),
             ));
         }
         more(&mut t, total_candidates, shown.len());
@@ -125,11 +127,11 @@ pub fn run(ctx: &Ctx, a: InboxArgs) -> Result<Report> {
         t.line(format!("Questions from your circles ({total_questions}):"));
         for q in questions.iter().take(limit) {
             t.line(format!(
-                "  {}  {} (from {}, scope {})",
+                "  {}  from {}, scope {}: {}",
                 short_id(&q.event_id),
-                safe(&q.question),
                 q.author.fingerprint(),
-                q.scope
+                q.scope,
+                continued(&q.question, MEMBERS_WORDS),
             ));
         }
         more(&mut t, total_questions, limit.min(total_questions));

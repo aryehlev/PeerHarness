@@ -18,7 +18,7 @@ use crate::commands::Ctx;
 use crate::error::{refused, usage};
 use crate::governance;
 use crate::node::Node;
-use crate::output::{safe, short_id, Report, Text};
+use crate::output::{continued, safe, short_id, Report, Text, MEMBERS_WORDS};
 
 pub fn run(ctx: &Ctx, command: RuleCommand) -> Result<Report> {
     let node = ctx.open_node()?;
@@ -175,19 +175,22 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 &rule.proposal_id(),
                 &node.device_key(),
             )?;
+            // One line a member, the name first and the member's own words last, and
+            // every further line of those behind a mark: a reason cannot add a name
+            // to the list or a line to the listing (ADR-050).
             let out_of_it: Vec<String> = recorded
                 .iter()
                 .filter(|s| s.stance == Stance::OptedOut)
                 .map(|s| match s.reason.as_deref().filter(|r| !r.is_empty()) {
-                    Some(r) => format!("{} ({})", s.member, safe(r)),
+                    Some(r) => format!("{}: {}", s.member, continued(r, MEMBERS_WORDS)),
                     None => s.member.clone(),
                 })
                 .collect();
             if !out_of_it.is_empty() {
-                t.line(format!(
-                    "      on record as opted out: {}",
-                    out_of_it.join(", ")
-                ));
+                t.line("      on record as opted out:");
+                for member in &out_of_it {
+                    t.line(format!("        - {member}"));
+                }
             }
             rows.push(json!({
                 "circle": c.name,

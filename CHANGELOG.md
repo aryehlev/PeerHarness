@@ -59,6 +59,12 @@ database schema it writes.
     high glyphs was estimated far too low, so its end could lie below the screen. The
     window now measures the text on the machine before it shows anything, and the
     step is refused when it does not fit.
+  * **A member's text could add lines to another member's inbox.** A question, an
+    answer's rationale and the reason of an opt-out can hold several lines, and
+    `inbox`, `question list` and `rule list` printed them as they came: a question
+    could end with a proposal that waits and the command that approves it. Every
+    further line of such text now stands behind a mark, and who a question is from
+    stands before its text.
 
 ## 0.4.0 (2026-11-11)
 
