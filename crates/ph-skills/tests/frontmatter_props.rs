@@ -124,13 +124,17 @@ proptest! {
         // Bundle digest is stable for the same output. A random body can contain the
         // shell-injection syntax that every bundle refuses (architecture 10.10); then
         // that, and only that, is the reason it is refused.
-        let has_trigger = doc.body.lines().any(ph_skills::has_shell_injection);
+        // The syntax is looked for in the whole file, the frontmatter included.
+        let has_trigger = ph_skills::has_shell_injection(&out);
         match build_bundle(&out, Some(&name)) {
             Ok(b) => {
                 prop_assert!(!has_trigger);
                 prop_assert_eq!(b.digest(), digest_for_skill_md(out.as_bytes()).unwrap());
             }
-            Err(ph_skills::BundleError::ShellInjection { .. }) => prop_assert!(has_trigger),
+            Err(
+                ph_skills::BundleError::ShellInjection { .. }
+                | ph_skills::BundleError::ShellInjectionInFrontmatter,
+            ) => prop_assert!(has_trigger),
             Err(e) => return Err(TestCaseError::fail(format!("unexpected refusal: {e}"))),
         }
     }

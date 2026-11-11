@@ -333,6 +333,9 @@ stop, leave the feature disabled, and document the blocker.
 * Every bundle, local or received, is instructions only: no `allowed-tools`, no
   shell-injection syntax (`ph_skills::check_instruction_only`, ADR-018). These are hard
   refusals. Do not downgrade them to scanner warnings or add a flag that overrides them.
+  The syntax is looked for in the whole file and never line by line (ADR-050): the
+  detector must refuse at least what the agent's loader would run, so do not anchor it
+  to the start of a line, to one line, or to the body.
 * Installation requires the owner's consent: an explicit confirmation, or the owner's
   standing `follow` choice for a rule that passed a vote, verified its digest and has no
   high-risk finding (architecture 10.9). It is atomic, never overwrites an unmanaged

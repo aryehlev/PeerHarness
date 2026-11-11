@@ -38,6 +38,12 @@ database schema it writes.
     takes a rule out of force only if it has that rule's scope, which is checked in
     the rule set and no longer on arrival. A node that had refused such a proposal
     keeps it at its next exchange. Protocol sections 8.4, 12.5 and 14.4 say so.
+  * **A rule could carry a command that Claude Code runs when the skill loads.** The
+    check that refuses that syntax looked at the start of a line and within one line.
+    A fence in the middle of a sentence, or a command closed on the next line, passed,
+    and such a rule could be kept or proposed. The syntax is now refused anywhere in
+    the file, the frontmatter included. A rule that only mentions `!` in a code span
+    and has another code span further down is refused too.
 
 ## 0.4.0 (2026-11-11)
 

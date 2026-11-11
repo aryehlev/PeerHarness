@@ -52,7 +52,8 @@ pub mod validate;
 
 pub use bundle::{
     build_bundle, check_bundle_path, check_instruction_only, digest_for_skill_md, from_wire_files,
-    has_shell_injection, to_wire_files, validate_received, Bundle, SKILL_FILE_NAME,
+    has_shell_injection, shell_injection_line, to_wire_files, validate_received, Bundle,
+    SKILL_FILE_NAME,
 };
 pub use diff::{sanitize_for_display, unified_diff};
 pub use error::{

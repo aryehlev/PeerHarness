@@ -119,6 +119,12 @@ fn parse_and_validate(text: &str, expected_name: Option<&str>) -> Result<SkillDo
     let doc = parse_skill_md(text)?;
     validate_skill(&doc, expected_name).map_err(BundleError::Invalid)?;
     check_instruction_only(&doc)?;
+    // The body is clean. The same syntax in the frontmatter, or begun there and closed
+    // in the body, is refused too: the file is what an agent's loader reads, and it
+    // need not find the end of the frontmatter where this crate does.
+    if has_shell_injection(text) {
+        return Err(BundleError::ShellInjectionInFrontmatter);
+    }
     Ok(doc)
 }
 
@@ -131,38 +137,68 @@ fn parse_and_validate(text: &str, expected_name: Option<&str>) -> Result<SkillDo
 /// * `allowed-tools` in the frontmatter pre-approves tools, so the agent uses them
 ///   without asking its user;
 /// * Claude Code's dynamic-context syntax in the body runs a shell command when the
-///   skill loads, before the model sees anything. See [`has_shell_injection`] for the
+///   skill loads, before the model sees anything. See [`shell_injection_line`] for the
 ///   exact forms.
+///
+/// This looks at the parsed document. A bundle is also refused for the same syntax
+/// anywhere else in its file, the frontmatter included ([`build_bundle`],
+/// [`validate_received`]): a loader that splits the file differently from this crate
+/// would read as body what this crate read as a value.
 pub fn check_instruction_only(doc: &SkillDoc) -> Result<(), BundleError> {
     if doc.frontmatter.allowed_tools.is_some() {
         return Err(BundleError::ToolPreapproval);
     }
-    match doc.body.lines().position(has_shell_injection) {
-        Some(i) => Err(BundleError::ShellInjection { line: i + 1 }),
+    match shell_injection_line(&doc.body) {
+        Some(line) => Err(BundleError::ShellInjection { line }),
         None => Ok(()),
     }
 }
 
-/// Whether one line of a skill body contains syntax that Claude Code executes as a
-/// shell command when the skill loads:
+/// Whether `text` contains syntax that Claude Code executes as a shell command when a
+/// skill loads ([`shell_injection_line`]).
+pub fn has_shell_injection(text: &str) -> bool {
+    shell_injection_line(text).is_some()
+}
+
+/// The 1-based line of `text` on which syntax begins that Claude Code executes as a
+/// shell command when a skill loads, or `None`.
 ///
-/// * inline: an exclamation mark directly followed by a backtick, with another backtick
-///   later on the same line to close it (`!` then a command in backticks);
-/// * block: a fence opened with three backticks or three tildes directly followed by an
-///   exclamation mark.
+/// Claude Code finds two forms, anywhere in the text and not only at the start of a
+/// line, and both may span lines:
 ///
-/// The inline rule errs on the side of refusing: any closing backtick later on the
-/// line counts, so a line such as "use `!` and `x`" is refused even though a human
-/// reads it as two code spans. A lone `!` in a code span with nothing after it is fine.
-pub fn has_shell_injection(line: &str) -> bool {
-    let fence = line.trim_start();
-    if fence.starts_with("```!") || fence.starts_with("~~~!") {
-        return true;
-    }
-    line.match_indices("!`").any(|(i, m)| {
-        line.get(i + m.len()..)
+/// * block: three backticks directly followed by an exclamation mark, up to the next
+///   three backticks;
+/// * inline: an exclamation mark directly followed by a backtick, a command, and a
+///   closing backtick.
+///
+/// This refuses a superset of both, so that it cannot fall behind the loader by a
+/// detail:
+///
+/// * three backticks or three tildes directly followed by an exclamation mark,
+///   anywhere: in the middle of a line, after a list or quote marker, or as the end of
+///   a longer run of backticks;
+/// * an exclamation mark directly followed by a backtick, with another backtick
+///   anywhere after it in the text, on that line or a later one.
+///
+/// It errs on the side of refusing. "Use `!` and `x`" is refused although a human
+/// reads two code spans, and so is a `!` that closes a code span when any backtick
+/// follows further down. A lone `!` in a code span with no backtick after it is fine.
+pub fn shell_injection_line(text: &str) -> Option<usize> {
+    let fence = ["```!", "~~~!"].iter().filter_map(|m| text.find(m)).min();
+    let inline = text.match_indices("!`").find_map(|(i, m)| {
+        text.get(i + m.len()..)
             .is_some_and(|rest| rest.contains('`'))
-    })
+            .then_some(i)
+    });
+    let at = match (fence, inline) {
+        (Some(a), Some(b)) => a.min(b),
+        (a, b) => a.or(b)?,
+    };
+    Some(
+        text.get(..at)
+            .map_or(0, |before| before.matches('\n').count())
+            + 1,
+    )
 }
 
 fn file_error(e: ValidationError) -> BundleError {

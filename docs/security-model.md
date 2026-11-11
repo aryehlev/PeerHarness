@@ -306,7 +306,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   model deciding to are refused outright in every bundle, local or received, by exact
   syntactic rules that no flag or vote overrides (`ph_skills::check_instruction_only`,
   ADR-018): an `allowed-tools` frontmatter key, which pre-approves tools, and
-  shell-injection syntax in the body, which runs a command when the skill loads. The
+  shell-injection syntax anywhere in the file, which runs a command when the skill
+  loads. Up to 0.4.0 that syntax was looked for at the start of a line and within one
+  line only, and a fence in the middle of a sentence passed (ADR-050). The
   frontmatter parser rejects every key outside a short allowlist. Beyond that, skills
   are strictly validated and scanned by an advisory risk scanner (credential requests,
   `curl | sh`, reverse shells, exfiltration endpoints, "ignore previous instructions",
@@ -333,8 +335,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   majority of the members can put instructions into every following member's agent.** A
   majority approving a rule says nothing about whether it is safe. The owner's controls
   are choosing `ask` mode, opting out of a rule, a local policy, and leaving the circle.
-  The instruction-only rule covers the two Claude Code mechanisms we know of; other
-  agents, or future versions, may treat other syntax as executable. The two scanner
+  The instruction-only rule covers the two Claude Code mechanisms we know of, as one
+  installed version of it looks for them; other agents, or future versions, may treat
+  other syntax as executable. The two scanner
   rules above go by wording: the same instruction in other words, or with a URL that
   has no scheme, has no finding, and a harmless rule can have one (the scanner does
   not read negation, so "never pass --yes to peerharness" is found too). A rule that

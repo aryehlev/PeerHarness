@@ -1064,11 +1064,12 @@ switch them off.
    observations, candidates or files.
 2. **No vote runs code.** A rule is one instruction-only `SKILL.md`. Every bundle, built
    locally or received, is refused (`ph_skills::check_instruction_only`) if it declares
-   `allowed-tools`, which would pre-approve tools for the agent, or if a line of its
-   body contains the syntax Claude Code executes when a skill loads
+   `allowed-tools`, which would pre-approve tools for the agent, or if its file
+   contains, anywhere, the syntax Claude Code executes when a skill loads
    (`has_shell_injection`): an exclamation mark directly followed by a backtick with
-   another backtick later on the same line, or a fence opened with three backticks or
-   three tildes directly followed by an exclamation mark. Any file other than `SKILL.md`
+   another backtick anywhere after it, on that line or a later one, or three backticks
+   or three tildes directly followed by an exclamation mark, wherever on a line they
+   stand (ADR-050). Any file other than `SKILL.md`
    and any frontmatter key outside the allowlist of section 11 is refused as before.
 3. **No vote on a rule grants access.** Who may read a circle's records is the roll,
    with the scopes in each member's entry (section 7). It changes only by an amendment
@@ -1196,9 +1197,11 @@ The golden vectors tell a similar story end to end, including a charter change:
   the scanner flags, but which no bundle may contain (next bullet). `name` is 1-64 chars of `[a-z0-9-]`, with no leading, trailing or
   consecutive hyphens, and must equal the directory name. `description` is 1-1024 chars.
 * Every bundle, built locally (`build_bundle`) or received (`validate_received`), must be
-  instructions only (`check_instruction_only`, section 10.10): no `allowed-tools`, and no
-  body line with Claude Code's shell-injection syntax (`has_shell_injection`). These are
-  exact syntactic rules, not scanner heuristics, and no flag overrides them (ADR-018).
+  instructions only (`check_instruction_only`, section 10.10): no `allowed-tools`, and
+  Claude Code's shell-injection syntax nowhere in the file, body or frontmatter
+  (`has_shell_injection`). These are syntactic rules, not scanner heuristics, they
+  refuse more than Claude Code would run, and no flag overrides them (ADR-018,
+  ADR-050).
 * Received bundles reject any path other than exactly `SKILL.md`, as well as `..`,
   absolute paths, backslashes, hidden files, duplicates, symlinks and extra files.
 * The risk scanner gives advisory warnings (credential requests, `curl | sh`, remote

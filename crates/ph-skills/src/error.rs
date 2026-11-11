@@ -321,6 +321,12 @@ pub enum BundleError {
         /// 1-based line number in the SKILL.md body.
         line: usize,
     },
+    /// The same syntax outside the body: in a frontmatter value, or begun there and
+    /// closed in the body.
+    #[error(
+        "bundle frontmatter contains shell-injection syntax; a shared skill may not run commands"
+    )]
+    ShellInjectionInFrontmatter,
     /// SKILL.md failed to parse.
     #[error(transparent)]
     Parse(#[from] SkillError),

@@ -1022,16 +1022,18 @@ run things, so every bundle, whether built locally or received, is also refused 
 (`check_instruction_only`):
 
 * its frontmatter declares `allowed-tools`, which pre-approves tools for the agent; or
-* a line of its body contains syntax that Claude Code executes as a shell command when
-  the skill loads, before the model sees anything (`has_shell_injection`):
-  * an exclamation mark directly followed by a backtick, with another backtick later on
-    the same line; or
-  * a line that, after leading whitespace, starts with three backticks or three tildes
-    directly followed by an exclamation mark.
+* its file contains, anywhere, syntax that Claude Code executes as a shell command
+  when the skill loads, before the model sees anything (`has_shell_injection`):
+  * an exclamation mark directly followed by a backtick, with another backtick
+    anywhere after it in the file, on that line or a later one; or
+  * three backticks or three tildes directly followed by an exclamation mark,
+    wherever on a line they stand.
 
-These are exact syntactic rules, applied to every line of the body, and they err towards
-refusing (a line containing two separate code spans, the first of which ends in an
-exclamation mark, is refused). No vote, flag or confirmation overrides them (section
+These are syntactic rules applied to the whole file, the frontmatter included, and not
+line by line: Claude Code finds a fence in the middle of a sentence and a command that
+runs over several lines (ADR-050). They err towards refusing. Text with two separate
+code spans, the first of which ends in an exclamation mark, is refused, on one line or
+across the file. No vote, flag or confirmation overrides them (section
 14.6). Received skill text is otherwise untrusted prose: a risk scanner gives advisory
 findings, and what happens to a rule that passed is a local decision (section 14.6).
 
