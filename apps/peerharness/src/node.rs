@@ -13,7 +13,7 @@ use ph_identity::{
 };
 use ph_store::{IdentityMetadata, Store};
 
-use crate::config::Config;
+use crate::config::{Config, KdfProfile};
 use crate::error::usage;
 use crate::home::Home;
 
@@ -69,7 +69,13 @@ impl Node {
         if let Some(k) = self.keystore.get() {
             return Ok(k.as_ref());
         }
-        let ks = open_configured_keystore(&self.home, &self.config, self.backend()?)?;
+        let backend = self.backend()?;
+        let ks = open_configured_keystore(&self.home, &self.config, backend)?;
+        // Said where a person reads it, once for a process (ADR-050). The keystore
+        // itself only writes a line to the log, which nobody sees without `-v`.
+        if let Some(warning) = keystore_warning(backend, self.config.node.kdf_profile) {
+            crate::output::warn(warning);
+        }
         Ok(self.keystore.get_or_init(move || ks).as_ref())
     }
 
@@ -107,6 +113,26 @@ impl Node {
     }
 }
 
+/// What a command that uses a private key says about a keystore that does not protect
+/// it, on standard error.
+pub const PLAINTEXT_KEYS: &str = "this node's private keys are stored in PLAINTEXT (the \
+    insecure-dev keystore, for development only)";
+
+/// The same for key files that are encrypted with the parameters of the tests.
+pub const WEAK_KEY_FILES: &str = "this node writes its key files with the test profile \
+    (kdf_profile = \"fast-insecure-test\" in config.toml): their encryption is weak, for \
+    automated tests and demos only";
+
+/// The warning that goes with a keystore, if it has one. A key in the operating
+/// system's keychain or in a file encrypted with the default parameters has none.
+pub fn keystore_warning(backend: KeystoreBackend, kdf: KdfProfile) -> Option<&'static str> {
+    match backend {
+        KeystoreBackend::InsecureDev => Some(PLAINTEXT_KEYS),
+        KeystoreBackend::File if kdf == KdfProfile::FastInsecureTest => Some(WEAK_KEY_FILES),
+        KeystoreBackend::File | KeystoreBackend::Os => None,
+    }
+}
+
 /// Opens the keystore for `backend` with the config's KDF profile. The file backend
 /// takes the passphrase from `PEERHARNESS_PASSPHRASE` or prompts on the terminal.
 pub fn open_configured_keystore(
@@ -121,8 +147,9 @@ pub fn open_configured_keystore(
             kdf: config.node.kdf_profile.params(),
         },
         KeystoreBackend::InsecureDev => KeystoreConfig::InsecureDev(
-            // The human chose this explicitly with `init --insecure-dev-keystore`; the
-            // keystore warns on every load and store.
+            // The human chose this explicitly with `init --insecure-dev-keystore`. The
+            // keystore logs every load and store, and `Node::keystore` and `init` say
+            // it on standard error.
             InsecureAcknowledged::i_understand_keys_are_stored_in_plaintext(),
         ),
     };

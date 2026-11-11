@@ -72,7 +72,9 @@ cargo run -p peerharness -- init --keystore file
 ```
 
 `init --kdf-profile fast-insecure-test` makes key derivation fast for tests and demos. It
-is test-only, prints a warning, and must never be used for real keys.
+is test-only, prints a warning at `init` and in every command that uses a key
+afterwards, is refused inside a coding agent's session, and must never be used for real
+keys.
 
 `cargo run` and `cargo build` make a debug build. A debug build obeys the
 `PEERHARNESS_TEST_*` stand-ins that the tests use in place of a confirmation window, a

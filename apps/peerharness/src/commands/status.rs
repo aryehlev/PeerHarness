@@ -86,6 +86,12 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
     } else {
         "circle"
     };
+    // A keystore that does not protect the key is said here too (ADR-050): `status`
+    // unlocks nothing, so the warning of a command that does is not printed for it.
+    let keystore_warning = node
+        .backend()
+        .ok()
+        .and_then(|b| crate::node::keystore_warning(b, node.config.node.kdf_profile));
     let json = json!({
         "mode": mode,
         "home": node.home.root(),
@@ -93,6 +99,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         "fingerprint": me.fingerprint(),
         "peer_id": node.peer_id().to_string(),
         "keystore": node.identity.keystore_backend,
+        "keystore_warning": keystore_warning,
         "circles": circles_json,
         "candidates": by_status,
         "observations": observations,
@@ -115,6 +122,9 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
     t.kv("fingerprint", me.fingerprint());
     t.kv("peer id", node.peer_id());
     t.kv("keystore", &node.identity.keystore_backend);
+    if let Some(warning) = keystore_warning {
+        t.line(format!("  WARNING: {warning}"));
+    }
     t.kv(
         "daemon",
         daemon.as_ref().map_or("not running".to_owned(), |d| {

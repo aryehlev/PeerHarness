@@ -94,6 +94,14 @@ database schema it writes.
     written as an array of its members, or with a variant spelled as an object with
     a `null` in it, was read as if it were the real one, and is refused now. No
     frame a released binary sends is affected (protocol section 11.3).
+  * **A node with its keys in plaintext said so only at `init`.** The warning of
+    every later use was a line in the log that nobody saw. A command that uses a
+    key now prints it, and so does `status`. A `config.toml` that names
+    `insecure-dev` no longer stands in for `--insecure-dev-keystore`.
+  * **The weak key-file parameters of the tests could be turned on without a word.**
+    A config file that named `fast-insecure-test` made `init`, and later `circle
+    create`, encrypt key files weakly with no warning, and a session could pass the
+    flag. Both now warn, and `init` refuses the profile inside an agent's session.
 
 ## 0.4.0 (2026-11-11)
 

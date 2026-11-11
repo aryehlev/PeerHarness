@@ -173,7 +173,8 @@ stop, leave the feature disabled, and document the blocker.
   takes what it shows from the signed content (the amendment, the charter), never from
   a title or any other text a member wrote.
 * Inside a session `export --local` is refused as well, on standard output as to a
-  file, and `init` refuses the plaintext keystore, whether a flag or an existing
+  file, and `init` refuses the plaintext keystore and the weak key-file profile
+  (`fast-insecure-test`, ADR-050), whether a flag or an existing
   config file asks for it; a plain `init` stays allowed there (ADR-042). The
   `join_circle` tool takes a peer id or a multiaddr that names nothing on disk: a tool
   never makes `circle join` read a file. Inside a session `circle join` itself reads
@@ -215,7 +216,12 @@ stop, leave the feature disabled, and document the blocker.
 **Keys and identity**
 
 * No private key bytes in SQLite, logs or files other than the keystore. No silent
-  plaintext keys: `insecure-dev` requires an explicit flag and warns.
+  plaintext keys: `insecure-dev` requires an explicit flag and warns. A config file
+  that names it does not stand in for the flag, and the warning is on standard error
+  in every command that uses a key (`node::keystore_warning`), never only in the log
+  (ADR-050). The weak key-file parameters of the tests (`fast-insecure-test`) are
+  held to the same: warned about wherever they are in force, at `init` and after,
+  whether a flag or a config file turned them on.
 * The circle root key is separate from every device key and never leaves its keystore.
 * The libp2p identity is the device key; authorization uses the transport-authenticated
   device key, never a claimed id.

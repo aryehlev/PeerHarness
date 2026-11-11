@@ -479,23 +479,32 @@ fn the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not() 
     assert!(msg.contains("plaintext"), "{msg}");
     assert!(!preset.home.join("keys").exists(), "no key was written");
     assert!(!preset.home.join("peerharness.db").exists());
+    // For the person the file does not stand in for the flag (ADR-050): it used to,
+    // and a file put into a home made a plain `init` write a plaintext key.
+    let (code, json, printed) = preset.out(By::Person, &["init"]);
+    assert_eq!(code, 2, "{printed}");
+    let msg = json["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--insecure-dev-keystore"), "{printed}");
+    assert!(!preset.home.join("keys").exists(), "no key was written");
+    assert!(!preset.home.join("peerharness.db").exists());
+    let (code, json, printed) = preset.out(By::Person, &["init", "--insecure-dev-keystore"]);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(json["keystore"], "insecure-dev");
+    assert!(printed.contains("PLAINTEXT"), "{printed}");
 
     // --- A plain init is allowed inside a session: the README's setup prompt has the
-    // agent run it. The keys go to an encrypted file here.
-    let (code, json, printed) = node.out(
-        By::Agent,
-        &[
-            "init",
-            "--keystore",
-            "file",
-            "--kdf-profile",
-            "fast-insecure-test",
-        ],
-    );
+    // agent run it. The keys go to an encrypted file here, with the parameters a key
+    // file has by default.
+    let (code, json, printed) = node.out(By::Agent, &["init", "--keystore", "file"]);
     assert_eq!(code, 0, "{printed}");
     assert_eq!(json["created"], true);
     assert_eq!(json["keystore"], "file");
     assert!(!node.home.join("keys").join("device.insecure-key").exists());
+    assert_eq!(
+        kdf_of(&node.home.join("keys").join("device.key")),
+        (65536, 3)
+    );
+    assert!(!printed.contains("warning"), "{printed}");
 
     // --- And the person may still choose the plaintext keystore, with its warning.
     let dev = Node::bare_dirs(tmp.path(), "carol");
@@ -503,6 +512,123 @@ fn the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not() 
     assert_eq!(code, 0, "{printed}");
     assert_eq!(json["keystore"], "insecure-dev");
     assert!(printed.contains("PLAINTEXT"), "{printed}");
+
+    // --- The warning is not only `init`'s (ADR-050). It used to be a line in the log
+    // from then on, which nobody sees: a command that uses the key says it where a
+    // person reads, and `status`, which uses none, says it too.
+    let (code, _, printed) = dev.out(
+        By::Person,
+        &["circle", "create", "team", "--member", "carol"],
+    );
+    assert_eq!(code, 0, "{printed}");
+    assert!(
+        printed.contains("warning: this node's private keys are stored in PLAINTEXT"),
+        "{printed}"
+    );
+    let (_, status, printed) = dev.out(By::Person, &["status"]);
+    assert!(
+        status["keystore_warning"]
+            .as_str()
+            .unwrap()
+            .contains("PLAINTEXT"),
+        "{printed}"
+    );
+    // A command that uses no key says nothing.
+    let (code, _, printed) = dev.out(By::Person, &["inbox"]);
+    assert_eq!(code, 0, "{printed}");
+    assert!(!printed.contains("PLAINTEXT"), "{printed}");
+}
+
+/// The memory and time parameters a key file was encrypted with.
+fn kdf_of(key_file: &Path) -> (u64, u64) {
+    let file: Value = serde_json::from_slice(&std::fs::read(key_file).unwrap()).unwrap();
+    (file["m_kib"].as_u64().unwrap(), file["t"].as_u64().unwrap())
+}
+
+/// The weak parameters for key files are the tests' (ADR-050). Choosing them is the
+/// owner's decision like the plaintext keystore: a session is refused, whether a flag
+/// asks or a config file that was already there, and a person is warned in both cases
+/// and by every later command that writes or opens a key file under that profile. A
+/// config file used to turn the profile on with no word from `init`, and a session
+/// could pass the flag.
+#[test]
+fn the_weak_key_file_profile_is_refused_inside_a_session_and_never_silent() {
+    let tmp = TempDir::new().unwrap();
+    let weak = [
+        "init",
+        "--keystore",
+        "file",
+        "--kdf-profile",
+        "fast-insecure-test",
+    ];
+    let preset_config = "[node]\nkeystore = \"file\"\nkdf_profile = \"fast-insecure-test\"\n";
+
+    // --- The flag, inside a session: refused before anything is created.
+    let node = Node::bare_dirs(tmp.path(), "alice");
+    for by in [By::Agent, By::Marked] {
+        let msg = node.refused(by, &weak);
+        assert!(msg.contains("fast-insecure-test"), "{msg}");
+        assert!(msg.contains("your own terminal"), "{msg}");
+        assert!(!node.home.exists(), "nothing was created");
+    }
+
+    // --- A config file that names the profile, inside a session: the same.
+    let preset = Node::bare_dirs(tmp.path(), "bob");
+    std::fs::create_dir_all(&preset.home).unwrap();
+    std::fs::write(preset.home.join("config.toml"), preset_config).unwrap();
+    let msg = preset.refused(By::Agent, &["init"]);
+    assert!(msg.contains("fast-insecure-test"), "{msg}");
+    assert!(!preset.home.join("keys").exists(), "no key was written");
+    assert!(!preset.home.join("peerharness.db").exists());
+
+    // --- The person, with that config file and no flag: the node is made, and the
+    // warning that the flag always had is printed. It was not.
+    let (code, json, printed) = preset.out(By::Person, &["init"]);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(json["created"], true);
+    assert_eq!(
+        kdf_of(&preset.home.join("keys").join("device.key")),
+        (64, 1)
+    );
+    assert!(
+        printed.contains("warning: kdf profile fast-insecure-test"),
+        "{printed}"
+    );
+
+    // --- A node made with the default profile, whose config file is changed
+    // afterwards. The circle's root key is then written with the weak parameters: the
+    // command that writes it says so, and so does `status`.
+    let late = Node::bare_dirs(tmp.path(), "carol");
+    let (code, _, printed) = late.out(By::Person, &["init", "--keystore", "file"]);
+    assert_eq!(code, 0, "{printed}");
+    assert!(!printed.contains("warning"), "{printed}");
+    let (_, status, _) = late.out(By::Person, &["status"]);
+    assert_eq!(status["keystore_warning"], Value::Null);
+    let config = late.home.join("config.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("[node]\n"), "{text}");
+    std::fs::write(
+        &config,
+        text.replace("[node]\n", "[node]\nkdf_profile = \"fast-insecure-test\"\n"),
+    )
+    .unwrap();
+    let (code, _, printed) = late.out(
+        By::Person,
+        &["circle", "create", "team", "--member", "carol"],
+    );
+    assert_eq!(code, 0, "{printed}");
+    assert!(
+        printed.contains("warning: this node writes its key files with the test profile"),
+        "{printed}"
+    );
+    let (_, status, printed) = late.out(By::Person, &["status"]);
+    assert!(
+        status["keystore_warning"]
+            .as_str()
+            .unwrap()
+            .contains("fast-insecure-test"),
+        "{printed}"
+    );
 }
 
 /// consent-12. The inbox label tells the owner which rules their agent wrote. Inside a

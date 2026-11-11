@@ -16,6 +16,13 @@ pub struct Output {
     pub json: bool,
 }
 
+/// A warning on standard error, for code that has no [`Output`] at hand. `--json` does
+/// not hide it: it is not part of the report.
+pub fn warn(text: impl AsRef<str>) {
+    let mut e = std::io::stderr().lock();
+    let _ = writeln!(e, "warning: {}", text.as_ref());
+}
+
 impl Output {
     /// A human-facing note, preview or progress line.
     pub fn note(&self, text: impl AsRef<str>) {
@@ -32,8 +39,7 @@ impl Output {
 
     /// A warning, always on stderr.
     pub fn warn(&self, text: impl AsRef<str>) {
-        let mut e = std::io::stderr().lock();
-        let _ = writeln!(e, "warning: {}", text.as_ref());
+        warn(text);
     }
 
     /// Prints the final report.

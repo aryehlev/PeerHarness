@@ -120,7 +120,9 @@ allowed:
   is never refused.
 * `peerharness export --local` and `peerharness events export`, which write your notes
   and a circle's records out.
-* `peerharness init` with the plaintext keystore (`insecure-dev`). A plain `init`
+* `peerharness init` with the plaintext keystore (`insecure-dev`), or with the weak
+  key-file parameters of the tests (`--kdf-profile fast-insecure-test`), whether a
+  flag asks for it or a `config.toml` that is already in the home. A plain `init`
   works there.
 
 A note written inside a session is labelled "reported by your agent" in your inbox,
@@ -793,7 +795,8 @@ peerharness init --keystore insecure-dev --insecure-dev-keystore   # plaintext k
 ```
 
 Type the last line in your own terminal: inside a coding agent's session the plaintext
-keystore is refused.
+keystore is refused. From then on every command that uses the key prints a warning
+that it is stored in plaintext, and `peerharness status` says it too.
 
 `demo/two-peers.sh`, in a clone of the repository, runs two nodes as two processes
 over QUIC on loopback, in a temporary folder. It refuses inside a coding agent's

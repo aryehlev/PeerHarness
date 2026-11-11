@@ -3700,3 +3700,47 @@ before. The events inside a frame stay raw values that are checked one by one.
 (`crates/ph-protocol/tests/adversarial.rs`): the frames the audit found accepted,
 each beside the form the encoder writes, and a proof inside `authenticate` written
 as an array. The golden vectors did not change.
+
+### A keystore that does not protect the key says so where it is read
+
+**Found.** The security model said the plaintext keystore "warns on every unlock".
+The warning was a line in the log, and the log shows warnings only with `-v`. After
+`init`, a node with its keys in plaintext signed proposals and ballots with nothing
+on standard error, and `status` printed the keystore's name and no more. A
+`config.toml` that was in a home before `init` and named `insecure-dev` made a plain
+`init` write a plaintext key, with a warning and without the flag that is required
+otherwise.
+
+The weak parameters for key files (`fast-insecure-test`, 64 KiB and one pass in
+place of 64 MiB and three) were warned about only when the flag was passed. A config
+file that named the profile turned it on for `init` with no word. A profile written
+into the config file of a node afterwards made `circle create` encrypt the circle's
+root key weakly, again with no word. And a session could pass the flag, where it
+cannot choose the plaintext keystore.
+
+**Decision.** `Node::keystore` opens the keystore once for a process, for every
+command that uses a key. It prints one warning on standard error there when the keys
+are in plaintext, or when the node writes key files with the test profile
+(`node::keystore_warning`). `status` unlocks nothing and prints the same warning
+(`keystore_warning` with `--json`). `init` warns about the profile that is in force,
+whoever asked for it, and refuses it inside a session before anything is created, as
+it refuses the plaintext keystore. A config file that names `insecure-dev` no longer
+stands in for `--insecure-dev-keystore`: a person is told to pass the flag or to
+choose another keystore, and nothing is created.
+
+**Rejected.** Raising the default log level so that the keystore's own line shows:
+it would show every other warning of every library too, in the middle of previews.
+
+**Not changed.** A key file keeps the parameters it was written with. A device key
+written with the test profile stays weak when the profile is taken out of the config
+file, and the warning, which reads the config file, stops. `doctor` reads the config
+file as well. Nothing re-encrypts a key file. A warning that an agent's tool prints
+reaches the agent, since a tool returns what its command printed.
+
+**Tests.** `the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not`
+and `the_weak_key_file_profile_is_refused_inside_a_session_and_never_silent`
+(`apps/peerharness/tests/session_gates.rs`). The audit's two scripts were run again:
+a command that signs on a plaintext node prints the warning with no `-v`, a plain
+`init` over a config file with the test profile warns, `circle create` after the
+profile was written into the config file warns, and the flag inside a session is
+refused.

@@ -206,7 +206,11 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Threat.** Malware on a member's machine, or a stolen laptop.
 * **Mitigation.** Private keys are stored in the OS keychain or in an Argon2id
   (64 MiB, 3 passes) plus XChaCha20-Poly1305 encrypted file with 0600 permissions; the
-  plaintext keystore requires an explicit flag and warns on every unlock. The founder
+  plaintext keystore requires an explicit flag, which a config file does not stand in
+  for, and every command that uses a key from it says so on standard error, as
+  `status` does. The weak parameters that the tests encrypt key files with
+  (`fast-insecure-test`) are warned about in the same places, and `init` refuses both
+  inside an agent's session. The founder
   can revoke a lost or stolen device at once (`circle revoke`, 4.16), which stops it
   from syncing and from being counted on every node that learns of it, and the members
   can vote to replace the device or remove the member.
