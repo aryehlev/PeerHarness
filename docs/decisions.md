@@ -3792,3 +3792,34 @@ does not make one.
 (`apps/peerharness/tests/first_run.rs`): a tab and a line break in the path, twice
 each, a folder that already held its owner's file, and a path with a space, a quote
 and a letter outside ASCII, which works. The audit's script was run again.
+
+### A quota counts the questions that were shown
+
+**Found.** A node shows at most 20 questions of one author and 100 of one circle in
+a day, and keeps the rest without showing them. The two counts took every row of the
+table: the questions that were held back, and what the node's own owner had asked.
+One member who sent a hundred questions had twenty shown and used up the whole
+circle's day, so the one question of any other member was held back for the next 24
+hours, on every node that had received the flood. An owner who asked a lot did the
+same to their own inbox. A question that was held back also kept its text: the table
+has one row for a circle and a text, so the same question from a member in good
+standing got no row and was never shown. A muted author could so decide which
+questions the others would not see, by asking them first.
+
+**Decision.** A quota counts accepted questions: not those with the status `muted`,
+which only the guard sets, and for the circle's count not the owner's own. A held-back
+question is stored through `Store::insert_held_question`, which records a value that
+no text can be in place of its text. A row that an earlier version held back with its
+text in place gives the text up when an accepted question has it
+(`Store::insert_question`). "Asked already" means asked and shown.
+
+**Not changed.** The limits themselves, and that they are not in the config file.
+A member can still fill their own twenty a day, and five members the circle's
+hundred. A question that was held back stays so: nothing shows it later when the
+day has room again.
+
+**Tests.** `a_flood_from_one_member_does_not_hide_the_questions_of_another`
+(`apps/peerharness/src/governance.rs`) and `questions_dedup_inbox_and_quotas`
+(`crates/ph-store/tests/repositories.rs`). The audit's script was run again with
+three nodes: after bob's hundred questions carol's one is `new` on alice's node and
+in her list, where it was `muted`.

@@ -507,9 +507,68 @@ fn questions_dedup_inbox_and_quotas() {
             .unwrap(),
         0
     );
+    // What this node's own owner asked is not counted against the circle's day.
     assert_eq!(
         s.count_questions_by_circle_since(&circle(), now()).unwrap(),
-        3
+        2
+    );
+
+    // A question that was held back: kept, counted against nothing, and it takes no
+    // text. The same question from someone else is stored and shown.
+    let held = question(BOB, "team/backend", "Bun or deno?", 6);
+    assert_eq!(
+        s.insert_held_question(&nq(&held, "bun or deno", false))
+            .unwrap(),
+        QuestionInsert::Inserted
+    );
+    assert_eq!(
+        s.insert_held_question(&nq(&held, "bun or deno", false))
+            .unwrap(),
+        QuestionInsert::DuplicateEvent
+    );
+    assert_eq!(
+        s.question(&held.event_id).unwrap().unwrap().status,
+        QuestionStatus::Muted
+    );
+    assert_eq!(
+        s.count_questions_by_author_since(&pk(BOB), now()).unwrap(),
+        2
+    );
+    assert_eq!(
+        s.count_questions_by_circle_since(&circle(), now()).unwrap(),
+        2
+    );
+    assert!(!s.question_text_exists(&circle(), "bun or deno").unwrap());
+    let asked = question(CAROL, "team/backend", "bun or deno", 7);
+    assert_eq!(
+        s.insert_question(&nq(&asked, "bun or deno", false))
+            .unwrap(),
+        QuestionInsert::Inserted
+    );
+    assert!(s.question_text_exists(&circle(), "bun or deno").unwrap());
+    // A second held-back question with that text is kept beside it.
+    let held_too = question(BOB, "team/backend", "Bun or Deno??", 8);
+    assert_eq!(
+        s.insert_held_question(&nq(&held_too, "bun or deno", false))
+            .unwrap(),
+        QuestionInsert::Inserted
+    );
+
+    // A row that an earlier version held back with its text in place gives the text
+    // up when the question is asked again.
+    let old = question(BOB, "team/backend", "Rust or Go?", 9);
+    s.insert_question(&nq(&old, "rust or go", false)).unwrap();
+    s.set_question_status(&old.event_id, QuestionStatus::Muted)
+        .unwrap();
+    assert!(!s.question_text_exists(&circle(), "rust or go").unwrap());
+    let anew = question(CAROL, "team/backend", "Rust or go", 10);
+    assert_eq!(
+        s.insert_question(&nq(&anew, "rust or go", false)).unwrap(),
+        QuestionInsert::Inserted
+    );
+    assert_eq!(
+        s.question(&old.event_id).unwrap().unwrap().status,
+        QuestionStatus::Muted
     );
     assert!(matches!(
         s.insert_question(&nq(&q3, "", false)),

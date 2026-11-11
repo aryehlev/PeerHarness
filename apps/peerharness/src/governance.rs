@@ -33,7 +33,7 @@ use ph_protocol::{
     VerifiedEnvelope, VoteBody, VoteDecision,
 };
 use ph_skills::{Bundle, BundleStore};
-use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, QuestionStatus, Store};
+use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, Store};
 use serde_json::{json, Value};
 
 use crate::amendment::{self, Changes};
@@ -442,9 +442,18 @@ fn ingest_question(
         let outcome = s.insert_event(verified, origin_peer, now)?;
         if outcome == InsertOutcome::Inserted && !normalized.is_empty() {
             if let Some(q) = NewQuestion::from_envelope(verified, normalized.clone(), mine, now) {
-                let listed = s.insert_question(&q)? == ph_store::QuestionInsert::Inserted;
-                if listed && !decision.is_accept() {
-                    s.set_question_status(&q.event_id, QuestionStatus::Muted)?;
+                match decision {
+                    GuardDecision::Accept => {
+                        s.insert_question(&q)?;
+                    }
+                    // Asked already, and shown: no second entry.
+                    GuardDecision::Drop(ph_governance::DropReason::Duplicate) => {}
+                    // Held back. It takes no text and counts against no quota
+                    // (ADR-050): what the owner was not shown must not keep the same
+                    // question, or another member's, from being shown.
+                    GuardDecision::Drop(_) => {
+                        s.insert_held_question(&q)?;
+                    }
                 }
             }
         }
@@ -3064,6 +3073,76 @@ pub(crate) mod tests {
         assert_eq!(ingest(&store, &mine, None, now).unwrap(), Ingest::Stored);
         let row = store.question(&id_of(&mine)).unwrap().unwrap();
         assert!(row.is_local && row.status == QuestionStatus::New);
+    }
+
+    /// The quotas count what was shown (ADR-050). One member's flood used to count
+    /// in full against the circle's day, the eighty questions that were held back
+    /// with the twenty that were shown, so that the next member's one question was
+    /// held back too. A held-back question also kept its text, and the same question
+    /// from anyone else was then never shown. And what the owner asked counted
+    /// against what the others may ask.
+    #[test]
+    fn a_flood_from_one_member_does_not_hide_the_questions_of_another() {
+        let (store, circle, now) = node();
+        let shown = |raw: &[u8]| store.question(&id_of(raw)).unwrap().map(|q| q.status);
+
+        // The owner's own questions, more than a circle's day: none of them counts.
+        for i in 0..110 {
+            let raw = question(1, &circle, "*", &format!("Mine, number {i}?"), now);
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+        }
+        // Bob floods: a hundred questions. Twenty are shown.
+        let mut flood = Vec::new();
+        for i in 0..100 {
+            let raw = question(2, &circle, "*", &format!("Flood, number {i}?"), now);
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+            flood.push(raw);
+        }
+        let inbox = store.inbox(&[QuestionStatus::New]).unwrap();
+        assert_eq!(inbox.len(), 20);
+        assert_eq!(shown(&flood[19]), Some(QuestionStatus::New));
+        assert_eq!(shown(&flood[20]), Some(QuestionStatus::Muted));
+
+        // Carol's one question is shown.
+        let honest = question(3, &circle, "team/backend", "Do we pin the toolchain?", now);
+        assert_eq!(ingest(&store, &honest, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&honest), Some(QuestionStatus::New));
+
+        // A question of bob's that was held back does not take its text: carol asks
+        // the same, and it is shown.
+        let same = question(3, &circle, "team/backend", "flood number 99", now);
+        assert_eq!(shown(&flood[99]), Some(QuestionStatus::Muted));
+        assert_eq!(ingest(&store, &same, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&same), Some(QuestionStatus::New));
+        // And the owner can ask it too: `question send` looks for the text first.
+        assert!(!store
+            .question_text_exists(&circle, &normalize_question_text("Flood, number 98?"))
+            .unwrap());
+
+        // A question that was shown still gets no second entry.
+        let again = question(3, &circle, "team/backend", "FLOOD number 5", now);
+        assert_eq!(ingest(&store, &again, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&again), None);
+
+        // Bob stays held to his own day: one more is held back, and stays so.
+        let more = question(2, &circle, "*", "And one more from bob?", now);
+        assert_eq!(ingest(&store, &more, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&more), Some(QuestionStatus::Muted));
+        assert_eq!(store.inbox(&[QuestionStatus::New]).unwrap().len(), 22);
+
+        // The circle's day is still a limit, of questions that were shown: carol is
+        // held to twenty like bob, and what is over is held back.
+        for i in 0..30 {
+            let raw = question(
+                3,
+                &circle,
+                "team/backend",
+                &format!("Carol, number {i}?"),
+                now,
+            );
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+        }
+        assert_eq!(store.inbox(&[QuestionStatus::New]).unwrap().len(), 40);
     }
 
     pub(crate) fn adopt(

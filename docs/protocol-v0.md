@@ -2232,6 +2232,12 @@ Keeping the event in the first place makes sync idempotent and lets an ANSWER to
 checked. A question the node's own owner asked is never held back. The peer that carried
 the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
 
+A quota counts questions that were shown. A question that was held back, for a muted
+author or for a quota, counts against no quota and takes no text: the same question
+from another member is shown, and one member who sends a hundred questions in a day
+uses twenty of the circle's hundred. What the node's own owner asked does not count
+against the circle's day either.
+
 ### 14.9 Known limits
 
 * **Founder liveness.** Without the root key holder no charter can be issued, so the

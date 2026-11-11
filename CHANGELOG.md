@@ -108,6 +108,11 @@ database schema it writes.
   * `init` in a folder whose path holds a tab or a line break is refused before
     anything is written. It used to write a key file and a database, fail, and fail
     again at every later run.
+  * **One member's flood of questions hid everyone else's.** The daily limits counted
+    the questions that were held back along with those that were shown, so a hundred
+    questions from one member used up the team's day. A held-back question also kept
+    the same question from anyone else out of the inbox. The limits now count what
+    was shown, and a held-back question takes no text.
 
 ## 0.4.0 (2026-11-11)
 
