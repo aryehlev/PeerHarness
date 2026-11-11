@@ -349,6 +349,14 @@ impl Changes {
             .then_some(Unread::Dropped)
     }
 
+    /// Whether `other` says the same as this: the same lines for a person, a rule's
+    /// text included, and the same JSON. `proposal vote` reads the changes again after
+    /// its owner answered, and signs an approval only when they are still what was
+    /// shown.
+    pub fn same_as(&self, other: &Changes) -> bool {
+        self.describe("") == other.describe("") && self.json() == other.json()
+    }
+
     fn who(&self, member: &str) -> String {
         if self.you.as_deref() == Some(member) {
             format!("{member} (you)")
@@ -1015,6 +1023,47 @@ mod tests {
         let added = &c.json()["rules_in_force"]["added"][0];
         assert_eq!(added["stays_behind"], json!(id(1)));
         assert_eq!(added["replaces"], Value::Null);
+    }
+
+    /// `proposal vote` reads the changes again after its owner answered: what it then
+    /// reads has to say the same, down to a rule's text.
+    #[test]
+    fn two_readings_are_the_same_only_when_they_say_the_same() {
+        let named = trio();
+        let read = |rules: Rules| changes(3, &named, &named.clone(), rules, Some(&device(1)));
+        let listed = |text: Option<Bundle>| Rules::Compared {
+            in_force: 1,
+            dropped: Vec::new(),
+            added: vec![Added {
+                proposal_id: id(2),
+                rule: Some(AddedRule {
+                    skill_name: "run-tests".into(),
+                    text,
+                    same_name: None,
+                }),
+            }],
+        };
+        let dropped = || Rules::Compared {
+            in_force: 1,
+            dropped: vec![Dropped {
+                skill_name: Some("use-pnpm".into()),
+                proposal_id: id(5),
+            }],
+            added: Vec::new(),
+        };
+        assert!(read(exact(1)).same_as(&read(exact(1))));
+        assert!(read(dropped()).same_as(&read(dropped())));
+        // A rule passed meanwhile and the amendment does not carry it.
+        assert!(!read(exact(0)).same_as(&read(dropped())));
+        // The same lists, with one rule more in force than was said.
+        assert!(!read(exact(1)).same_as(&read(exact(2))));
+        // The charter changed: the proposal no longer counts.
+        assert!(!read(exact(1)).same_as(&read(Rules::Lapsed { current_seq: 4 })));
+        // A rule's text arrived, or is another one.
+        let text = |body: &str| Some(rule_text("run-tests", body));
+        assert!(read(listed(text("a"))).same_as(&read(listed(text("a")))));
+        assert!(!read(listed(None)).same_as(&read(listed(text("a")))));
+        assert!(!read(listed(text("a"))).same_as(&read(listed(text("b")))));
     }
 
     #[test]

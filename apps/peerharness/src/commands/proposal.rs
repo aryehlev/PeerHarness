@@ -295,6 +295,13 @@ fn proposers_words(title: &str) -> String {
     )
 }
 
+/// The refusal of an approval of an amendment whose effects on this node are no longer
+/// the ones its voter was shown. Names nothing a member wrote.
+const AMENDMENT_CHANGED: &str =
+    "what this amendment would change is no longer what you were shown: the charter or the \
+     rules in force changed on this node while you read. Nothing was signed. Run the command \
+     again.";
+
 /// Why this node cannot say what an amendment changes. (A proposal is stored only once
 /// the charter it names is here, so this is a damaged store, not an everyday case.)
 const NO_NAMED_CHARTER: &str = "this node does not hold the charter that amendment names";
@@ -768,6 +775,35 @@ fn vote(
         confirm_circle_or_window(&ctx.out, &preview, yes, "the ballot", &node.config)?;
     } else {
         confirm(&ctx.out, &preview, yes, "the ballot")?;
+    }
+
+    // An approval is for what was shown. What an amendment changes is read against the
+    // charter and the rules in force on this node, and both can have changed while the
+    // owner read (a sync, an import): a rule that passed meanwhile is one the amendment
+    // now drops, and a window that said "and nothing else" said it about another state.
+    // Read it again, and sign nothing when it is no longer what they were shown. A
+    // reject or a revise approves nothing and is not refused.
+    if decision == VoteDecision::Approve {
+        if let Some(shown) = &amendment {
+            let now = governance::amendment_changes(&node.store, &bundles, &p, &node.device_key())?;
+            let same = match (shown, &now) {
+                (Some(shown), Some(now)) => shown.same_as(now),
+                _ => false,
+            };
+            let window_still_fits = !circle_window || {
+                let (current, in_force, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+                admission.is_some_and(|(entry, seq)| {
+                    current.seq == seq
+                        && matches!(
+                            sole_admission(&p, &current, &in_force),
+                            Ok(Some(still)) if still == entry
+                        )
+                })
+            };
+            if !same || !window_still_fits {
+                return Err(refused(AMENDMENT_CHANGED));
+            }
+        }
     }
 
     let key = node.device()?.signing_key();

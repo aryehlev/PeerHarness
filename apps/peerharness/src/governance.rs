@@ -660,7 +660,8 @@ pub struct NewProposal<'a> {
     pub action: ph_protocol::ProposalAction,
 }
 
-/// Puts a proposal to the vote under the circle's current charter.
+/// Puts a proposal to the vote under the circle's current charter. For `adopt` and
+/// `repeal` proposals; a change to the charter goes through [`propose_under`].
 pub fn propose(
     store: &Store,
     key: &SigningKey,
@@ -668,14 +669,82 @@ pub fn propose(
     new: NewProposal<'_>,
     now: Timestamp,
 ) -> Result<ProposalView> {
-    let charter = current_charter(store, circle)?;
+    let charter = current_charter(store, circle)?.digest()?;
+    sign_proposal(store, key, circle, charter, new, now)
+}
+
+/// The refusal of a change to the charter whose draft is no longer what this node
+/// would draft: the charter, or the rules the draft carries, changed while the owner
+/// read the preview. Names nothing a member wrote.
+pub const CHARTER_CHANGED: &str =
+    "the circle's charter changed on this node while this was being confirmed. Nothing was \
+     proposed and nothing was signed. Run the command again to see what it would do now.";
+
+/// Puts a change to the charter to the vote under the charter it was drafted from.
+///
+/// An amendment is a complete next charter, built from the charter that was current
+/// when its preview was made. The owner's yes is for that preview. A sync or an import
+/// can store a newer charter while they read, and a draft of the older one signed under
+/// the newer one would undo whatever that one changed. So `drafted` is the digest of
+/// the charter the draft was built from: when the circle's current charter is another
+/// one, nothing is signed, and otherwise the proposal names `drafted` itself. A charter
+/// that arrives in the instant between this check and the signature leaves a proposal
+/// that names the earlier charter, which can no longer pass.
+pub fn propose_under(
+    store: &Store,
+    key: &SigningKey,
+    circle: &CircleId,
+    drafted: &Digest,
+    new: NewProposal<'_>,
+    now: Timestamp,
+) -> Result<ProposalView> {
+    if current_charter(store, circle)?.digest()? != *drafted {
+        return Err(crate::error::refused(CHARTER_CHANGED));
+    }
+    sign_proposal(store, key, circle, *drafted, new, now)
+}
+
+/// Checks, after the owner confirmed a change to the charter, that this node would
+/// still draft what they were shown: the current charter is `shown`, and the rules in
+/// force are the ones the draft carries (`rules`, read together with `shown` before the
+/// preview), with none of them missing that was not missing then. Returns the digest of
+/// `shown`, which is what [`propose_under`] takes.
+///
+/// The second half covers what the charter's digest does not: a rule that passed, was
+/// repealed or arrived while the owner read. A draft made before it would drop that
+/// rule, or bring it back, under a preview that said the rules stay as they are.
+pub fn as_drafted(
+    store: &Store,
+    circle: &CircleId,
+    shown: &Charter,
+    rules: &RuleSet,
+) -> Result<Digest> {
+    let digest = shown.digest()?;
+    let (current, now_in_force, _) = rule_set(store, circle)?;
+    if current.digest()? != digest
+        || now_in_force.carried_ids() != rules.carried_ids()
+        || now_in_force.missing_carried() != rules.missing_carried()
+    {
+        return Err(crate::error::refused(CHARTER_CHANGED));
+    }
+    Ok(digest)
+}
+
+fn sign_proposal(
+    store: &Store,
+    key: &SigningKey,
+    circle: &CircleId,
+    charter: Digest,
+    new: NewProposal<'_>,
+    now: Timestamp,
+) -> Result<ProposalView> {
     let scope = if new.action.kind() == ProposalKind::Amend {
         Scope::all()
     } else {
         new.scope.clone()
     };
     let body = EventBody::Proposal(ProposalBody {
-        charter: charter.digest()?,
+        charter,
         title: new.title.to_owned(),
         summary: new.summary.to_owned(),
         action: new.action,
@@ -3226,5 +3295,204 @@ mod tests {
             .text("run-tests")
             .unwrap()
             .contains("as soon as it compiles"));
+    }
+
+    /// The next charter after `current`, with `content`, as the founder's node issues
+    /// it, stored as this node's current charter.
+    fn next_charter(store: &Store, current: &Charter, content: CharterContent, now: Timestamp) {
+        let authority = CircleAuthority::from_signing_key(key(100));
+        let next = authority
+            .issue_next_charter(
+                current,
+                content,
+                EventId::from_digest(Digest::sha256(b"the result behind it")),
+                now,
+            )
+            .unwrap();
+        store.insert_charter(&next, now).unwrap();
+    }
+
+    fn admission(current: &Charter, member: &str, seed: u8) -> NewProposal<'static> {
+        let mut next = current.content.clone();
+        next.roll.push(RollEntry::new(
+            member,
+            vec![device(seed)],
+            vec![Scope::all()],
+        ));
+        next.normalize();
+        NewProposal {
+            scope: &ALL,
+            title: "Admit a member",
+            summary: "",
+            action: ph_protocol::ProposalAction::Amend { next },
+        }
+    }
+
+    static ALL: std::sync::LazyLock<Scope> = std::sync::LazyLock::new(Scope::all);
+
+    /// A change to the charter is drafted from the charter its preview named, and the
+    /// owner's yes is for that preview. `propose` used to read the current charter at
+    /// the moment of signing: with a charter that arrived while the owner read, the
+    /// draft of charter 1 was signed as an amendment of charter 2, undoing whatever
+    /// charter 2 had changed.
+    #[test]
+    fn a_change_to_the_charter_is_signed_only_under_the_charter_it_was_drafted_from() {
+        let (store, circle, now) = node();
+        let first = current_charter(&store, &circle).unwrap();
+        let drafted = first.digest().unwrap();
+        let proposals = |store: &Store| store.proposals(&circle).unwrap().len();
+
+        // The charter is the one the draft was built from: it is signed, and names it.
+        let signed = propose_under(
+            &store,
+            &key(1),
+            &circle,
+            &drafted,
+            admission(&first, "dave", 4),
+            now,
+        )
+        .unwrap();
+        assert_eq!(signed.charter(), drafted);
+        assert_eq!(proposals(&store), 1);
+
+        // Charter 2 arrives: it admits erin. A draft of charter 1 that admits frank
+        // would take erin off the roll again.
+        let mut content = first.content.clone();
+        content
+            .roll
+            .push(RollEntry::new("erin", vec![device(5)], vec![Scope::all()]));
+        content.normalize();
+        next_charter(&store, &first, content, now);
+        let second = current_charter(&store, &circle).unwrap();
+        assert_eq!(second.seq, 2);
+
+        let refused = propose_under(
+            &store,
+            &key(1),
+            &circle,
+            &drafted,
+            admission(&first, "frank", 6),
+            now,
+        )
+        .unwrap_err();
+        assert_eq!(
+            crate::error::exit_kind(&refused),
+            crate::error::ExitKind::Refused
+        );
+        assert_eq!(refused.to_string(), CHARTER_CHANGED);
+        assert_eq!(proposals(&store), 1, "nothing was signed or stored");
+
+        // Drafted again from charter 2, it is signed under charter 2.
+        let again = propose_under(
+            &store,
+            &key(1),
+            &circle,
+            &second.digest().unwrap(),
+            admission(&second, "frank", 6),
+            now,
+        )
+        .unwrap();
+        assert_eq!(again.charter(), second.digest().unwrap());
+        // An `adopt` or `repeal` proposal is put under whatever charter is current.
+        let repeal = propose(
+            &store,
+            &key(1),
+            &circle,
+            NewProposal {
+                scope: &Scope::all(),
+                title: "Repeal it",
+                summary: "",
+                action: ph_protocol::ProposalAction::Repeal {
+                    target: EventId::from_digest(Digest::sha256(b"some rule")),
+                },
+            },
+            now,
+        )
+        .unwrap();
+        assert_eq!(repeal.charter(), second.digest().unwrap());
+    }
+
+    /// What `circle invite`, `remove`, `amend` and `device` check after the owner
+    /// answered and before the key is used (`as_drafted`): this node would still draft
+    /// what the preview showed. The charter's digest alone does not say so. A rule that
+    /// passed or was repealed while the owner read, or a carried rule that arrived,
+    /// leaves the charter as it is and makes the draft drop a rule or bring one back.
+    #[test]
+    fn a_draft_is_put_to_the_vote_only_while_the_node_would_still_draft_it() {
+        let (store, circle, now) = node();
+        let machine = Machine::new();
+        let changed = |shown: &Charter, rules: &RuleSet| -> bool {
+            match as_drafted(&store, &circle, shown, rules) {
+                Ok(digest) => {
+                    assert_eq!(digest, shown.digest().unwrap());
+                    false
+                }
+                Err(e) => {
+                    assert_eq!(e.to_string(), CHARTER_CHANGED);
+                    assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+                    true
+                }
+            }
+        };
+
+        // Nothing happened while the owner read.
+        let (shown, rules, _) = rule_set(&store, &circle).unwrap();
+        assert!(!changed(&shown, &rules));
+
+        // A rule passed meanwhile: the draft, which carries no rule, would drop it.
+        let (rule, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            "run-tests",
+            "Run the tests before you say a task is done.",
+            now,
+        );
+        assert!(changed(&shown, &rules));
+        // Read again, the draft carries it. Then the rule is repealed: the draft would
+        // bring it back.
+        let (shown, rules, _) = rule_set(&store, &circle).unwrap();
+        assert_eq!(rules.carried_ids(), [rule.event_id()]);
+        assert!(!changed(&shown, &rules));
+        repeal(&store, &circle, &rule, now);
+        assert!(changed(&shown, &rules));
+
+        // A newer charter: the draft was built from another roll.
+        let (shown, rules, _) = rule_set(&store, &circle).unwrap();
+        assert!(!changed(&shown, &rules));
+        // It carries a rule proposal that has not reached this node yet.
+        let late = skill("small-commits", "Keep commits small.");
+        let unheld = proposal(
+            &store,
+            2,
+            &circle,
+            "Keep commits small.",
+            ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+                skill_name: late.name().to_owned(),
+                description: late.description().to_owned(),
+                bundle_digest: late.digest(),
+                bundle_size: late.size(),
+                related_question: None,
+                supersedes: None,
+            }),
+            now,
+        );
+        let mut content = shown.content.clone();
+        content.carried = vec![id_of(&unheld)];
+        next_charter(&store, &shown, content, now);
+        assert!(changed(&shown, &rules));
+
+        // The charter stays, and the carried rule arrives: a draft made while it was
+        // missing lists nothing, and would now drop a rule this node can name.
+        let (shown, rules, _) = rule_set(&store, &circle).unwrap();
+        assert_eq!(shown.seq, 2);
+        assert_eq!(rules.missing_carried(), [id_of(&unheld)]);
+        assert!(!changed(&shown, &rules));
+        assert_eq!(ingest(&store, &unheld, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(
+            current_charter(&store, &circle).unwrap().digest().unwrap(),
+            shown.digest().unwrap()
+        );
+        assert!(changed(&shown, &rules));
     }
 }

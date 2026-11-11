@@ -326,12 +326,17 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
         &node.config,
     )?;
 
+    // The yes was for an admission to the charter the preview named. What this node
+    // holds can have changed while the owner read (a sync, an import): nothing is
+    // signed then, and the key is not touched.
+    let drafted = governance::as_drafted(&node.store, &id, &current, &rules)?;
     let key = node.device()?.signing_key();
     let title = format!("Admit {}", args.member);
-    let proposal = governance::propose(
+    let proposal = governance::propose_under(
         &node.store,
         key,
         &id,
+        &drafted,
         NewProposal {
             scope: &Scope::all(),
             title: &title,
@@ -542,21 +547,36 @@ fn need_line(current: &Charter, next: &CharterContent) -> String {
     )
 }
 
-/// Puts `next` to the vote as an amendment of `circle`'s current charter, casts the
-/// proposer's approval and settles. The caller has shown the preview and has the
+/// What an amendment was drafted from and its preview was made of: the charter that
+/// was current then, and the rules in force then, which the draft carries.
+struct Drafted<'a> {
+    current: &'a Charter,
+    rules: &'a RuleSet,
+}
+
+/// Puts `next` to the vote as an amendment of the charter it was drafted from, casts
+/// the proposer's approval and settles. The caller has shown the preview and has the
 /// owner's confirmation.
+///
+/// The confirmation is for what the preview said. When this node no longer holds what
+/// the draft was made from (`from`), because a sync or an import stored a newer charter
+/// or changed the rules in force while the owner read, this refuses before the key is
+/// used and before anything is stored ([`governance::as_drafted`]).
 fn put_amendment(
     node: &Node,
     circle: &CircleRow,
     title: &str,
     next: CharterContent,
+    from: &Drafted<'_>,
 ) -> Result<Put> {
     let now = node.now();
+    let drafted = governance::as_drafted(&node.store, &circle.circle_id, from.current, from.rules)?;
     let key = node.device()?.signing_key();
-    let proposal = governance::propose(
+    let proposal = governance::propose_under(
         &node.store,
         key,
         &circle.circle_id,
+        &drafted,
         NewProposal {
             scope: &Scope::all(),
             title,
@@ -645,7 +665,17 @@ fn remove(ctx: &Ctx, args: CircleRemoveArgs) -> Result<Report> {
         need = need_line(&current, &next),
     );
     confirm(&ctx.out, &preview, args.yes, "the removal proposal")?;
-    let put = put_amendment(&node, &circle, &format!("Remove {}", args.member), next)?;
+    let from = Drafted {
+        current: &current,
+        rules: &rules,
+    };
+    let put = put_amendment(
+        &node,
+        &circle,
+        &format!("Remove {}", args.member),
+        next,
+        &from,
+    )?;
     let mut t = Text::new();
     t.line(format!(
         "Proposed removing {} (proposal {}).",
@@ -755,8 +785,14 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     }
     confirm(&ctx.out, &preview, args.yes, "leaving the circle")?;
 
+    // Before anything changes: the request is still the one the preview described.
+    let from = Drafted {
+        current: &current,
+        rules: &rules,
+    };
+    governance::as_drafted(&node.store, &id, from.current, from.rules)?;
     node.store.set_circle_left(&id, Some(node.now()))?;
-    let put = put_amendment(&node, &circle, &format!("Remove {member}"), next)?;
+    let put = put_amendment(&node, &circle, &format!("Remove {member}"), next, &from)?;
     let mut t = Text::new();
     t.line(format!(
         "Left {} on this machine and asked to be taken off the roll (proposal {}).",
@@ -847,7 +883,11 @@ fn amend(ctx: &Ctx, args: CircleAmendArgs) -> Result<Report> {
         need = need_line(&current, &next),
     );
     confirm(&ctx.out, &preview, args.yes, "the amendment proposal")?;
-    let put = put_amendment(&node, &circle, "Change the rules of the vote", next)?;
+    let from = Drafted {
+        current: &current,
+        rules: &in_force,
+    };
+    let put = put_amendment(&node, &circle, "Change the rules of the vote", next, &from)?;
     // What the proposal needs is decided by the charter, not by this command.
     debug_assert_eq!(threshold_for(&put.proposal, &current.content), old.amend);
     let mut t = Text::new();
@@ -899,7 +939,11 @@ fn device(ctx: &Ctx, args: CircleDeviceArgs, add: bool) -> Result<Report> {
         if add { "Add" } else { "Remove" },
         if add { "to" } else { "from" }
     );
-    let put = put_amendment(&node, &circle, &title, next)?;
+    let from = Drafted {
+        current: &current,
+        rules: &rules,
+    };
+    let put = put_amendment(&node, &circle, &title, next, &from)?;
     let mut t = Text::new();
     t.line(format!(
         "Proposed to {verb} device {} for {member} (proposal {}).",

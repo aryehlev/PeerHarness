@@ -15,10 +15,18 @@
 //! amendment that drops that rule is signed here with a member's own device key, the
 //! way a modified client, or a version before this one, signs it.
 //!
-//! One test turns confirmation windows on. Every command of every node therefore gets
+//! Some tests turn confirmation windows on. Every command of every node therefore gets
 //! `PEERHARNESS_TEST_WINDOW_BIN`, a script that records that it was started and
-//! declines; only debug builds read that variable, and that test is compiled for debug
-//! builds only.
+//! declines; only debug builds read that variable, and those tests are compiled for
+//! debug builds only.
+//!
+//! Two of them are about what a node receives while its owner reads a preview: a newer
+//! charter, or a rule that passed. Their stand-in window imports a file before it
+//! answers Proceed, which is what a sync by a running daemon does while a real window
+//! is open. The terminal's prompt cannot be held open that way without a terminal, so
+//! the check that `circle remove`, `amend` and `device` share with `circle invite` is
+//! covered there by the window test of `invite` and by the unit tests of
+//! `governance::as_drafted` and `governance::propose_under`.
 
 use std::path::{Path, PathBuf};
 
@@ -971,4 +979,248 @@ fn a_node_that_lacks_a_carried_rule_drafts_no_amendment_and_can_still_leave() {
     // any of this: a file anyone may carry.
     assert_eq!(alice.run(&["events", "import", &c.file])["stored"], 0);
     assert_eq!(alice.approvals(&c.drops_the_rule), serde_json::json!([]));
+}
+
+/// Replaces `node`'s stand-in window with one that saves what it was asked to show,
+/// then imports `file` into the node as its owner's own terminal would, and only then
+/// answers Proceed. Returns where the window's text and the import's output are saved.
+#[cfg(all(unix, debug_assertions))]
+fn window_that_imports_before_it_proceeds(
+    node: &Node,
+    root: &Path,
+    file: &str,
+) -> (PathBuf, PathBuf) {
+    let saw = root.join(format!("{}-window-saw", node.name));
+    let log = root.join(format!("{}-import-during-the-window", node.name));
+    let script = format!(
+        "#!/bin/sh\ncat > '{saw}'\n\
+         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION '{bin}' events import '{file}' \
+         > '{log}' 2>&1 || {{ echo declined; exit 0; }}\necho proceed\n",
+        saw = saw.display(),
+        bin = assert_cmd::cargo::cargo_bin("peerharness").display(),
+        log = log.display(),
+    );
+    std::fs::write(&node.window, script).unwrap();
+    (saw, log)
+}
+
+/// A command started by the coding agent's session of `node`: its exit code and
+/// everything it printed.
+#[cfg(all(unix, debug_assertions))]
+fn in_session(node: &Node, args: &[&str]) -> (i32, String) {
+    let out = node
+        .bare()
+        .arg("--json")
+        .args(args)
+        .env("CLAUDECODE", "1")
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// The proposals on a node: id, title and who approved, sorted by id.
+#[cfg(all(unix, debug_assertions))]
+fn proposals_and_approvals(node: &Node) -> Vec<(String, String, Value)> {
+    let mut all: Vec<(String, String, Value)> = node.run(&["proposal", "list"])["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["proposal_id"].as_str().unwrap().to_owned(),
+                p["title"].as_str().unwrap().to_owned(),
+                p["approvals"].clone(),
+            )
+        })
+        .collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    all
+}
+
+/// A request to change the charter is for the charter that was shown. Bob's agent
+/// starts an invitation, and the window says "admit dave to the roll of charter 3".
+/// While Bob reads, his node receives charter 4, which admitted Erin (here an import; a
+/// daemon's sync does the same). Then he clicks Proceed. His draft was made from
+/// charter 3: signed under charter 4, as it used to be, it is an amendment that admits
+/// Dave and takes Erin off the roll again, with Bob's approval on it.
+#[cfg(all(unix, debug_assertions))]
+#[test]
+fn a_yes_to_a_change_of_one_charter_is_not_signed_as_a_change_of_the_next() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let dave = Node::new(root, "dave");
+    let erin = Node::new(root, "erin");
+    let on = bob.run(&["watch", "claude", "--install", "--dialogs", "--yes"]);
+    assert_eq!(on["circle_windows"], true);
+
+    // Alice and Carol admit Erin: charter 4. Nothing of it has reached Bob.
+    let admission = invite(&alice, &erin, "erin");
+    carry(root, &[&alice, &carol]);
+    carol.run(&["proposal", "vote", &admission, "approve", "--yes"]);
+    carry(root, &[&alice, &carol]);
+    assert_eq!(
+        alice.run(&["circle", "members", "--circle", "team"])["charter"]["seq"],
+        4
+    );
+    assert_eq!(
+        bob.run(&["circle", "members", "--circle", "team"])["charter"]["seq"],
+        3
+    );
+    let newer = alice.export(&root.join("charter-4-for-bob.jsonl"));
+
+    // --- His agent starts the invitation. The window gets the preview, and before it
+    // answers Proceed the newer charter arrives.
+    let dave_key = dave.device_key();
+    let invitation = [
+        "circle", "invite", &dave_key, "--circle", "team", "--member", "dave",
+    ];
+    let (saw, log) = window_that_imports_before_it_proceeds(&bob, root, &newer);
+    let (code, printed) = in_session(&bob, &invitation);
+    let shown = std::fs::read_to_string(&saw).unwrap_or_default();
+    assert!(
+        shown.contains(&format!(
+            "admit dave (device {}) to the roll of charter 3",
+            dave.fingerprint()
+        )),
+        "{shown}\n{printed}"
+    );
+    assert!(shown.contains("it passes with 2 of 3"), "{shown}");
+    let during = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(during.contains("Imported"), "{during}\n{printed}");
+    assert_eq!(
+        bob.run(&["circle", "members", "--circle", "team"])["charter"]["seq"],
+        4
+    );
+
+    // His click was for a change to charter 3. Nothing is proposed and nothing signed.
+    assert_eq!(code, 3, "{printed}");
+    assert!(
+        printed.contains(
+            "the circle's charter changed on this node while this was being confirmed. \
+             Nothing was proposed and nothing was signed. Run the command again to see what \
+             it would do now."
+        ),
+        "{printed}"
+    );
+    // His node holds what the file held and nothing more: no amendment that admits
+    // Dave, and no ballot of Bob's that Alice's node does not have.
+    let on_bob = proposals_and_approvals(&bob);
+    assert_eq!(on_bob, proposals_and_approvals(&alice));
+    assert!(on_bob.iter().all(|(_, title, _)| title != "Admit dave"));
+
+    // --- Run again, the same command previews the charter that is in force now, with
+    // Erin on its roll: four members, three approvals.
+    std::fs::write(
+        &bob.window,
+        format!("#!/bin/sh\ncat > '{}'\necho declined\n", saw.display()),
+    )
+    .unwrap();
+    let (code, printed) = in_session(&bob, &invitation);
+    assert_eq!(code, 3, "{printed}");
+    let shown = std::fs::read_to_string(&saw).unwrap();
+    assert!(shown.contains("to the roll of charter 4"), "{shown}");
+    assert!(shown.contains("it passes with 3 of 4"), "{shown}");
+    assert_eq!(proposals_and_approvals(&bob), on_bob);
+
+    // In his own terminal the invitation is made under charter 4 and keeps Erin.
+    let made = invite(&bob, &dave, "dave");
+    let json = bob.run(&["proposal", "show", &made]);
+    assert_eq!(json["amendment"]["names_charter_seq"], 4);
+    assert_eq!(json["amendment"]["roll"]["removed"], serde_json::json!([]));
+    assert_eq!(json["amendment"]["roll"]["admitted"][0]["member"], "dave");
+}
+
+/// An approval is for what was shown, too. Bob's agent starts his ballot on the
+/// admission of Dave, and the window says "What this amendment changes, and nothing
+/// else: admit dave". While he reads, a rule that the others passed arrives on his
+/// node. The admission was drafted before that rule, so approving it now also takes the
+/// rule out of force: no longer "nothing else". His click signs nothing.
+#[cfg(all(unix, debug_assertions))]
+#[test]
+fn an_approval_is_not_signed_for_what_an_amendment_changes_since_it_was_shown() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let dave = Node::new(root, "dave");
+    let on = bob.run(&["watch", "claude", "--install", "--dialogs", "--yes"]);
+    assert_eq!(on["circle_windows"], true);
+
+    // Alice proposes to admit Dave, and Bob's node gets the proposal.
+    let admission = invite(&alice, &dave, "dave");
+    bob.run(&[
+        "events",
+        "import",
+        &alice.export(&root.join("admission.jsonl")),
+    ]);
+    // Then Alice and Carol pass a rule. Nothing of it has reached Bob.
+    let (rule, skill) = propose(&alice, RULE);
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &carol]);
+    carol.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &carol]);
+    assert_eq!(alice.rules(), [skill.as_str()]);
+    assert!(bob.rules().is_empty());
+    let newer = alice.export(&root.join("a-rule-passed.jsonl"));
+
+    // --- His agent starts the ballot; the rule arrives while the window is open.
+    let (saw, log) = window_that_imports_before_it_proceeds(&bob, root, &newer);
+    let ballot = ["proposal", "vote", admission.as_str(), "approve"];
+    let (code, printed) = in_session(&bob, &ballot);
+    let shown = std::fs::read_to_string(&saw).unwrap_or_default();
+    assert!(
+        shown.contains("What this amendment changes, and nothing else:"),
+        "{shown}\n{printed}"
+    );
+    assert!(shown.contains("admit dave (device "), "{shown}");
+    let during = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(during.contains("Imported"), "{during}\n{printed}");
+    assert_eq!(bob.rules(), [skill.as_str()]);
+
+    // Nothing is signed: the amendment no longer changes what the window said.
+    assert_eq!(code, 3, "{printed}");
+    assert!(
+        printed.contains(
+            "what this amendment would change is no longer what you were shown: the charter \
+             or the rules in force changed on this node while you read. Nothing was signed. \
+             Run the command again."
+        ),
+        "{printed}"
+    );
+    assert_eq!(bob.approvals(&admission), serde_json::json!(["alice"]));
+
+    // --- Run again, it is no ballot for a window any more, and his terminal says which
+    // rule the admission would now drop. Having read that, the approval is his to give.
+    std::fs::write(
+        &bob.window,
+        format!(
+            "#!/bin/sh\ncat > /dev/null\necho opened >> '{}'\necho proceed\n",
+            bob.opened.display()
+        ),
+    )
+    .unwrap();
+    let (code, printed) = in_session(&bob, &ballot);
+    assert_eq!(code, 3, "{printed}");
+    assert!(printed.contains("your own terminal"), "{printed}");
+    assert!(!bob.opened.exists(), "a window was opened\n{printed}");
+    let preview = bob.ballot_preview(&admission, "approve");
+    assert!(
+        preview.contains(&format!(
+            "rule {skill} goes out of force: the amendment does not carry it"
+        )),
+        "{preview}"
+    );
+    assert_eq!(bob.approvals(&admission), serde_json::json!(["alice"]));
+    bob.run(&["proposal", "vote", &admission, "approve", "--yes"]);
+    assert_eq!(
+        bob.approvals(&admission),
+        serde_json::json!(["alice", "bob"])
+    );
 }
