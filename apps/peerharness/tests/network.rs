@@ -4,7 +4,8 @@
 //! Covered here: a rule proposed on one node, voted on another and installed on both;
 //! an admission and a removal decided by ballots that arrive over the network, with the
 //! founder's daemon issuing the charters; a new member who gets the circle from a
-//! member's node; a removed member whose node is shown the vote that removed it; and
+//! member's node; a removed member whose node is shown the vote that removed it; a
+//! daemon that tells its owner of a rule that a peer's push left held on its node; and
 //! the ways a node that is not on the roll is turned away; and the internet mode, in
 //! which members find each other by device key, against a private stand-in for the
 //! public network (the hub that the transport's own tests use).
@@ -31,6 +32,8 @@ struct Node {
     name: &'static str,
     home: PathBuf,
     skills: PathBuf,
+    /// Where this node looks for Claude Code's settings: never the developer's own.
+    settings: PathBuf,
     /// Further environment of every command of this node.
     env: Vec<(&'static str, String)>,
 }
@@ -55,6 +58,7 @@ impl Node {
             name,
             home: root.join(name),
             skills: root.join(format!("{name}-skills")),
+            settings: root.join(format!("{name}-claude-settings.json")),
             env: Vec::new(),
         };
         node.run(&[
@@ -70,6 +74,7 @@ impl Node {
         let mut envs: Vec<(&'static str, std::ffi::OsString)> = vec![
             ("PEERHARNESS_HOME", self.home.clone().into()),
             ("PEERHARNESS_CLAUDE_SKILLS_DIR", self.skills.clone().into()),
+            ("PEERHARNESS_CLAUDE_SETTINGS", self.settings.clone().into()),
             ("USER", self.name.into()),
         ];
         envs.extend(self.env.iter().map(|(k, v)| (*k, v.into())));
@@ -196,14 +201,20 @@ impl Node {
     }
 
     fn daemon_with(&self, args: &[&str]) -> Daemon {
+        self.daemon_printing(args, Stdio::null())
+    }
+
+    /// Starts `daemon` with what it prints for its owner going to `said`.
+    fn daemon_printing(&self, args: &[&str], said: Stdio) -> Daemon {
         let bin = assert_cmd::cargo::cargo_bin("peerharness");
         let child = std::process::Command::new(bin)
             .envs(self.envs())
             .env_remove("CLAUDECODE")
+            .env_remove("PEERHARNESS_AGENT_SESSION")
             .arg("daemon")
             .args(args)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(said)
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
@@ -643,6 +654,150 @@ fn members_vote_over_quic_and_strangers_are_turned_away() {
 
 /// Needs working multicast between processes on this machine and a non-loopback IPv4
 /// interface, which CI containers often lack. Run it with `-- --ignored`.
+/// A daemon that only answers. Bob's node runs `daemon` without a sync interval and
+/// knows no peer: the members sync to it, and it dials nobody. Alice and Carol pass a
+/// rule that has the name of a skill Bob keeps for himself, and Alice's sync pushes
+/// the ballots to Bob's daemon. On his node the rule is held, and his daemon says so:
+/// once, when the push that made it arrives. It used to say nothing at all, because
+/// the request handler settles a push and nobody was told what the settle found.
+///
+/// A later push settles the circle again and finds the same hold: it is not printed
+/// again. A second rule that becomes held is printed in its turn.
+#[test]
+fn a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    let bob = Node::new(root, "bob");
+    let carol = Node::new(root, "carol");
+    let id = |report: &Value, key: &str| report[key].as_str().unwrap().to_owned();
+    // A file of the circle's records, from one node to another.
+    let hand_over = |from: &Node, to: &Node, tag: &str| {
+        let file = root.join(format!("{}-{tag}.jsonl", from.name));
+        let path = file.to_str().unwrap();
+        from.run(&["events", "export", "--circle", "team", "--out", path]);
+        to.run(&["events", "import", path]);
+    };
+
+    // --- Alice founds the circle; Bob and Carol are admitted by vote and join by file.
+    let created = alice.run(&["circle", "create", "team"]);
+    let fingerprint = id(&created, "root_fingerprint");
+    alice.run(&[
+        "circle",
+        "invite",
+        &bob.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+        "--out",
+        root.join("unused.jsonl").to_str().unwrap(),
+    ]);
+    bob.join(&alice, root, &fingerprint);
+    let admission = id(
+        &alice.run(&[
+            "circle",
+            "invite",
+            &carol.device_key(),
+            "--circle",
+            "team",
+            "--member",
+            "carol",
+            "--yes",
+        ]),
+        "proposal_id",
+    );
+    hand_over(&alice, &bob, "admission");
+    bob.run(&["proposal", "vote", &admission, "approve", "--yes"]);
+    hand_over(&bob, &alice, "admitted");
+    carol.join(&alice, root, &fingerprint);
+    hand_over(&alice, &bob, "charter");
+    for node in [&alice, &bob, &carol] {
+        assert_eq!(node.charter_seq(), 3, "{}", node.name);
+    }
+
+    // --- Bob keeps two rules for himself.
+    for (name, text) in [
+        ("style", "Indent with tabs."),
+        ("commits", "Write commit subjects in the imperative mood."),
+    ] {
+        let noted = id(&bob.run(&["note", text, "--name", name]), "candidate_id");
+        assert_eq!(bob.run(&["keep", &noted, "--yes"])["installed"], true);
+    }
+
+    // --- His daemon: it listens, has no sync interval and knows no peer.
+    let said = root.join("bob-daemon.out");
+    let daemon = bob.daemon_printing(
+        &["--listen", LISTEN],
+        Stdio::from(std::fs::File::create(&said).unwrap()),
+    );
+    let printed = || std::fs::read_to_string(&said).unwrap_or_default();
+    let held = |name: &str| format!("rule {name} is in force and is held on this machine:");
+    let wait_for = |line: &str| {
+        let deadline = Instant::now() + Duration::from_secs(40);
+        while !printed().contains(line) {
+            assert!(
+                Instant::now() < deadline,
+                "bob's daemon never printed {line:?}:\n{}",
+                printed()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    // Alice and Carol pass a rule under `name`, on their own nodes.
+    let pass = |name: &str, text: &str| {
+        let noted = id(&alice.run(&["note", text, "--name", name]), "candidate_id");
+        let rule = id(
+            &alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]),
+            "proposal_id",
+        );
+        alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+        hand_over(&alice, &carol, name);
+        let voted = carol.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+        assert_eq!(voted["passed"], true, "{voted}");
+        hand_over(&carol, &alice, name);
+    };
+
+    // --- The first rule passes, and Alice's sync pushes it to Bob's daemon.
+    pass("style", "Indent with two spaces.");
+    assert!(!printed().contains("is held on this machine"));
+    let pushed = alice.run(&["sync", &daemon.addr]);
+    assert!(pushed["sent"].as_u64().unwrap() >= 3, "{pushed}");
+    wait_for(&held("style"));
+
+    // --- Another push, of something that changes no rule: Bob's node settles the
+    // circle again and finds the same hold.
+    let noted = id(
+        &alice.run(&["note", "Prefer small pull requests."]),
+        "candidate_id",
+    );
+    alice.run(&["question", "send", &noted, "--circle", "team", "--yes"]);
+    let pushed = alice.run(&["sync", &daemon.addr]);
+    assert_eq!(pushed["sent"], 1, "{pushed}");
+
+    // --- A second rule becomes held by a third push. Its line comes after anything
+    // the second push could have printed, so the count below is of everything.
+    pass("commits", "Commit subjects are a single word.");
+    alice.run(&["sync", &daemon.addr]);
+    wait_for(&held("commits"));
+    let all = printed();
+    assert_eq!(all.matches(&held("style")).count(), 1, "{all}");
+    assert_eq!(all.matches(&held("commits")).count(), 1, "{all}");
+    // It made no exchange of its own, so it has no report of one.
+    assert!(!all.contains("Synced "), "{all}");
+
+    // The rules passed all the same, and `rule list` shows both as held.
+    let rules = bob.run(&["rule", "list"])["rules"].clone();
+    let rules = rules.as_array().unwrap();
+    assert_eq!(rules.len(), 2, "{rules:?}");
+    assert!(
+        rules.iter().all(|r| r["held"] == "held_own_skill"),
+        "{rules:?}"
+    );
+    drop(daemon);
+}
+
 #[test]
 #[ignore = "needs multicast on the local network"]
 fn members_find_each_other_on_the_local_network() {
