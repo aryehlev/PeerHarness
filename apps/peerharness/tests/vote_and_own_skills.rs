@@ -804,21 +804,7 @@ fn a_hold_in_a_project_does_not_let_the_voted_copy_elsewhere_be_taken_out() {
     // skills directory is therefore named for each command that acts on the project.
     let project = std::fs::canonicalize(&alice.cwd).unwrap();
     let project_skills = project.join(".claude").join("skills");
-    let in_project = |args: &[&str]| -> (i32, String) {
-        let out = alice
-            .cmd(args)
-            .env("PEERHARNESS_CLAUDE_SKILLS_DIR", &project_skills)
-            .output()
-            .unwrap();
-        (
-            out.status.code().unwrap(),
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            ),
-        )
-    };
+    let in_project = |args: &[&str]| -> (i32, String) { in_project(&alice, args) };
 
     // --- Her own skill of that name, installed in the project.
     let own = alice.note(name, "Indent with tabs.");
@@ -899,6 +885,302 @@ fn a_hold_in_a_project_does_not_let_the_voted_copy_elsewhere_be_taken_out() {
     );
     assert!(!alice.skill_file(name).exists(), "moved, not copied");
     assert_eq!(alice.rule(name)["held"], Value::Null);
+
+    // --- What is in the project now is the copy the vote installed there. The command
+    // that took her own skill out a moment ago does not take this one out.
+    let (code, said) = in_project(&["skills", "uninstall", name, "--scope", "project"]);
+    assert_eq!(code, 2, "{said}");
+    assert!(said.contains("is a rule in force in team"), "{said}");
+    assert_eq!(
+        std::fs::read_to_string(project_skills.join(name).join("SKILL.md")).unwrap(),
+        passed
+    );
+    assert!(!alice.windows_opened());
+}
+
+/// A command of `node` that acts on the project `node.cwd`: it runs there, like every
+/// command of the node, with the project's own skills directory named (the suite's
+/// override sends both scopes to one directory otherwise). Its exit code and
+/// everything it printed.
+fn in_project(node: &Node, args: &[&str]) -> (i32, String) {
+    let skills = std::fs::canonicalize(&node.cwd)
+        .unwrap()
+        .join(".claude")
+        .join("skills");
+    let out = node
+        .cmd(args)
+        .env("PEERHARNESS_CLAUDE_SKILLS_DIR", &skills)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// What `rule_installs` records on `node` for its circle named `circle`: each skill a
+/// vote of that circle installed, and the project it was put in (`None`: the user's
+/// skills directory).
+fn voted_installs(node: &Node, circle: &str) -> Vec<(String, Option<String>)> {
+    let status = node.run(&["status"]);
+    let id: ph_core::CircleId = status["circles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == circle)
+        .unwrap_or_else(|| panic!("{}: no circle named {circle}", node.name))["circle_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let store = ph_store::Store::open(node.home.join("peerharness.db")).unwrap();
+    store
+        .rule_installs(&id)
+        .unwrap()
+        .into_iter()
+        .map(|(name, _, _)| {
+            let place = store.rule_install_place(&id, &name).unwrap().flatten();
+            (name, place)
+        })
+        .collect()
+}
+
+/// The row of `rule list` for the rule named `name` of the circle `circle`.
+fn rule_of(node: &Node, circle: &str, name: &str) -> Value {
+    node.run(&["rule", "list"])["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["circle"] == circle && r["skill_name"] == name)
+        .unwrap_or_else(|| panic!("{}: no rule {name} in {circle}", node.name))
+        .clone()
+}
+
+/// Passes a rule named `name` in a circle whose only member is `node`: notes it,
+/// proposes it and approves it. Returns the proposal.
+fn pass_alone(node: &Node, circle: &str, name: &str, text: &str) -> String {
+    let noted = node.note(name, text);
+    let proposal = id_of(&node.run(&["proposal", "create", &noted, "--circle", circle, "--yes"]));
+    let voted = node.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+    assert_eq!(voted["passed"], true, "{voted}");
+    proposal
+}
+
+/// `skills uninstall` in a project. A circle's scope is placed in a project, which is
+/// what `circle place` is for, and the vote installs a rule there. That copy is a rule
+/// in force that its owner follows: taking it out is refused in the project as it is in
+/// the user's directory, and the opt-out is named. There used to be no such check for
+/// the project scope at all: the copy went, the record that a vote had installed it
+/// stayed, and a later repeal removed a skill the owner had since installed herself.
+#[test]
+fn a_voted_copy_in_a_project_is_not_taken_out_by_skills_uninstall() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    alice.run(&["circle", "create", "team"]);
+    let name = "style";
+    let project = std::fs::canonicalize(&alice.cwd).unwrap();
+    let place = project.to_str().unwrap().to_owned();
+    let installed = project
+        .join(".claude")
+        .join("skills")
+        .join(name)
+        .join("SKILL.md");
+    alice.run(&[
+        "circle",
+        "place",
+        "*",
+        "--circle",
+        "team",
+        "--project",
+        &place,
+        "--yes",
+    ]);
+    let proposal = pass_alone(&alice, "team", name, "Indent with two spaces.");
+    let passed = std::fs::read_to_string(&installed).unwrap();
+    assert!(passed.contains("Indent with two spaces."));
+    assert!(!alice.skill_file(name).exists(), "it lives in the project");
+    let on_record = vec![(name.to_owned(), Some(place.clone()))];
+    assert_eq!(voted_installs(&alice, "team"), on_record);
+
+    // --- Refused with the scope given, and without it (the project's copy is the
+    // only installation, so that is the scope the command picks), for her and for her
+    // agent's session. Nothing is removed and the record stays.
+    for args in [
+        vec!["skills", "uninstall", name, "--scope", "project"],
+        vec!["skills", "uninstall", name],
+    ] {
+        let (code, said) = in_project(&alice, &args);
+        assert_eq!(code, 2, "{args:?}: {said}");
+        assert!(
+            said.contains(&format!("{name} is a rule in force in team")),
+            "{args:?}: {said}"
+        );
+        assert!(
+            said.contains(&format!("`peerharness rule opt-out {name} --circle team`")),
+            "{args:?}: {said}"
+        );
+        let skills = project.join(".claude").join("skills");
+        let out = alice
+            .cmd(&args)
+            .env("PEERHARNESS_CLAUDE_SKILLS_DIR", &skills)
+            .env("CLAUDECODE", "1")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?} in a session");
+        assert_eq!(std::fs::read_to_string(&installed).unwrap(), passed);
+        assert_eq!(voted_installs(&alice, "team"), on_record);
+    }
+    assert_eq!(alice.rule(name)["state"], "installed");
+    assert_eq!(alice.rule(name)["opted_out"], false);
+
+    // --- Run from another directory, the same words act on another project. A copy
+    // of the text she installed there herself is hers to remove: the rule does not
+    // live there, and no vote put it there.
+    let elsewhere = root.join("another-project");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let elsewhere = std::fs::canonicalize(&elsewhere).unwrap();
+    let there = |args: &[&str]| -> (i32, String) {
+        let out = alice
+            .cmd(args)
+            .current_dir(&elsewhere)
+            .env(
+                "PEERHARNESS_CLAUDE_SKILLS_DIR",
+                elsewhere.join(".claude").join("skills"),
+            )
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
+    };
+    let (code, said) = there(&["skills", "install", name, "--scope", "project", "--yes"]);
+    assert_eq!(code, 0, "{said}");
+    let (code, said) = there(&["skills", "uninstall", name, "--scope", "project"]);
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), passed);
+    assert_eq!(voted_installs(&alice, "team"), on_record);
+
+    // --- The way that is named: the opt-out. It takes the vote's copy out and with
+    // it the record. What she then installs there herself is hers, and a repeal of the
+    // rule leaves it alone: the sequence that used to end with her own install deleted.
+    alice.run(&["rule", "opt-out", name, "--circle", "team"]);
+    assert!(!installed.exists());
+    assert_eq!(voted_installs(&alice, "team"), []);
+    let (code, said) = in_project(
+        &alice,
+        &["skills", "install", name, "--scope", "project", "--yes"],
+    );
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), passed);
+    let repeal = id_of(&alice.run(&["rule", "repeal", name, "--circle", "team", "--yes"]));
+    let voted = alice.run(&["proposal", "vote", &repeal, "approve", "--yes"]);
+    assert_eq!(voted["passed"], true, "{voted}");
+    assert_eq!(alice.rules_in_force(), 0);
+    assert_eq!(
+        std::fs::read_to_string(&installed).unwrap(),
+        passed,
+        "the repeal did not remove what she installed herself"
+    );
+    // It is hers, and hers to remove.
+    let (code, said) = in_project(&alice, &["skills", "uninstall", name, "--scope", "project"]);
+    assert_eq!(code, 0, "{said}");
+    assert!(!installed.exists());
+    let _ = proposal;
+    assert!(!alice.windows_opened());
+}
+
+/// The way out of a hold that is named for a rule placed in a project is `skills
+/// uninstall <name> --scope project`, run there. When the skill in the way is another
+/// circle's rule, installed there by that circle's vote, that command does not take it
+/// out without a word: it is refused, and names that circle and its opt-out. Which of
+/// the two rules this machine follows is said by the owner, in so many words.
+#[test]
+fn the_way_out_of_a_hold_does_not_take_out_another_circles_rule_unasked() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    let name = "style";
+    let project = std::fs::canonicalize(&alice.cwd).unwrap();
+    let place = project.to_str().unwrap().to_owned();
+    let installed = project
+        .join(".claude")
+        .join("skills")
+        .join(name)
+        .join("SKILL.md");
+    for circle in ["team", "other"] {
+        alice.run(&["circle", "create", circle]);
+        alice.run(&[
+            "circle",
+            "place",
+            "*",
+            "--circle",
+            circle,
+            "--project",
+            &place,
+            "--yes",
+        ]);
+    }
+
+    // --- `other` passes a rule named `style`: its vote installs it in the project.
+    pass_alone(&alice, "other", name, "Indent with tabs.");
+    let theirs = std::fs::read_to_string(&installed).unwrap();
+    assert!(theirs.contains("Indent with tabs."));
+    let by_other = vec![(name.to_owned(), Some(place.clone()))];
+    assert_eq!(voted_installs(&alice, "other"), by_other);
+    // --- `team` passes a rule of the same name with another text. It is held: the
+    // skill in its place is one that no vote of `team` installed.
+    let of_team = pass_alone(&alice, "team", name, "Indent with two spaces.");
+    assert_eq!(rule_of(&alice, "team", name)["held"], "held_own_skill");
+    assert_eq!(rule_of(&alice, "other", name)["state"], "installed");
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), theirs);
+    let listed = alice.reads(&["rule", "list"]);
+    assert!(
+        listed.contains(&format!(
+            "(`peerharness skills uninstall {name} --scope project`, run in {place})"
+        )),
+        "{listed}"
+    );
+
+    // --- The command the hold names, run where it says. The skill in the way is the
+    // rule of `other` that she follows: refused, with that circle and its opt-out.
+    let (code, said) = in_project(&alice, &["skills", "uninstall", name, "--scope", "project"]);
+    assert_eq!(code, 2, "{said}");
+    assert!(
+        said.contains(&format!("{name} is a rule in force in other")),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!("`peerharness rule opt-out {name} --circle other`")),
+        "{said}"
+    );
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), theirs);
+    assert_eq!(voted_installs(&alice, "other"), by_other);
+    assert_eq!(voted_installs(&alice, "team"), []);
+
+    // --- She says which one she follows: she opts out of the rule of `other`. Its
+    // copy goes, and the rule of `team` can be installed in its place.
+    alice.run(&["rule", "opt-out", name, "--circle", "other"]);
+    assert!(!installed.exists());
+    assert_eq!(voted_installs(&alice, "other"), []);
+    let adopted = alice.reads(&["proposal", "adopt", &of_team, "--yes"]);
+    assert!(
+        adopted.contains(&format!("Installed rule {name}.")),
+        "{adopted}"
+    );
+    assert!(std::fs::read_to_string(&installed)
+        .unwrap()
+        .contains("Indent with two spaces."));
+    assert_eq!(rule_of(&alice, "team", name)["held"], Value::Null);
+    assert_eq!(
+        voted_installs(&alice, "team"),
+        vec![(name.to_owned(), Some(place))]
+    );
     assert!(!alice.windows_opened());
 }
 

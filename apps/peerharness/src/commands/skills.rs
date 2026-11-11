@@ -42,6 +42,16 @@ fn installer_for(scope: SkillScope) -> Result<Installer> {
         .map_err(|e| anyhow!("cannot locate the agent's skills directory: {e}"))
 }
 
+/// The project a project-scope command acts on: the current directory, as `circle
+/// place` stores a project (its canonical path).
+fn project_here() -> Result<String> {
+    let cwd = std::env::current_dir().context("cannot read the current directory")?;
+    let dir = std::fs::canonicalize(&cwd).context("cannot read the current directory")?;
+    dir.to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| usage("the path of the current directory is not valid UTF-8"))
+}
+
 fn origin_text(s: &SkillRow) -> &'static str {
     match s.origin_kind {
         SkillOrigin::Local => "yours",
@@ -380,30 +390,54 @@ fn uninstall(node: &Node, a: &SkillsUninstallArgs) -> Result<Report> {
         }));
     };
     // A rule in force that the owner follows would be installed again at the next
-    // import: the way to keep it off this machine is the opt-out.
-    if scope == SkillScope::User {
-        for circle in node.store.circles()? {
-            let id = &circle.circle_id;
-            let (_, rules, _) = crate::governance::rule_set(&node.store, id)?;
-            let Some(rule) = rules.get(&s.name).filter(|r| r.bundle_digest() == digest) else {
-                continue;
-            };
-            if node.store.is_rule_opted_out(id, &s.name)? {
-                continue;
-            }
-            // Not when that rule is held in this directory because of this very skill
-            // (a copy of the rule's text that the owner kept and then edited): taking
-            // it out is the way out the hold names, and what follows is the rule as it
-            // passed. That is the case only when the rule's place is this directory.
-            // A rule placed in a project and held there by another skill says nothing
-            // about the copy here, which a vote installed and its owner follows.
-            let target = crate::governance::rule_target(&node.store, id, &installer, rule.scope())?;
-            if target.dir.is_none()
-                && crate::governance::held(&node.store, id, &target, rule)?
-                    == Some(crate::governance::Held::OwnSkill)
+    // import: the way to keep it off this machine is the opt-out. That holds for the
+    // directory this command acts on, whichever it is: the user's skills directory
+    // (`None`, as a rule's place is recorded), or the project the command runs in, named
+    // the way `circle place` stores it.
+    let here = match scope {
+        SkillScope::User => None,
+        SkillScope::Project => Some(project_here()?),
+    };
+    for circle in node.store.circles()? {
+        let id = &circle.circle_id;
+        let (_, rules, _) = crate::governance::rule_set(&node.store, id)?;
+        let Some(rule) = rules.get(&s.name).filter(|r| r.bundle_digest() == digest) else {
+            continue;
+        };
+        if node.store.is_rule_opted_out(id, &s.name)? {
+            continue;
+        }
+        // Where this machine puts that rule (`circle place`).
+        let place = crate::governance::place_for(&node.store.rule_places(id)?, rule.scope());
+        let placed_here = place == here;
+        // Not when that rule is held in this directory because of this very skill (a
+        // copy of the rule's text that the owner kept and then edited): taking it out
+        // is the way out the hold names, and what follows is the rule as it passed.
+        // That is the case only when the rule's place is this directory. A rule placed
+        // elsewhere and held there by another skill says nothing about the copy here.
+        if placed_here {
+            let target = crate::governance::Target::of(&installer, place);
+            if crate::governance::held(&node.store, id, &target, rule)?
+                == Some(crate::governance::Held::OwnSkill)
             {
                 continue;
             }
+        }
+        let refuse = match scope {
+            // In the user's directory: every other copy of a rule in force that the
+            // owner follows, wherever that rule is placed.
+            SkillScope::User => true,
+            // In a project: the copy of a rule that lives in this project, and a copy
+            // this circle's vote put here (the rule's place may have moved since, and
+            // the next settle moves the copy). Any other copy here is one the owner
+            // installed themselves, of a rule that lives elsewhere: theirs to remove.
+            SkillScope::Project => {
+                placed_here
+                    || crate::governance::voted_install(&node.store, id, &s.name)?
+                        .is_some_and(|(_, at)| at == here)
+            }
+        };
+        if refuse {
             return Err(usage(format!(
                 "{} is a rule in force in {}. To keep it off this machine, opt out: \
                  `peerharness rule opt-out {} --circle {}`",

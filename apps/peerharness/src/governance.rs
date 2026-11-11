@@ -1393,7 +1393,7 @@ impl HeldRule {
 
 /// The digest and the place of what a vote of `circle` installed under `name` on this
 /// machine, if a vote installed anything (`rule_installs`).
-fn voted_install(
+pub fn voted_install(
     store: &Store,
     circle: &CircleId,
     name: &str,
