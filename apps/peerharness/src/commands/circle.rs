@@ -963,19 +963,16 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         ));
     }
     if circle.is_founder {
-        preview.push_str(
-            "\nThis node holds the circle's root key, which signs every change to the roll. \
-             Once you are off the roll the members' nodes no longer sync with this one \
-             directly, so later changes to the roll will need an events file carried to \
-             and from this node. Consider staying a member.",
-        );
+        preview.push_str(FOUNDER_LEAVES);
     }
     confirm(&ctx.out, &preview, args.yes, "leaving the circle")?;
 
     // The machine first. Neither step uses a key, so a key that does not unlock and a
-    // request that cannot be made leave nothing of the circle installed here.
+    // request that cannot be made leave nothing of the circle installed here. (Where
+    // the skills directory cannot be located nothing is marked either.)
+    let installer = governance::user_installer()?;
     node.store.set_circle_left(&id, Some(node.now()))?;
-    let applied = governance::apply_on(&node, &circle, &governance::user_installer()?, &[])?;
+    let applied = governance::apply_on(&node, &circle, &installer, &[])?;
 
     // Then the request, from what this node holds now.
     let mut t = Text::new();
@@ -1021,6 +1018,13 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     report.json["removed_rules"] = json!(removed);
     Ok(report)
 }
+
+/// What the founder is told before they ask to be taken off the roll.
+const FOUNDER_LEAVES: &str =
+    "\nThis node holds the circle's root key, which signs every change to the roll. Once \
+     you are off the roll the members' nodes no longer sync with this one directly, so \
+     later changes to the roll will need an events file carried to and from this node. \
+     Consider staying a member.";
 
 fn only_member() -> anyhow::Error {
     usage(
@@ -1098,7 +1102,7 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         return Ok(nothing(why, t, Value::Null));
     }
     let next = remove_member(&current.content, &rules, &member).map_err(|_| only_member())?;
-    let preview = format!(
+    let mut preview = format!(
         "You left {name} on this machine already. This asks the members to take you off \
          its roll:\n  \
          an amendment that removes {member} from the roll of charter {seq} is put to the \
@@ -1107,6 +1111,9 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         seq = current.seq,
         need = need_line(&current, &next),
     );
+    if circle.is_founder {
+        preview.push_str(FOUNDER_LEAVES);
+    }
     confirm(&ctx.out, &preview, yes, "the request to leave the roll")?;
     let from = Drafted {
         current: &current,
