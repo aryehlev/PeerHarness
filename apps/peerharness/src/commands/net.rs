@@ -16,9 +16,11 @@
 //! holds. A device that was just admitted holds no roll yet: it gets the circle with
 //! `circle join <address>`.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+use ph_core::EventId;
 use ph_network::{Multiaddr, NetworkConfig};
 use serde_json::{json, Value};
 
@@ -26,6 +28,7 @@ use crate::cli::{ConnectArgs, DaemonArgs, SyncArgs};
 use crate::commands::Ctx;
 use crate::daemon_info::{DaemonInfo, DaemonLock};
 use crate::error::usage;
+use crate::governance;
 use crate::internet;
 use crate::output::{safe, Report, Text};
 use crate::runtime::{self, Running, SyncReport};
@@ -87,6 +90,30 @@ async fn stop_signal() {
         }
     }
     let _ = tokio::signal::ctrl_c().await;
+}
+
+/// The holds a running daemon has told its owner about: each rule that is held, by its
+/// circle and the proposal that put it in force.
+///
+/// A hold is a state, so a daemon does not print it tick after tick. It is also
+/// something that happens: a rule becomes held when a peer's push brings the ballot
+/// that passes it, and that push is settled by the request handler, which prints
+/// nothing. The daemon's own next exchange with that peer then finds the hold and
+/// moves no event. So a daemon prints a peer's report when it has a hold that this
+/// run has not printed, and never for that hold again.
+#[derive(Default)]
+struct HoldsTold(HashSet<(String, EventId)>);
+
+impl HoldsTold {
+    /// Whether `held` has a hold this daemon has not printed yet. Every hold in it
+    /// counts as printed from now on: the caller prints the report it came with.
+    fn any_new(&mut self, held: &[(governance::HeldRule, String)]) -> bool {
+        let mut new = false;
+        for (rule, circle) in held {
+            new |= self.0.insert((circle.clone(), rule.proposal_id));
+        }
+        new
+    }
 }
 
 /// What one sync did, as lines for a person.
@@ -288,6 +315,7 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
             let every = Duration::from_secs(u64::from(secs));
             tokio::time::interval_at(tokio::time::Instant::now() + every, every)
         });
+        let mut holds_told = HoldsTold::default();
         loop {
             let tick = async {
                 match ticker.as_mut() {
@@ -385,7 +413,14 @@ pub fn daemon(ctx: &Ctx, args: DaemonArgs) -> Result<Report> {
                     }
                     {
                         for (_, r) in results.iter().filter_map(|(id, r)| Some((id, r.as_ref().ok()?))) {
-                            if r.received > 0 || r.sent > 0 || !r.changes.is_empty() || !r.removed_from.is_empty() {
+                            // A hold is printed once, when it is new to this run.
+                            let new_hold = holds_told.any_new(&r.changes.held);
+                            if r.received > 0
+                                || r.sent > 0
+                                || !r.changes.is_empty()
+                                || !r.removed_from.is_empty()
+                                || new_hold
+                            {
                                 let mut t = Text::new();
                                 sync_lines(&mut t, r);
                                 out.note(t.finish().trim_end());
@@ -630,6 +665,46 @@ fn sync_many(ctx: &Ctx, find: Find) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hold reaches a daemon's own tick as a state: every exchange that settles the
+    /// circle finds it again. The daemon prints it with the first report that has it
+    /// and with no later one, and a second rule that becomes held is new in its turn.
+    #[test]
+    fn a_daemon_tells_a_hold_once_when_it_is_new() {
+        let held = |name: &str, circle: &str| -> (governance::HeldRule, String) {
+            (
+                governance::HeldRule {
+                    name: name.to_owned(),
+                    proposal_id: EventId::from_digest(ph_core::Digest::sha256(name.as_bytes())),
+                    why: governance::Held::OwnSkill,
+                    place: None,
+                },
+                circle.to_owned(),
+            )
+        };
+        let mut told = HoldsTold::default();
+        // An exchange without a hold prints nothing on its account.
+        assert!(!told.any_new(&[]));
+        // The tick after a peer pushed the ballot that passed the rule: new.
+        let style = held("style", "team");
+        assert!(told.any_new(std::slice::from_ref(&style)));
+        // Every later tick finds the same hold, and stays quiet.
+        for _ in 0..3 {
+            assert!(!told.any_new(std::slice::from_ref(&style)));
+        }
+        // A second rule becomes held: the report is printed, and has both.
+        let both = [style.clone(), held("commits", "team")];
+        assert!(told.any_new(&both));
+        assert!(!told.any_new(&both));
+        // A report that was printed for another reason has told its holds too: the
+        // loop asks for every report, whether or not it prints because of the answer.
+        let other = [held("style", "other-circle")];
+        assert!(
+            told.any_new(&other),
+            "another circle's rule is another hold"
+        );
+        assert!(!told.any_new(&other));
+    }
 
     /// A daemon that listens on loopback only has nothing to announce: `--lan` there
     /// gets the warning, and the "Announcing ..." line is not printed after it.
