@@ -1147,10 +1147,11 @@ mod tests {
         // Alice and Carol vote Bob off; the founder's node notarizes charter 2.
         let (current, rules, _) = governance::rule_set(&f.store, &f.circle).unwrap();
         let next = ph_governance::remove_member(&current.content, &rules, "bob").unwrap();
-        let removal = governance::propose(
+        let removal = governance::propose_under(
             &f.store,
             &key(1),
             &f.circle,
+            &current.digest().unwrap(),
             NewProposal {
                 scope: &Scope::all(),
                 title: "Remove bob",
@@ -1188,10 +1189,11 @@ mod tests {
             RollEntry::new("dave", vec![device(4)], vec![Scope::all()]),
         )
         .unwrap();
-        let admission = governance::propose(
+        let admission = governance::propose_under(
             &f.store,
             &key(1),
             &f.circle,
+            &current.digest().unwrap(),
             NewProposal {
                 scope: &Scope::all(),
                 title: "Admit dave",

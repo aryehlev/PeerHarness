@@ -665,8 +665,12 @@ pub struct NewProposal<'a> {
     pub action: ph_protocol::ProposalAction,
 }
 
-/// Puts a proposal to the vote under the circle's current charter. For `adopt` and
-/// `repeal` proposals; a change to the charter goes through [`propose_under`].
+/// Puts an `adopt` or a `repeal` proposal to the vote under the circle's current
+/// charter.
+///
+/// A change to the charter is not put this way, and an `amend` action is an error here:
+/// an amendment is a complete next charter drafted from one charter, and it is signed
+/// under that one and no other ([`propose_under`]).
 pub fn propose(
     store: &Store,
     key: &SigningKey,
@@ -674,6 +678,10 @@ pub fn propose(
     new: NewProposal<'_>,
     now: Timestamp,
 ) -> Result<ProposalView> {
+    if new.action.kind() == ProposalKind::Amend {
+        // A mistake in this program, not something its user did.
+        bail!("an amendment is put to the vote under the charter it was drafted from");
+    }
     let charter = current_charter(store, circle)?.digest()?;
     sign_proposal(store, key, circle, charter, new, now)
 }
@@ -2568,10 +2576,11 @@ mod tests {
         );
         let (current, rules, _) = rule_set(&store, &circle).unwrap();
         let next = ph_governance::remove_member(&current.content, &rules, "carol").unwrap();
-        let amendment = propose(
+        let amendment = propose_under(
             &store,
             &key(1),
             &circle,
+            &current.digest().unwrap(),
             NewProposal {
                 scope: &Scope::all(),
                 title: "Remove carol",
@@ -3522,6 +3531,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(again.charter(), second.digest().unwrap());
+        // `propose` signs no amendment at all: it would name whatever charter is
+        // current, which is the behaviour this test is about.
+        let stored = proposals(&store);
+        let wrong_door =
+            propose(&store, &key(1), &circle, admission(&second, "gina", 7), now).unwrap_err();
+        assert_eq!(
+            wrong_door.to_string(),
+            "an amendment is put to the vote under the charter it was drafted from"
+        );
+        assert_eq!(proposals(&store), stored, "nothing was signed or stored");
         // An `adopt` or `repeal` proposal is put under whatever charter is current.
         let repeal = propose(
             &store,
