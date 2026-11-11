@@ -513,7 +513,16 @@ fn put_on_record(
     // whether that is still the rule: a newer rule can take the name while the owner
     // reads or types a passphrase, and a stance about the old one would not say what
     // they were shown.
-    let key = node.device()?.signing_key();
+    let Ok(device) = node.device() else {
+        // What was done on this machine stands, and is said first, as below.
+        ctx.out.note(done.text.trim_end());
+        return Err(refused(
+            "nothing was announced: the device key could not be unlocked, and a stance is \
+             signed with it. What was changed on this machine stands. Run the command \
+             again to put it on the record.",
+        ));
+    };
+    let key = device.signing_key();
     if !governance::rule_as_shown(
         &node.store,
         key,

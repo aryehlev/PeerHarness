@@ -1539,6 +1539,86 @@ fn an_opt_out_changes_the_machine_before_any_key_is_asked_for() {
     }
 }
 
+/// `--announce` after an opt-out or an opt-in signs a stance, and the change on the
+/// machine comes before it. With a key that does not unlock the command used to print
+/// the key error and nothing else: its owner could take the opt-out for failed. Now it
+/// says what was done on the machine and that nothing was announced, and ends as the
+/// other refusals of the announcement do.
+#[test]
+fn an_announcement_that_cannot_be_signed_says_what_was_done_on_the_machine() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    alice.run(&["circle", "create", "team"]);
+    let name = "style";
+    pass_alone(&alice, "team", name, "Indent with two spaces.");
+    assert!(alice.skill_file(name).is_file());
+    let nothing_announced = "nothing was announced: the device key could not be unlocked";
+    let stances = |node: &Node| node.rule(name)["on_record"].clone();
+
+    // --- The opt-out is applied and reported; the announcement is refused.
+    let (code, out, noted) = with_a_passphrase_that_unlocks_nothing(
+        &alice,
+        &[
+            "rule",
+            "opt-out",
+            name,
+            "--circle",
+            "team",
+            "--announce",
+            "--yes",
+        ],
+    );
+    assert_eq!(code, 3, "{out}");
+    let msg = out["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains(nothing_announced), "{msg}");
+    assert!(!msg.contains("team"), "the error names no circle: {msg}");
+    assert!(noted.contains("Opted out of style in team."), "{noted}");
+    assert!(
+        noted.contains("removed it from your agent's skills"),
+        "{noted}"
+    );
+    assert!(!alice.skill_file(name).exists());
+    assert_eq!(alice.rule(name)["opted_out"], true);
+    assert_eq!(stances(&alice), json!([]), "no stance was signed");
+
+    // --- The same for following it again: installed as confirmed, not announced.
+    let (code, out, noted) = with_a_passphrase_that_unlocks_nothing(
+        &alice,
+        &[
+            "rule",
+            "opt-in",
+            name,
+            "--circle",
+            "team",
+            "--announce",
+            "--yes",
+        ],
+    );
+    assert_eq!(code, 3, "{out}");
+    let msg = out["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains(nothing_announced), "{msg}");
+    assert!(noted.contains("Following style again."), "{noted}");
+    assert!(noted.contains("installed it for your agent"), "{noted}");
+    assert!(alice.skill_file(name).is_file());
+    assert_eq!(alice.rule(name)["opted_out"], false);
+    assert_eq!(stances(&alice), json!([]), "no stance was signed");
+
+    // --- With the key, running it again puts it on the record.
+    let said = alice.run(&[
+        "rule",
+        "opt-out",
+        name,
+        "--circle",
+        "team",
+        "--announce",
+        "--yes",
+    ]);
+    assert_eq!(said["announced"], true, "{said}");
+    assert_eq!(stances(&alice).as_array().map(Vec::len), Some(1));
+    assert!(!alice.windows_opened());
+}
+
 /// A yes is for the text that was shown. Carol is asked before a rule is installed. A
 /// rule passes, and her agent starts installing it: the window shows its text. While
 /// she reads, her node receives a second rule of the same name that the others passed,
