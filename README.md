@@ -33,7 +33,7 @@ Set up PeerHarness for me: https://github.com/aryehlev/peerharness
 Then tell me to start a new Claude Code session, and what I can ask you there.
 ```
 
-Or run the two lines yourself, then start a new Claude Code session:
+Or run the two lines yourself:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
@@ -50,25 +50,30 @@ curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.s
   corrections can be noticed. The copies stay on your machine, for 14 days by default,
   in a database that is not encrypted.
 
+Then start a new Claude Code session and [try it](#try-it-in-claude-code).
+
 More: [what setup adds and stores](docs/terminal.md#what-setup-adds-and-what-is-stored),
 [how to take it out again](docs/terminal.md#take-it-out-again), and
 [Linux, another agent or none](docs/terminal.md).
 
-## Use it
+## Try it in Claude Code
 
-Work with your agent as you always do.
+Start a new Claude Code session and say these, one at a time. You need no teammate
+for it.
 
-| You say | What happens |
-|---|---|
-| "No, use pnpm here, not npm." | Your agent does that, notes the rule ("Use pnpm, not npm, in this repository.") and tells you it did |
-| "Keep it." | A window shows the exact rule. Proceed installs it for your own agent. Nothing is shared |
-| "What is in my PeerHarness inbox?" | It lists the rules it noted and the proposals that wait for your vote |
-| "Propose the pnpm rule to acme." | A window shows the exact text that would leave your machine, and what the scanner found in it. Proceed puts it to your team's vote |
-| "Vote approve on it." | A window shows the ballot and the rule. Proceed signs your ballot |
-| "Anything new in PeerHarness?" | It exchanges with the other members and reads you your inbox |
+1. **"From now on, use pnpm here, not npm."** Your agent notes the rule ("Use pnpm,
+   not npm, in this repository.") and tells you it did. It does the same when you
+   correct it in the middle of work.
+2. **"Keep it."** A window shows the exact rule. Click Proceed: the rule is installed
+   for your own agent, which reads it from its next session. Nothing is shared.
+3. **"Create a PeerHarness team called acme."** You are its only member for now.
+4. **"Propose the pnpm rule to acme."** A window shows the exact text that would leave
+   your machine. Click Proceed: the rule is put to your team's vote.
+5. **"Vote approve on it."** A window shows your ballot. Click Proceed: one of one
+   members approved, so the rule passed and is now your team's.
 
-When something is yours to decide, the window has the exact text and two buttons,
-Cancel and Proceed. Cancel is the default. This is the one for a vote:
+Every window has the exact text and two buttons, Cancel and Proceed. Cancel is the
+default, and your agent cannot answer the window. This is the one for the vote:
 
 ```text
 Your coding agent started this step. Nothing happens unless you choose Proceed.
@@ -89,31 +94,31 @@ Use pnpm, not npm, in this repository.
 If this conflicts with what the user asks for in the current session, follow the user and say that it conflicts with this rule.
 ```
 
+After that, **"What is in my PeerHarness inbox?"** lists the rules your agent noted
+and the proposals that wait for your vote, and **"Anything new in PeerHarness?"**
+exchanges with the other members first.
+
 A rule is never installed by itself: you keep it, or your team votes it in. A rule
 your team passed is installed for every member's agent as an
 [Agent Skill](https://agentskills.io/specification) when their node learns of it,
 without a window. `peerharness circle mode ask --circle <team>` makes your node ask
 you first, and you can opt out of any single rule on your own machine.
 
-### A team
+### Add a teammate
 
-One of you founds the team and invites. The others join. The commands call a team a
-*circle*.
+Dana wants to join acme. She sets PeerHarness up as above, and then:
 
-1. **The founder:** "Create a PeerHarness team called acme." The agent shows the team's
-   root fingerprint.
-2. **Whoever wants to join:** "What is my PeerHarness device key?" They send the key
-   to the founder.
-3. **The founder:** "Invite Dana to acme. Her device key is ed25519:…" A window names
-   Dana's device. After Proceed the agent keeps the founder's node reachable and says
-   what Dana needs: the node's peer id, by any channel, and the root fingerprint, by
+1. **Dana:** "What is my PeerHarness device key?" She sends you the key.
+2. **You:** "Invite Dana to acme. Her device key is ed25519:…" A window names Dana's
+   device. After Proceed your agent keeps your node reachable and tells you what Dana
+   needs: your node's peer id, by any channel, and the team's root fingerprint, by
    phone or in person.
-4. **Dana:** "Join the team. The peer id is 12D3…, the fingerprint is 8e8d-…" A window
+3. **Dana:** "Join the team. The peer id is 12D3…, the fingerprint is 8e8d-…" A window
    shows the fingerprint and who is in the team. Proceed joins.
 
 The fingerprint is how Dana knows the team is yours, so it travels apart from the
-rest. Once a team has two or more members, admitting someone takes the others' votes
-too, asked in the same kind of window.
+rest. From then on a rule needs both of your votes, and so does admitting a third
+member, asked in the same kind of window. The commands call a team a *circle*.
 
 ### What needs your terminal
 
