@@ -870,6 +870,10 @@ fn the_two_peer_demo_runs_with_an_installed_binary_and_builds_nothing() {
     // The whole story: joined over QUIC, voted, installed on both, outsider refused.
     assert!(text.contains("Joined team as bob."), "{text}");
     assert!(text.contains("passed: 2 of 2 approved"), "{text}");
+    // The step headed "reads the exact text" prints the text: the rule as proposed,
+    // without the mark `proposal show` puts in front of each of its lines.
+    assert!(text.contains(&format!("\nname: {SKILL}\n")), "{text}");
+    assert!(text.contains(&format!("\ndescription: {RULE}\n")), "{text}");
     assert!(
         text.contains(&format!("alice's agent: {SKILL}    bob's agent: {SKILL}")),
         "{text}"

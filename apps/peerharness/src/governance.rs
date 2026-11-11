@@ -3169,79 +3169,123 @@ mod tests {
     /// One rule per name is in force, the later proposal. An amendment that carries a
     /// rule in force next to another proposal of its name is described by what it does
     /// to that rule: the later one replaces its text, an earlier one changes nothing.
-    /// What is said is what the charter that follows then has in force.
+    /// What is said is what the charter that follows then has in force, for the later
+    /// proposal and for the earlier one, each on a node of its own.
     #[test]
     fn a_carried_proposal_with_the_name_of_a_rule_in_force_is_described_by_its_outcome() {
         use crate::amendment::Unread;
 
-        let (store, circle, now) = node();
-        let machine = Machine::new();
-        let (in_force, _) = pass_rule(
-            &store,
-            &machine,
-            &circle,
-            "run-tests",
-            "Run the tests before you say a task is done.",
-            now.plus_secs(60),
-        );
-        // Two proposals of the same name that nobody voted on: one made before the rule
-        // in force, one after it.
-        let unvoted = |sentence: &str, at: Timestamp| -> (Vec<u8>, Bundle) {
-            let bundle = skill("run-tests", sentence);
-            machine.bundles.put(&bundle).unwrap();
-            let raw = proposal(
+        /// A node with the rule `run-tests` in force, and two proposals of the same
+        /// name that nobody voted on: one made before the rule in force, one after it.
+        struct Case {
+            store: Store,
+            circle: CircleId,
+            machine: Machine,
+            in_force: ProposalView,
+            earlier: Vec<u8>,
+            later: Vec<u8>,
+            current: Charter,
+            at: Timestamp,
+        }
+        let case = || -> Case {
+            let (store, circle, now) = node();
+            let machine = Machine::new();
+            let (in_force, _) = pass_rule(
                 &store,
-                2,
+                &machine,
                 &circle,
-                sentence,
-                ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
-                    skill_name: bundle.name().to_owned(),
-                    description: bundle.description().to_owned(),
-                    bundle_digest: bundle.digest(),
-                    bundle_size: bundle.size(),
-                    related_question: None,
-                    supersedes: None,
-                }),
-                at,
+                "run-tests",
+                "Run the tests before you say a task is done.",
+                now.plus_secs(60),
             );
-            assert_eq!(ingest(&store, &raw, None, at).unwrap(), Ingest::Stored);
-            (raw, bundle)
+            let unvoted = |sentence: &str, at: Timestamp| -> Vec<u8> {
+                let bundle = skill("run-tests", sentence);
+                machine.bundles.put(&bundle).unwrap();
+                let raw = proposal(
+                    &store,
+                    2,
+                    &circle,
+                    sentence,
+                    ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+                        skill_name: bundle.name().to_owned(),
+                        description: bundle.description().to_owned(),
+                        bundle_digest: bundle.digest(),
+                        bundle_size: bundle.size(),
+                        related_question: None,
+                        supersedes: None,
+                    }),
+                    at,
+                );
+                assert_eq!(ingest(&store, &raw, None, at).unwrap(), Ingest::Stored);
+                raw
+            };
+            let earlier = unvoted("Run the tests once a week.", now);
+            let later = unvoted(
+                "Say a task is done as soon as it compiles.",
+                now.plus_secs(120),
+            );
+            let current = current_charter(&store, &circle).unwrap();
+            Case {
+                store,
+                circle,
+                machine,
+                in_force,
+                earlier,
+                later,
+                current,
+                at: now.plus_secs(180),
+            }
         };
-        let (earlier, _) = unvoted("Run the tests once a week.", now);
-        let (later, _) = unvoted(
-            "Say a task is done as soon as it compiles.",
-            now.plus_secs(120),
-        );
-        let at = now.plus_secs(180);
-        let current = current_charter(&store, &circle).unwrap();
-        let amend = |listed: &[u8]| {
-            let mut next = current.content.clone();
-            next.carried = vec![in_force.event_id(), id_of(listed)];
+        // An amendment that carries the rule in force and `listed` next to it.
+        let amend = |c: &Case, listed: &[u8]| -> (Vec<u8>, CharterContent) {
+            let mut next = c.current.content.clone();
+            next.carried = vec![c.in_force.event_id(), id_of(listed)];
             next.normalize();
             let raw = proposal(
-                &store,
+                &c.store,
                 2,
-                &circle,
+                &c.circle,
                 "Tidy the carried list",
                 ph_protocol::ProposalAction::Amend { next: next.clone() },
-                at,
+                c.at,
             );
-            assert_eq!(ingest(&store, &raw, None, at).unwrap(), Ingest::Stored);
+            assert_eq!(ingest(&c.store, &raw, None, c.at).unwrap(), Ingest::Stored);
             (raw, next)
+        };
+        // The charter that follows when that amendment passes, and the proposal that
+        // is the rule `run-tests` under it.
+        let rule_under_the_next_charter = |c: &Case, next: CharterContent| -> EventId {
+            let authority = CircleAuthority::from_signing_key(key(100));
+            let second = authority
+                .issue_next_charter(
+                    &c.current,
+                    next,
+                    EventId::from_digest(Digest::sha256(b"a result")),
+                    c.at,
+                )
+                .unwrap();
+            c.store.insert_charter(&second, c.at).unwrap();
+            let (charter, rules, _) = rule_set(&c.store, &c.circle).unwrap();
+            assert_eq!(charter.seq, 2);
+            assert_eq!(rules.len(), 1, "one rule per name");
+            assert!(rules.missing_carried().is_empty());
+            rules.get("run-tests").unwrap().proposal_id()
         };
         let short = crate::output::short_id;
 
-        // The later one: the rule in force loses its place to a text nobody voted on.
-        let (raw, next) = amend(&later);
-        let changes = shown(&store, &machine.bundles, &raw, 1);
+        // --- The later one: the rule in force loses its place to a text nobody voted
+        // on.
+        let c = case();
+        let (raw, next) = amend(&c, &c.later);
+        let changes = shown(&c.store, &c.machine.bundles, &raw, 1);
         let said = changes.describe("");
         assert!(
             said.contains(&format!(
                 "rule run-tests gets another text without a vote of its own: the amendment \
                  carries proposal {}, which is not in force here and is later than the rule \
                  in force (proposal {}). That one goes out of force",
-                short(&id_of(&later)),
-                short(&in_force.event_id())
+                short(&id_of(&c.later)),
+                short(&c.in_force.event_id())
             )),
             "{said}"
         );
@@ -3253,19 +3297,23 @@ mod tests {
         assert_eq!(changes.unread(), None);
         assert_eq!(
             changes.json()["rules_in_force"]["added"][0]["replaces"],
-            json!(in_force.event_id())
+            json!(c.in_force.event_id())
         );
+        // What was said is what the next charter has in force.
+        assert_eq!(rule_under_the_next_charter(&c, next), id_of(&c.later));
 
-        // An earlier one: nothing comes into force, and nothing says that it does.
-        let (raw, _) = amend(&earlier);
-        let changes = shown(&store, &machine.bundles, &raw, 1);
+        // --- An earlier one, on a node of its own: nothing comes into force, and
+        // nothing says that it does.
+        let c = case();
+        let (raw, next) = amend(&c, &c.earlier);
+        let changes = shown(&c.store, &c.machine.bundles, &raw, 1);
         let said = changes.describe("");
         assert!(
             said.contains(&format!(
                 "it carries {}, an earlier proposal for rule run-tests: the rule of that \
                  name in force (proposal {}) is the later one and stays as it is",
-                short(&id_of(&earlier)),
-                short(&in_force.event_id())
+                short(&id_of(&c.earlier)),
+                short(&c.in_force.event_id())
             )),
             "{said}"
         );
@@ -3274,26 +3322,11 @@ mod tests {
         assert_ne!(changes.unread(), Some(Unread::Text));
         assert_eq!(
             changes.json()["rules_in_force"]["added"][0]["stays_behind"],
-            json!(in_force.event_id())
+            json!(c.in_force.event_id())
         );
-
-        // What was said about the later one is what the next charter has in force.
-        let authority = CircleAuthority::from_signing_key(key(100));
-        let second = authority
-            .issue_next_charter(
-                &current,
-                next,
-                EventId::from_digest(Digest::sha256(b"a result")),
-                at,
-            )
-            .unwrap();
-        store.insert_charter(&second, at).unwrap();
-        let (_, rules, _) = rule_set(&store, &circle).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(
-            rules.get("run-tests").map(ph_governance::Rule::proposal_id),
-            Some(id_of(&later))
-        );
+        // "Stays as it is" is what the next charter has in force, too: both proposals
+        // are carried, and the rule is still the one that was in force.
+        assert_eq!(rule_under_the_next_charter(&c, next), c.in_force.event_id());
     }
 
     /// The owner's yes is for the rule they were shown. While a prompt or a window

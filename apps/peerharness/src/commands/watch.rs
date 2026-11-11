@@ -186,12 +186,13 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             ));
             preview.line(if asked_after != Asked::Nothing {
                 "It asks your agent to write down a rule when you correct it, and tells it which \
-                 steps it may start when you ask. The agent cannot approve, share, install or \
-                 join anything: that is your click in the window. \
+                 steps it may start when you ask. Inside its session the agent cannot approve, \
+                 share, install or join anything: that is your click in the window. \
                  Skip it with --no-agent-notes. Its exact text:"
             } else {
-                "It asks your agent to write down a rule when you correct it. The agent can only \
-                 add a note to your inbox; it cannot approve, share or install anything. \
+                "It asks your agent to write down a rule when you correct it. Inside its session \
+                 the agent can only add a note to your inbox; it cannot approve, share or \
+                 install anything. \
                  Skip it with --no-agent-notes. Its exact text:"
             });
             preview.line("");

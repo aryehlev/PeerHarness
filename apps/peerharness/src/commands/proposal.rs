@@ -252,10 +252,14 @@ fn one_line_rationale(given: Option<&str>) -> Result<Option<String>> {
     let Some(given) = given else {
         return Ok(None);
     };
+    // The message says everything that is checked. The character that gets a line
+    // refused is often one its writer cannot see: the joiner inside an emoji, or
+    // between letters of Persian or Hindi.
     let refuse = || {
         usage(format!(
-            "the rationale must be one line of at most {MAX_RATIONALE_CHARS} characters, \
-             without control characters"
+            "the rationale must be one line of at most {MAX_RATIONALE_CHARS} characters \
+             after redaction, without control or invisible characters (the zero-width \
+             joiner of some emoji and scripts is one) or blanks that are not spaces"
         ))
     };
     let text = ph_core::redact(given.trim()).text;
@@ -1000,17 +1004,29 @@ mod tests {
             "an annotation\u{fff9}mark",
             "a null\u{1d159}notehead",
             "a musical\u{1d173}format mark",
+            // Ordinary text that holds a character nobody sees: an emoji made of two
+            // joined ones, and a Persian word with a zero-width non-joiner.
+            "fine by me \u{1f469}\u{200d}\u{1f4bb}",
+            "\u{645}\u{6cc}\u{200c}\u{62e}\u{648}\u{627}\u{647}\u{645}",
             too_long.as_str(),
         ] {
             let e = one_line_rationale(Some(bad)).unwrap_err();
             assert_eq!(exit_kind(&e), ExitKind::Usage, "{bad:?}");
-            // The refusal repeats nothing of what was given.
+            // The refusal repeats nothing of what was given, and names everything that
+            // is checked: its reader may be looking for a character that does not show.
             assert_eq!(
                 e.to_string(),
-                "the rationale must be one line of at most 200 characters, without control \
-                 characters"
+                "the rationale must be one line of at most 200 characters after redaction, \
+                 without control or invisible characters (the zero-width joiner of some \
+                 emoji and scripts is one) or blanks that are not spaces"
             );
         }
+        // Redaction can lengthen a line past the limit, which is why the message says
+        // when the length is counted: an address is replaced by a longer placeholder.
+        let typed = format!("{} a@b.example", "x".repeat(MAX_RATIONALE_CHARS - 12));
+        assert_eq!(typed.chars().count(), MAX_RATIONALE_CHARS);
+        assert!(ph_core::redact(&typed).text.chars().count() > MAX_RATIONALE_CHARS);
+        assert!(one_line_rationale(Some(&typed)).is_err());
     }
 
     #[test]

@@ -7,13 +7,20 @@ use assert_cmd::Command;
 use serde_json::Value;
 use tempfile::TempDir;
 
-/// The binary for the node at `home`, run by the person, with no arguments yet.
+/// The binary for the node at `home`, run by the person, with no arguments yet. Its
+/// skills directory and its Claude settings file are temporary paths beside the home:
+/// `status` reads the settings file, and without one named it would read the
+/// developer's own.
 fn bare(home: &Path) -> Command {
     let mut cmd = Command::cargo_bin("peerharness").unwrap();
     cmd.env("PEERHARNESS_HOME", home)
         .env(
             "PEERHARNESS_CLAUDE_SKILLS_DIR",
             home.with_extension("skills"),
+        )
+        .env(
+            "PEERHARNESS_CLAUDE_SETTINGS",
+            home.with_extension("settings.json"),
         )
         .env("USER", "alice")
         .env_remove("CLAUDECODE")

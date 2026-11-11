@@ -3,8 +3,9 @@
 //!
 //! * A rule the scanner calls high-risk is never decided in a window. `proposal create`
 //!   shows the scanner's findings, as a ballot in a window and `adopt` do (a ballot in
-//!   a terminal shows the title, and `proposal show` the text and the findings), and
-//!   with a high-risk finding it asks only in the terminal.
+//!   a terminal shows the title; `proposal show` prints the text, the number of
+//!   findings and whether one is high-risk, not the findings), and with a high-risk
+//!   finding it asks only in the terminal.
 //! * A rationale is one line. Whoever starts the step chooses it, a coding agent
 //!   included, so it must not be able to lay out the preview: a rationale with a line
 //!   break, a control character or padding that is not made of spaces is refused, in a
@@ -319,8 +320,9 @@ fn a_rationale_is_one_line_and_cannot_lay_out_the_preview() {
                 assert_eq!(code, 2, "{rationale:?}: {printed}");
                 assert_eq!(
                     json["error"]["message"],
-                    "the rationale must be one line of at most 200 characters, without \
-                     control characters"
+                    "the rationale must be one line of at most 200 characters after \
+                     redaction, without control or invisible characters (the zero-width \
+                     joiner of some emoji and scripts is one) or blanks that are not spaces"
                 );
             }
         }

@@ -152,6 +152,15 @@ fn one_command_sets_everything_up_and_a_second_run_changes_nothing() {
         !said_flat.contains("Your agent cannot answer it and --yes does not skip it."),
         "{said}"
     );
+    // The sentence about the reporting skill claims no more either.
+    assert!(
+        said_flat.contains(
+            "Inside its session the agent cannot approve, share, install or join anything: \
+             that is your click in the window."
+        ),
+        "{said}"
+    );
+    assert!(!said_flat.contains(". The agent cannot approve"), "{said}");
     assert!(said.contains("This will install the skill peerharness-notes"));
     assert!(said.contains("This gives Claude Code the PeerHarness steps as tools"));
     // What it reports.
@@ -305,6 +314,20 @@ fn without_windows_setup_says_what_works_and_suggests_nothing_that_cannot() {
     let said = text(&out);
     assert!(out.status.success(), "{said}");
     assert!(said.contains("off (every decision needs your own terminal)"));
+    // What it says about the reporting skill holds inside a session PeerHarness
+    // recognizes, and is worded so.
+    let said_flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        said_flat.contains(
+            "Inside its session the agent can only add a note to your inbox; it cannot \
+             approve, share or install anything."
+        ),
+        "{said}"
+    );
+    assert!(
+        !said_flat.contains(". The agent can only add a note"),
+        "{said}"
+    );
     // What works there: the note, the count at the end of a turn, and the terminal.
     assert!(
         said.contains("Without confirmation windows, this is what works from here:"),

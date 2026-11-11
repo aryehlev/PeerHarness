@@ -93,7 +93,7 @@ alice proposal vote "$PROPOSAL" approve --yes 2>/dev/null | sed -n 's/^Ballot re
 
 say "Bob syncs with Alice's node, reads the exact text, and votes"
 bob sync "$ADDR" | head -n 1
-bob proposal show "$PROPOSAL" | sed -n '/^---$/,$p' | sed -n '1,9p'
+bob proposal show "$PROPOSAL" | sed -n 's/^      | //; /^---$/,$p' | sed -n '1,9p'
 bob proposal vote "$PROPOSAL" approve --yes 2>/dev/null | sed -n 's/^Ballot recorded. //p; /installed rule/p'
 
 say "Bob syncs again: his ballot reaches Alice's node, which counts for itself and installs the rule"
