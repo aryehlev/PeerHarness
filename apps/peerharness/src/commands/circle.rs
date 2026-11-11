@@ -388,10 +388,14 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
         n = current.content.roll.len(),
     );
     let in_window = asks_circle_in_window(&node.config);
-    if in_window {
-        // In a terminal the person typed the key. Here their agent passed it on.
-        preview.push_str(&admission_check(&args.member, &circle.name));
-    }
+    // The key reached the owner by chat, and here it came through their agent or was
+    // pasted into a terminal. Either way it is checked with the person it is said to
+    // belong to, before the yes (ADR-037).
+    preview.push_str(&if in_window {
+        admission_check(&args.member, &circle.name)
+    } else {
+        device_check(&args.member, &circle.name)
+    });
     key_before_window(&node, "the admission proposal", in_window)?;
     confirm_circle_or_window(
         &ctx.out,
@@ -579,15 +583,36 @@ fn holds_every_carried_rule(rules: &RuleSet) -> Result<()> {
     )))
 }
 
-/// What a window adds to the preview of an admission, whether the owner proposes it or
-/// votes on it. In a terminal the person typed or read the device key themselves; in a
-/// window all they have is what the window says.
-pub(crate) fn admission_check(member: &str, circle: &str) -> String {
+/// What the preview of an admission says under what it would do, in a terminal as in a
+/// window (ADR-037). A device key is not a secret and reaches the inviter by chat. One
+/// that was exchanged on the way, or passed on wrongly, admits whoever holds it under
+/// the invitee's name. The fingerprint is what the two of them can compare, so the
+/// preview says to do that before the yes.
+pub(crate) fn device_check(member: &str, circle: &str) -> String {
     format!(
         "\n\nCheck the device with {member} first: `peerharness status` on their machine shows \
          the same fingerprint. Whoever holds that device gets a vote in {circle} and can read \
-         its proposals and ballots.\n\
-         If you did not just ask your agent for this, choose Cancel.",
+         its proposals and ballots.",
+        circle = safe(circle),
+    )
+}
+
+/// [`device_check`] for a window, whether the owner proposes the admission or votes on
+/// it. In a window all they have is what the window says, and an agent started it.
+pub(crate) fn admission_check(member: &str, circle: &str) -> String {
+    format!(
+        "{}\nIf you did not just ask your agent for this, choose Cancel.",
+        device_check(member, circle)
+    )
+}
+
+/// The same for a further device of someone who is already a member (`circle device
+/// add`): its holder signs with that member's one vote.
+fn further_device_check(member: &str, circle: &str) -> String {
+    format!(
+        "\n\nCheck the device with {member} first: `peerharness status` on that machine shows \
+         the same fingerprint. Whoever holds that device can cast {member}'s vote in {circle} \
+         and read its proposals and ballots.",
         circle = safe(circle),
     )
 }
@@ -1886,7 +1911,7 @@ fn device(ctx: &Ctx, args: CircleDeviceArgs, add: bool) -> Result<Report> {
     }
     .map_err(|e| usage(format!("cannot propose that change: {e}")))?;
     let verb = if add { "add" } else { "remove" };
-    let preview = format!(
+    let mut preview = format!(
         "This puts an amendment of {circle} to the vote and casts your approval:\n  \
          {verb} device {fp} {prep} {member} on the roll of charter {seq}\n\
          {member} keeps one vote, whichever of their devices signs it.\n{need}",
@@ -1896,6 +1921,10 @@ fn device(ctx: &Ctx, args: CircleDeviceArgs, add: bool) -> Result<Report> {
         seq = current.seq,
         need = need_line(&current, &next),
     );
+    if add {
+        // A key that was sent, like the one of an invitation (ADR-037).
+        preview.push_str(&further_device_check(&member, &circle.name));
+    }
     confirm(&ctx.out, &preview, args.yes, "the device proposal")?;
     let title = format!(
         "{} a device {} {member}",

@@ -1323,7 +1323,8 @@ written down directly.
   `consent::confirm_circle_or_window`. The admission windows name the device
   fingerprint and the scopes of the new member's roll entry, both from the amendment
   (for `circle invite`, from the charter it drafted, ADR-051), and tell the owner to
-  check the device with the invitee; the
+  check the device with the invitee, and so do the terminal's previews of `circle
+  invite` and `circle device add`; the
   join window is the terminal's preview, with the root fingerprint, the name the
   circle gets on this machine and the whole charter. That name, and the name a session
   gives to `circle create`, is one word there (letters, digits, `.`, `_`, `-`):
