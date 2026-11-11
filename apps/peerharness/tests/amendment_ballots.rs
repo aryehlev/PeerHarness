@@ -1201,9 +1201,9 @@ fn a_yes_to_a_change_of_one_charter_is_not_signed_as_a_change_of_the_next() {
     assert_eq!(code, 3, "{printed}");
     assert!(
         printed.contains(
-            "the circle's charter changed on this node while this was being confirmed. \
-             Nothing was proposed and nothing was signed. Run the command again to see what \
-             it would do now."
+            "the circle's charter or the rules in force changed on this node while this was \
+             being confirmed. Nothing was proposed and nothing was signed. Run the command \
+             again to see what it would do now."
         ),
         "{printed}"
     );

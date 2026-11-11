@@ -690,8 +690,9 @@ pub fn propose(
 /// would draft: the charter, or the rules the draft carries, changed while the owner
 /// read the preview. Names nothing a member wrote.
 pub const CHARTER_CHANGED: &str =
-    "the circle's charter changed on this node while this was being confirmed. Nothing was \
-     proposed and nothing was signed. Run the command again to see what it would do now.";
+    "the circle's charter or the rules in force changed on this node while this was being \
+     confirmed. Nothing was proposed and nothing was signed. Run the command again to see \
+     what it would do now.";
 
 /// Puts a change to the charter to the vote under the charter it was drafted from.
 ///
