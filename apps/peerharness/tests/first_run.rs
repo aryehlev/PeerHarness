@@ -6,6 +6,8 @@
 //!
 //! * the first line of `--help`, the package description and the README say the same
 //!   sentence, and `observe` and `hook` are out of the list of commands but still run;
+//! * the project page in `site/` has that sentence and the README's setup prompt, line
+//!   for line, and its policy lets it load nothing from another origin;
 //! * `init` and `note` point at `demo`, `note` and `keep`, and following them works;
 //! * an `init` that fails before it has a key leaves the home as it found it, a second
 //!   `init` is refused while one runs in the same home, and a failing one never takes
@@ -195,6 +197,54 @@ fn help_opens_with_the_sentence_the_readme_opens_with() {
     assert!(injected.contains("Injected"), "{injected}");
     assert!(node.out(&["hook", "stop"]).status.success());
     assert!(node.ok(&["observe", "--help"]).contains("demo"));
+}
+
+/// The project page is read next to the README, and its setup prompt is what people
+/// paste into their agent: a page that kept an older prompt would hand out other
+/// steps than the README does.
+#[test]
+fn the_project_page_has_the_readmes_sentence_and_its_setup_prompt() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let page = std::fs::read_to_string(root.join("site/index.html")).unwrap();
+    assert!(page.contains(PITCH), "the page no longer has the sentence");
+
+    // The README's first fenced block is the prompt.
+    let prompt: Vec<&str> = readme
+        .lines()
+        .skip_while(|l| l.trim() != "```text")
+        .skip(1)
+        .take_while(|l| l.trim() != "```")
+        .collect();
+    assert!(
+        prompt
+            .first()
+            .is_some_and(|l| l.starts_with("Set up PeerHarness for me")),
+        "the README's first block is no longer the setup prompt: {prompt:?}"
+    );
+    assert!(
+        prompt.iter().any(|l| l.contains("peerharness setup")),
+        "{prompt:?}"
+    );
+    // The page holds it as text, so a prompt with `<` or `&` would have to be escaped
+    // there, and this comparison would say so.
+    let open = "<pre id=\"setup-prompt\">";
+    let start = page.find(open).expect("the page has no setup prompt") + open.len();
+    let shown = &page[start..start + page[start..].find("</pre>").unwrap()];
+    assert_eq!(
+        shown,
+        prompt.join("\n"),
+        "the page's prompt differs from the README's"
+    );
+
+    // The page says that it loads nothing from anywhere else. Its policy is what
+    // makes a browser hold it to that.
+    assert!(page.contains("default-src 'none'"), "no policy on the page");
+    let style = std::fs::read_to_string(root.join("site/style.css")).unwrap();
+    for elsewhere in ["src=\"http", "src=\"//", "@import", "url(http"] {
+        assert!(!page.contains(elsewhere), "{elsewhere}");
+        assert!(!style.contains(elsewhere), "{elsewhere} in the stylesheet");
+    }
 }
 
 /// Help that says what is true: Windows is not supported, so `init` does not name it as

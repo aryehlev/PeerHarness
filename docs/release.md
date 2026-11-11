@@ -149,9 +149,10 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    `docs/limits.md` and `docs/checked.md` again against what this release contains,
    and check each command the README shows against the binary. The README is packed
    into every archive, so what is tagged is what people read, and `docs/limits.md`
-   and `docs/checked.md` are packed next to it. Keep the README to what PeerHarness
-   does and how it is used: a new limit goes into `docs/limits.md`, a new check into
-   `docs/checked.md`, and a new command into `docs/terminal.md`.
+   and `docs/checked.md` are packed next to it. The project page in `site/` repeats
+   parts of the README: change it where the README changed. Keep the README to what
+   PeerHarness does and how it is used: a new limit goes into `docs/limits.md`, a new
+   check into `docs/checked.md`, and a new command into `docs/terminal.md`.
 4. Write into `CHANGELOG.md`: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`. Move its "Unreleased" entries
    under the new version in the same pull request. The workflow publishes the

@@ -140,6 +140,25 @@ command output or say plainly what you did not run.
 be met safely, leave the feature disabled, document the blocker, and continue with the
 safe scope.
 
+### The project page
+
+`site/` is the project page, published to GitHub Pages by
+`.github/workflows/site.yml` on every push to `main` that changes it (ADR-048). It is
+static: no build step, no package manager, and a Content-Security-Policy that lets
+it load nothing from another origin. Keep it that way: no web fonts, no analytics, no
+CDN.
+
+It says what the README says, in the README's words. When the README changes, change
+the page in the same commit. A test in `apps/peerharness/tests/first_run.rs` holds
+its opening sentence and its setup prompt to the README's. To look at it:
+
+```sh
+python3 -m http.server --directory site
+```
+
+`site/og.png` is the picture a link to the page shows: the top of the page in the
+light theme, 1200 by 630. Make it again when the top changes.
+
 ### Pull requests
 
 * Keep pull requests focused. Explain what changed and why, how you tested it, and any

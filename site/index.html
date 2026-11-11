@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>PeerHarness: your team votes on how its AI coding agents behave</title>
+<meta name="description" content="You correct your coding agent. PeerHarness turns the correction into a one-sentence rule that you keep for yourself or put to your team's vote. There is no server: every node checks every signature and counts every vote for itself.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:type" content="website">
+<meta property="og:title" content="PeerHarness">
+<meta property="og:description" content="Your team votes on how its AI coding agents behave.">
+<meta property="og:url" content="https://aryehlev.github.io/PeerHarness/">
+<meta property="og:image" content="https://aryehlev.github.io/PeerHarness/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A ballot. The rule: Use pnpm, not npm, in this repository. Alice approves, Carol rejects, Bob approves. Passed: 2 of 3 approved.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='4' fill='%23f4f1e8' stroke='%23191814' stroke-width='2.5'/%3E%3Cpath d='M8.5 17c2.3 1.7 4 3.7 5.3 6.2 2.7-6.6 5.9-11 10.2-14.7' fill='none' stroke='%232440c4' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body id="top">
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 13.5c2.2 1.6 3.9 3.6 5.1 6 2.7-6.5 6.4-11.6 11.4-15.7"/></symbol>
+  <symbol id="i-cross" viewBox="0 0 24 24"><path d="M5 5.5c4.6 4 9.3 8.5 14 13.5M19.5 5c-5 4.2-9.7 8.9-14.3 14"/></symbol>
+</svg>
+
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="top">
+  <div class="wrap top-in">
+    <a class="mark" href="#top">
+      <span class="box box-mark" aria-hidden="true"><svg><use href="#i-check"/></svg></span>
+      PeerHarness
+    </a>
+    <nav aria-label="On this page">
+      <a href="#try">Try it</a>
+      <a href="#vote">The vote</a>
+      <a href="#setup">Set it up</a>
+      <a href="#limits">Limits</a>
+      <a class="nav-out" href="https://github.com/aryehlev/PeerHarness">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero wrap">
+  <div class="hero-text">
+    <p class="label">For teams that work in Claude Code</p>
+    <h1>Your team <span class="pen-under">votes<svg viewBox="0 0 100 12" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8C27 3.5 63 2.5 98 6"/></svg></span> on how its AI coding agents behave.</h1>
+    <p class="lede">You correct your coding agent. PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it.</p>
+    <p class="cta">
+      <a class="btn btn-primary" href="#setup">Set it up</a>
+      <a class="btn" href="https://github.com/aryehlev/PeerHarness">Read the source</a>
+    </p>
+    <p class="status"><strong>Early and not audited.</strong> For Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. Read the <a href="#limits">limits</a> before you rely on it.</p>
+  </div>
+
+  <figure class="ballot-fig">
+    <div class="ballot">
+      <p class="ballot-head label"><span>Proposal · adopt rule</span><span>3 members</span></p>
+      <p class="ballot-rule">Use pnpm, not npm, in this repository.</p>
+      <ul class="votes">
+        <li class="vote v1"><span class="box" aria-hidden="true"><svg><use href="#i-check"/></svg></span><span class="who">alice</span><span class="what">approves.</span></li>
+        <li class="vote v2"><span class="box box-no" aria-hidden="true"><svg><use href="#i-cross"/></svg></span><span class="who">carol</span><span class="what">rejects: “Our CI images only ship npm.”</span></li>
+        <li class="count v3">open: 1 of 3 approved (2 needed), 1 dissenting</li>
+        <li class="vote v4"><span class="box" aria-hidden="true"><svg><use href="#i-check"/></svg></span><span class="who">bob</span><span class="what">approves.</span></li>
+      </ul>
+      <div class="ballot-foot v5">
+        <p class="tally">passed: 2 of 3 approved (2 needed), 1 dissenting</p>
+        <span class="stamp v6" aria-hidden="true">Passed</span>
+      </div>
+      <p class="ballot-note v5">No one held a veto, and carol's dissent stays on the record.</p>
+    </div>
+    <figcaption>A vote among three members, from the output of the built-in demo. Every node counts for itself and agrees.</figcaption>
+  </figure>
+</section>
+
+<section id="try" class="sec">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="label">§ 1 · Try it in Claude Code</p>
+      <h2>Say it to your agent.</h2>
+      <p>Start a new Claude Code session and say these, one at a time. You need no teammate for it.</p>
+    </header>
+
+    <div class="try-grid">
+      <ol class="steps">
+        <li>
+          <p class="say">“From now on, use pnpm here, not npm.”</p>
+          <p>Your agent notes the rule (“Use pnpm, not npm, in this repository.”) and tells you it did. It does the same when you correct it in the middle of work.</p>
+        </li>
+        <li>
+          <p class="say">“Keep it.”</p>
+          <p>A window shows the exact rule. Click Proceed: the rule is installed for your own agent, which reads it from its next session. Nothing is shared.</p>
+        </li>
+        <li>
+          <p class="say">“Create a PeerHarness team called acme.”</p>
+          <p>You are its only member for now.</p>
+        </li>
+        <li>
+          <p class="say">“Propose the pnpm rule to acme.”</p>
+          <p>A window shows the exact text that would leave your machine. Click Proceed: the rule is put to your team's vote.</p>
+        </li>
+        <li>
+          <p class="say">“Vote approve on it.”</p>
+          <p>A window shows your ballot. Click Proceed: one of one members approved, so the rule passed and is now your team's.</p>
+        </li>
+      </ol>
+
+      <div class="try-side">
+        <figure class="shot">
+          <div class="term">
+            <p class="t-user">From now on, use pnpm here, not npm.</p>
+            <p class="t-tool"><b>Skill</b>(peerharness-notes)<br><span class="t-dim">⎿ Successfully loaded skill</span></p>
+            <p class="t-agent">Got it: pnpm instead of npm in this repo from now on, and I've saved that to memory so it holds in future sessions.</p>
+            <p class="t-agent t-cont">I also noted it in PeerHarness as candidate <span class="t-id">cand_9fcb4b167df089ee</span>. You can ask me to keep it for yourself or to propose it to your team.</p>
+          </div>
+          <figcaption>The first sentence, in a real session. Abridged by one line.</figcaption>
+        </figure>
+
+        <figure class="shot">
+          <div class="win">
+            <p class="win-title">PeerHarness</p>
+            <p class="win-lead">Your coding agent started this step. Nothing happens unless you choose Proceed.</p>
+<pre class="win-text">You are about to sign a ballot in acme:
+  approve on "Use pnpm, not npm, in this repository." (adopt rule use-pnpm-not-npm-repository)
+An approval cannot be withdrawn. The rule, exactly as proposed:
+
+---
+name: use-pnpm-not-npm-repository
+description: Use pnpm, not npm, in this repository.
+---
+
+# Rule
+
+Use pnpm, not npm, in this repository.
+
+If this conflicts with what the user asks for in the current session, follow the user and say that it conflicts with this rule.</pre>
+            <p class="win-buttons" aria-hidden="true"><span class="win-btn win-default">Cancel</span><span class="win-btn">Proceed</span></p>
+          </div>
+          <figcaption>The window for the fifth sentence, with its exact text. Drawn for this page, not a screenshot.</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <div class="principle">
+      <h3>Agents suggest, people decide.</h3>
+      <div>
+        <p>Your agent can note a rule and open a window on your screen that shows the exact text. It cannot answer the window: inside its session, keeping a rule, sharing one, voting, inviting and joining take your click. Every window has two buttons, Cancel and Proceed, and Cancel is the default.</p>
+        <p>That stops an agent that is trying to help. It is <a href="#limits">not a sandbox</a>.</p>
+      </div>
+    </div>
+
+    <div class="more">
+      <div>
+        <h3>Then ask what is new</h3>
+        <p><span class="say-inline">“What is in my PeerHarness inbox?”</span> lists the rules your agent noted and the proposals that wait for your vote. <span class="say-inline">“Anything new in PeerHarness?”</span> exchanges with the other members first.</p>
+      </div>
+      <div>
+        <h3>And add a teammate</h3>
+        <p>Dana asks her agent for her device key and sends it to you. You say <span class="say-inline">“Invite Dana to acme. Her device key is ed25519:…”</span> and click Proceed in a window that names her device. She joins with your node's peer id and the team's fingerprint, which you tell her by phone or in person. From then on a rule needs both of your votes, and so does admitting a third member.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="vote" class="sec">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="label">§ 2 · The vote</p>
+      <h2>A majority of everyone, and nobody's veto.</h2>
+    </header>
+
+    <div class="vote-grid">
+      <ul class="plain rules">
+        <li><strong>One person, one vote</strong>, however many devices they have.</li>
+        <li><strong>A majority of everyone entitled to vote.</strong> Not voting counts as not approving. Nobody has a veto: a <code>reject</code> is recorded with its reason and does not block.</li>
+        <li><strong>No deadlines and no coordinator.</strong> A member cannot withdraw an approval, and counting reads no clock, so two nodes that hold the same records always agree.</li>
+        <li><strong>Membership is voted too.</strong> Admitting or removing a member and changing the thresholds need a vote. The founder's key signs the resulting charter, and nodes refuse any charter that a passed vote does not justify.</li>
+        <li><strong>A passed rule takes effect.</strong> It is installed for every member's agent, and any member can opt out of a single rule on their own machine.</li>
+      </ul>
+
+      <div class="rights">
+        <p class="label">No vote and no charter can switch these off</p>
+        <ol>
+          <li>Nothing leaves your machine without you seeing the exact text and confirming it.</li>
+          <li>PeerHarness never executes a rule. A rule is one instruction-only <code>SKILL.md</code>; tool pre-approval and shell-injection syntax are refused outright.</li>
+          <li>No vote grants read access.</li>
+          <li>A rule with high-risk content is never installed without asking you.</li>
+          <li>You can refuse a rule and you can leave.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="nodes" class="sec">
+  <div class="wrap node-grid">
+    <header class="sec-head">
+      <p class="label">§ 3 · No server</p>
+      <h2>Every node counts for itself.</h2>
+      <p>There is no server. Each person runs their own node with their own keys, and every node checks every signature and counts every vote for itself.</p>
+      <p>The founder's key signs the charter that a vote produced. It cannot stand in for the vote.</p>
+    </header>
+
+    <figure class="shot">
+      <div class="term demo">
+        <p class="ln">6. The charter is binding, so the rule is installed for every member's agent.</p>
+        <p class="ln">7. Carol opts out of this one rule. That is her right, and only her machine changes.</p>
+        <p class="ln">8. What cannot happen:</p>
+        <p class="ln in">Mallory signs a ballot. She is not on the roll: refused.</p>
+        <p class="ln in">The founder's root key signs a charter that adds Mallory without a vote.</p>
+        <p class="ln in">The signature is valid and every node still refuses it: the key is a notary, not a ruler.</p>
+      </div>
+      <figcaption>How the demo's vote ends. From its output, abridged.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="setup" class="sec">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="label">§ 4 · Set it up</p>
+      <h2>Paste this into Claude Code.</h2>
+    </header>
+
+    <div class="prompt">
+      <button class="copy" type="button" data-copy="setup-prompt" hidden>Copy</button>
+<pre id="setup-prompt">Set up PeerHarness for me: https://github.com/aryehlev/peerharness
+
+1. Install it:
+   curl -fsSL https://raw.githubusercontent.com/aryehlev/peerharness/main/install.sh | sh
+2. The next step is mine. It is where I allow what you may start for me, so do not
+   run it yourself: it would be refused. Ask me to run this in my own terminal:
+   ~/.local/bin/peerharness setup
+
+Then tell me to start a new Claude Code session, and what I can ask you there.</pre>
+    </div>
+
+    <div class="notes">
+      <div>
+        <h3>Your agent installs it</h3>
+        <p>The install line downloads the release binary for your machine, checks it against the release's <code>SHA256SUMS</code> and puts it in <code>~/.local/bin</code>. No <code>sudo</code>, and nothing else is changed.</p>
+      </div>
+      <div>
+        <h3>You run <code>setup</code>, once</h3>
+        <p>It is where you allow what your agent may start for you, so your agent is refused it. It creates your key and database and connects PeerHarness to Claude Code: two hooks, one skill and its tools. It shows each change before it makes it and asks you to confirm.</p>
+      </div>
+      <div>
+        <h3>What it stores</h3>
+        <p>One hook keeps a redacted copy of each prompt you type, so that corrections can be noticed. The copies stay on your machine, for 14 days by default, in a database that is not encrypted.</p>
+      </div>
+    </div>
+    <p class="after">Then start a new Claude Code session and <a href="#try">try it</a>. More: <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md#what-setup-adds-and-what-is-stored">what setup adds and stores</a>, and <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md#take-it-out-again">how to take it out again</a>.</p>
+  </div>
+</section>
+
+<section id="limits" class="sec">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="label">§ 5 · Limits</p>
+      <h2>What it does not do.</h2>
+      <p>PeerHarness is early and has not been audited. Read these before you rely on it.</p>
+    </header>
+
+    <ul class="plain limits">
+      <li><strong>The agent guard is not a sandbox.</strong> A session is recognized by an environment variable, and only Claude Code's by default. A process running as you that hides it can run the same commands with <code>--yes</code>. Your agent chooses when a window appears: reading it before you click is your part.</li>
+      <li><strong>A rule is text that your agent acts on</strong>, and your agent can run commands. The risk scanner and the redaction are heuristics. Read a rule as you would a script.</li>
+      <li><strong>Joining installs rules you have not read.</strong> The join window shows the charter and how many rules it carries, not their text. You can opt out of any afterwards.</li>
+      <li><strong>The founder can revoke a device without a vote</strong>, for a lost laptop. Its ballots stop counting, so a result that needed one is undone. The founder's key also signs every change of the roll: if it is lost, nobody can be admitted or removed.</li>
+      <li><strong>No secret ballot</strong>, and at most 64 members. A member who never votes makes every threshold harder to reach.</li>
+      <li><strong>A node is reachable only while a daemon runs</strong>: yours, or the one your agent runs while its session is open. There is no background service yet.</li>
+      <li><strong>Internet mode</strong> shows your node's public key and IP address to servers run by volunteers.</li>
+    </ul>
+    <p class="after">The full list is in <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/limits.md">docs/limits.md</a>, and how each part was checked in <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/checked.md">docs/checked.md</a>.</p>
+
+    <div class="principle why">
+      <h3>Why not a CLAUDE.md in git?</h3>
+      <div>
+        <p>If the rule is about one repository and your team already reviews pull requests, commit the file. You need nothing else.</p>
+        <p>PeerHarness is for rules that follow people across repositories, for groups with no shared repository or nobody who administers one, and for members who want to see the exact text they vote on and to opt out of a rule alone.</p>
+        <p>It is also more dynamic and more democratic. A rule starts as a correction in the middle of work, with no file to edit and no pull request to open. And it passes by a majority of everyone, not by the say of whoever can merge.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div>
+      <p class="label">From a terminal</p>
+      <p>Every step on this page is also a command, and a few steps are done only there: <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md">PeerHarness from a terminal</a>. <code>peerharness demo</code> runs the vote at the top of this page on your machine, in a temporary folder.</p>
+    </div>
+    <div>
+      <p class="label">Read more</p>
+      <ul class="plain links">
+        <li><a href="https://github.com/aryehlev/PeerHarness">Source on GitHub</a></li>
+        <li><a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/security-model.md">Security model</a></li>
+        <li><a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/protocol-v0.md">Protocol</a></li>
+        <li><a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/decisions.md">Decisions</a></li>
+        <li><a href="https://github.com/aryehlev/PeerHarness/blob/main/CHANGELOG.md">Changelog</a></li>
+      </ul>
+    </div>
+    <div>
+      <p class="label">This page</p>
+      <p>Static files and no build step. It loads nothing from anywhere else: no fonts, no scripts, no trackers.</p>
+      <p>PeerHarness is MIT or Apache-2.0, at your option. It was written with Claude Code, as the commit trailers say.</p>
+    </div>
+  </div>
+</footer>
+
+<script src="site.js"></script>
+</body>
+</html>

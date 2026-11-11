@@ -3150,3 +3150,39 @@ a section of twenty lines needs no folding.
 **From now on.** A step that can be said to an agent is shown as the sentence, not as
 its command. A command comes into "From a terminal" only when no sentence does the
 same. Every other command goes to `docs/terminal.md`.
+
+## ADR-048: A project page in `site/`, static, that loads nothing from anywhere else
+The owner asked for a simple site that shows the project, on GitHub Pages.
+
+**Decision.** The page is the folder `site/`: `index.html`, `style.css`, `site.js` and
+`og.png`, with no build step and no package manager. `.github/workflows/site.yml`
+publishes that folder, and nothing else, on every push to `main` that changes it.
+Pages is switched on once in the repository's settings, with GitHub Actions as its
+source.
+
+* **It says what the README says, in the README's words**, in the same order of
+  weight (ADR-047): what is said in Claude Code first, the commands in a few lines at
+  its foot. It carries the README's limits in full and the status "early and not
+  audited", and no version number, so that a release does not leave it stale.
+* **It loads nothing from another origin**: no web font, no script, no analytics. Its
+  Content-Security-Policy is `default-src 'none'` with `'self'` for its stylesheet,
+  its script and its images. A tool that says "nothing leaves your machine" should
+  not hand its readers' addresses to a font server. GitHub, which serves the page,
+  sees who reads it.
+* **Two pictures on it are drawn, and say so.** The ballot at the top is the vote
+  from the output of `peerharness demo`. The confirmation window is its text from the
+  README with the two buttons as `window.rs` orders them, captioned as drawn and not a
+  screenshot. The session under the first sentence is a real one, abridged by one
+  line, and says that too.
+* **A test holds it to the README** (`first_run.rs`): the opening sentence, the setup
+  prompt line for line, and the policy. The prompt is the part people paste into their
+  agent, so a page that kept an older one would hand out other steps.
+
+**Rejected.** Serving `docs/` with Pages: the folder holds the documents, which
+would be published as pages next to it. A site generator: one page needs none, and
+it would bring a toolchain into a Rust repository. Reading the latest version from
+GitHub's API in the page: a request to another origin for one number.
+
+**From now on.** When the README changes, the page changes in the same commit where
+it says the same thing. `og.png` is the picture a link to the page shows: the top of
+the page in the light theme, 1200 by 630. It is made again when the top changes.

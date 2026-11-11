@@ -22,6 +22,8 @@ database schema it writes.
   screenshot of a session in which the agent notes a rule. The commands it still
   shows stand in one section at its end, "From a terminal", with the steps that are
   done only there (ADR-047).
+* A project page, published from `site/` to GitHub Pages: what the README says, as
+  one static page that loads nothing from another origin (ADR-048).
 
 ## 0.4.0 (2026-11-11)
 
