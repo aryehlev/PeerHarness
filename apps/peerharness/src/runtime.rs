@@ -145,6 +145,9 @@ struct Shared {
 pub struct Changes {
     pub installed: Vec<String>,
     pub removed: Vec<String>,
+    /// Skills a vote installed that were to be removed and could not be
+    /// (`governance::Applied::not_removed`).
+    pub not_removed: Vec<String>,
     /// Rules in force that wait for the owner's confirmation.
     pub asking: Vec<governance::Waiting>,
     /// Rules in force that this node holds back (`governance::Held`), each with the
@@ -162,6 +165,7 @@ impl std::fmt::Debug for Changes {
         f.debug_struct("Changes")
             .field("installed", &self.installed)
             .field("removed", &self.removed)
+            .field("not_removed", &self.not_removed)
             .field("asking", &self.asking)
             .field("held", &self.held.len())
             .field("charters_issued", &self.charters_issued)
@@ -174,8 +178,16 @@ impl Changes {
     fn absorb(&mut self, other: Changes) {
         self.installed.extend(other.installed);
         self.removed.extend(other.removed);
-        // A circle is settled more than once in one exchange, and a rule that waits or
-        // is held is found each time: it is reported once.
+        // A circle is settled more than once in one exchange, and a rule that waits, is
+        // held or cannot be removed is found each time: it is reported once. One that a
+        // later settle did remove is not reported as left behind.
+        for skill in other.not_removed {
+            if !self.not_removed.contains(&skill) {
+                self.not_removed.push(skill);
+            }
+        }
+        self.not_removed
+            .retain(|skill| !self.removed.contains(skill));
         for waiting in other.asking {
             if !self.asking.contains(&waiting) {
                 self.asking.push(waiting);
@@ -192,7 +204,8 @@ impl Changes {
 
     /// Whether anything visible to the owner happened. A rule that is held is a state,
     /// not something that happened: a sync that exchanged nothing does not report it
-    /// again, tick after tick (`rule list` shows it at any time).
+    /// again, tick after tick (`rule list` shows it at any time). The same goes for a
+    /// skill that cannot be removed: every settle finds it again until it can.
     pub fn is_empty(&self) -> bool {
         self.installed.is_empty()
             && self.removed.is_empty()
@@ -219,6 +232,7 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                 }
                 changes.installed.extend(settled.applied.installed);
                 changes.removed.extend(settled.applied.removed);
+                changes.not_removed.extend(settled.applied.not_removed);
                 changes.asking.extend(settled.applied.asking);
                 changes.held.extend(
                     settled

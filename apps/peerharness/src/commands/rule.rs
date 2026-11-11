@@ -237,6 +237,9 @@ pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
     if settled.applied.removed.iter().any(|s| s == name) {
         t.line("  removed it from your agent's skills");
     }
+    for skill in &settled.applied.not_removed {
+        t.line(format!("  {}", governance::not_removed_line(skill)));
+    }
     t.line(format!(
         "  Nobody else is told. To put it on the circle's record: \
          `peerharness rule opt-out {name} --circle {} --announce`.",
@@ -249,6 +252,7 @@ pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
             "opted_out": true,
             "installed": settled.applied.installed,
             "removed": settled.applied.removed,
+            "not_removed": settled.applied.not_removed,
         }),
         t.finish(),
     ))
@@ -374,6 +378,7 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
             "opted_out": false,
             "installed": settled.applied.installed,
             "removed": settled.applied.removed,
+            "not_removed": settled.applied.not_removed,
         }),
         t.finish(),
     ))

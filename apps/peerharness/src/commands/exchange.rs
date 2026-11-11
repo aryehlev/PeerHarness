@@ -108,6 +108,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
     let installer = governance::user_installer()?;
     let mut installed = Vec::new();
     let mut removed = Vec::new();
+    let mut not_removed = Vec::new();
     let mut held = Vec::new();
     let mut charters = Vec::new();
     for circle in node.store.circles()? {
@@ -135,6 +136,13 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
         for skill in &settled.applied.removed {
             t.line(format!("  {}: removed rule {skill}", safe(&circle.name)));
         }
+        for skill in &settled.applied.not_removed {
+            t.line(format!(
+                "  {}: {}",
+                safe(&circle.name),
+                governance::not_removed_line(skill)
+            ));
+        }
         for waiting in &settled.applied.asking {
             t.line(format!("  {}: {}", safe(&circle.name), waiting.line()));
         }
@@ -154,6 +162,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
         }
         installed.extend(settled.applied.installed);
         removed.extend(settled.applied.removed);
+        not_removed.extend(settled.applied.not_removed);
     }
     if source.ignored > 0 {
         t.line(format!(
@@ -177,6 +186,7 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             "ignored": source.ignored,
             "installed": installed,
             "removed": removed,
+            "not_removed": not_removed,
             "held": held,
             "charters_issued": charters,
         }),

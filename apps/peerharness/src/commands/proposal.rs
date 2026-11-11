@@ -113,6 +113,9 @@ fn settled_lines(t: &mut Text, s: &Settled, circle: &CircleRow) {
     for skill in &s.applied.removed {
         t.line(format!("  removed rule {skill}"));
     }
+    for skill in &s.applied.not_removed {
+        t.line(format!("  {}", governance::not_removed_line(skill)));
+    }
     for waiting in &s.applied.asking {
         t.line(format!("  {}", waiting.line()));
     }

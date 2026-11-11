@@ -1182,6 +1182,10 @@ pub struct Applied {
     pub installed: Vec<String>,
     /// Managed skills removed now (repealed, replaced or opted out).
     pub removed: Vec<String>,
+    /// Skills a vote of this circle installed that were to be removed now and could
+    /// not be: the uninstall failed (a file that cannot be changed). The record that a
+    /// vote installed them is kept, so the next settle tries again.
+    pub not_removed: Vec<String>,
     /// Rules in force that are not installed and wait for the owner's confirmation. A
     /// rule that is in place already is not among them.
     pub asking: Vec<Waiting>,
@@ -1513,32 +1517,43 @@ pub fn apply_rules(
             Ok(InstallState::Managed { digest: d, modified: false }) if d == *digest
         )
     };
-    // Removes what a vote installed for `name`, from wherever it was put.
-    let remove = |name: &str, digest: &Digest, applied: &mut Applied| -> Result<()> {
+    // Removes what a vote installed for `name`, from wherever it was put. Returns
+    // whether nothing of it is on record any more. Where the files are what the vote
+    // installed and cannot be removed, it returns `false` and keeps the record: the
+    // skill is still there, and the next settle tries again.
+    let remove = |name: &str, digest: &Digest, applied: &mut Applied| -> Result<bool> {
         let Some(place) = store.rule_install_place(id, name)? else {
-            return Ok(());
+            return Ok(true);
         };
         let target = Target::of(installer, place);
         if managed_with(&target, name, digest) {
-            if let Ok(gone) = target
+            match target
                 .installer
                 .uninstall(name, UninstallOptions::default())
             {
-                installs::record_uninstall(
-                    store,
-                    target.scope,
-                    name,
-                    &gone.removed_digest,
-                    &gone.path,
-                    now,
-                )?;
-                if !applied.removed.iter().any(|n| n == name) {
-                    applied.removed.push(name.to_owned());
+                Ok(gone) => {
+                    installs::record_uninstall(
+                        store,
+                        target.scope,
+                        name,
+                        &gone.removed_digest,
+                        &gone.path,
+                        now,
+                    )?;
+                    if !applied.removed.iter().any(|n| n == name) {
+                        applied.removed.push(name.to_owned());
+                    }
+                }
+                Err(_) => {
+                    if !applied.not_removed.iter().any(|n| n == name) {
+                        applied.not_removed.push(name.to_owned());
+                    }
+                    return Ok(false);
                 }
             }
         }
         store.clear_rule_install(id, name)?;
-        Ok(())
+        Ok(true)
     };
 
     for rule in rules.rules() {
@@ -1581,10 +1596,12 @@ pub fn apply_rules(
         match adoption_step(rule, mode, checks, choice, policy_ok) {
             AdoptionStep::Install => {
                 // A copy this circle put somewhere else (the owner moved the scope)
-                // goes first.
+                // goes first. While it cannot be removed the rule is not installed in
+                // the new place: the record of the old copy would be overwritten, and
+                // nothing would take that copy out later.
                 if let Some((old, place)) = voted_install(store, id, &name)? {
-                    if place != target.dir {
-                        remove(&name, &old, &mut applied)?;
+                    if place != target.dir && !remove(&name, &old, &mut applied)? {
+                        continue;
                     }
                 }
                 if managed_with(&target, &name, &rule.bundle_digest()) {
@@ -1617,7 +1634,6 @@ pub fn apply_rules(
             step @ AdoptionStep::Refuse(_) => applied.refused.push((name, step.code())),
             AdoptionStep::OptedOut => {
                 remove(&name, &rule.bundle_digest(), &mut applied)?;
-                store.clear_rule_install(id, &name)?;
                 applied.opted_out.push(name);
             }
         }
@@ -1637,6 +1653,18 @@ pub fn apply_rules(
         }
     }
     Ok(applied)
+}
+
+/// The line a command prints for a skill that a vote installed and that could not be
+/// removed when it was to go ([`Applied::not_removed`]). It names no command that
+/// removes the skill by itself: `skills uninstall` refuses a copy a vote installed
+/// while that rule is in force, which it still is after `circle leave`.
+pub fn not_removed_line(name: &str) -> String {
+    format!(
+        "rule {name} could not be removed: its files could not be changed. It is still \
+         installed. It is tried again each time this circle is settled on this machine \
+         (an `events import`, or a sync with one of its members)."
+    )
 }
 
 /// Where one rule is installed on this machine.
@@ -3160,6 +3188,81 @@ mod tests {
         let applied = machine.apply(&store, &circle, &[]);
         assert!(applied.removed.is_empty());
         assert!(hers.is_file(), "the vote never installed that copy");
+    }
+
+    /// A skill a vote installed that cannot be removed when it is to go. The removal
+    /// used to fail without a word, and the record that a vote had installed the skill
+    /// was cleared all the same: the skill stayed in the owner's agent and no later
+    /// settle took it out. The record is kept now, the skill is reported, and every
+    /// settle tries again.
+    ///
+    /// The failure here is one that does not depend on file permissions (the suite may
+    /// run as root): the project's skills directory has become a link that leads out
+    /// of the project, and a project installer does not follow such a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_skill_that_cannot_be_removed_stays_on_record_and_is_tried_again() {
+        let (store, circle, now) = node();
+        let machine = Machine::new();
+        let name = "commit-style";
+        let base = machine.skills.parent().unwrap().to_owned();
+        let project = base.join("web");
+        std::fs::create_dir_all(&project).unwrap();
+        let place = project.to_str().unwrap();
+        store.set_rule_place(&circle, &Scope::all(), place).unwrap();
+        let (adopt, _) = pass_rule(
+            &store,
+            &machine,
+            &circle,
+            name,
+            "Commit subjects are always a single word.",
+            now,
+        );
+        assert_eq!(machine.apply(&store, &circle, &[]).installed, [name]);
+        let skills = project.join(".claude").join("skills");
+        assert!(skills.join(name).join("SKILL.md").is_file());
+        let on_record = |store: &Store| -> Option<Option<String>> {
+            store.rule_install_place(&circle, name).unwrap()
+        };
+        assert_eq!(on_record(&store), Some(Some(place.to_owned())));
+
+        // The skills directory moves out of the project, and a link takes its place.
+        let elsewhere = base.join("elsewhere");
+        std::fs::rename(&skills, &elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &skills).unwrap();
+        let still_there = elsewhere.join(name).join("SKILL.md");
+
+        // --- The owner moves the scope back to every project. The copy in the project
+        // cannot be removed: it is reported, its record stays, and the rule is not
+        // installed in the new place over that record.
+        store.clear_rule_place(&circle, &Scope::all()).unwrap();
+        for _ in 0..2 {
+            let applied = machine.apply(&store, &circle, &[]);
+            assert_eq!(applied.not_removed, [name]);
+            assert!(applied.removed.is_empty() && applied.installed.is_empty());
+            assert!(still_there.is_file());
+            assert_eq!(machine.text(name), None);
+            assert_eq!(on_record(&store), Some(Some(place.to_owned())));
+        }
+        assert!(not_removed_line(name).contains("could not be removed"));
+
+        // --- The rule is repealed while its copy still cannot be removed: the same.
+        repeal(&store, &circle, &adopt, now);
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(applied.not_removed, [name]);
+        assert!(applied.removed.is_empty());
+        assert!(still_there.is_file());
+        assert_eq!(on_record(&store), Some(Some(place.to_owned())));
+
+        // --- The directory is a directory of the project again. The next settle takes
+        // the skill out and forgets the record.
+        std::fs::remove_file(&skills).unwrap();
+        std::fs::rename(&elsewhere, &skills).unwrap();
+        let applied = machine.apply(&store, &circle, &[]);
+        assert_eq!(applied.removed, [name]);
+        assert!(applied.not_removed.is_empty());
+        assert!(!skills.join(name).join("SKILL.md").exists());
+        assert_eq!(on_record(&store), None);
     }
 
     /// The name of PeerHarness's own skill: a rule that has it is never installed, and

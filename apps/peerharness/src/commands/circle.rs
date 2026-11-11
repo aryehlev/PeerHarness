@@ -676,6 +676,7 @@ fn amendment_report(circle: &CircleRow, put: &Put, done: &str, mut t: Text) -> R
             "need": put.tally.need(),
             "charter_seq": put.settled.charter_notarized,
             "removed_rules": put.settled.applied.removed,
+            "not_removed_rules": put.settled.applied.not_removed,
         }),
         t.finish(),
     )
@@ -1416,6 +1417,10 @@ fn place(ctx: &Ctx, args: CirclePlaceArgs) -> Result<Report> {
     for skill in &settled.applied.installed {
         t.line(format!("  moved rule {skill}"));
     }
+    // A rule whose copy in the old place could not be removed is not moved yet.
+    for skill in &settled.applied.not_removed {
+        t.line(format!("  {}", governance::not_removed_line(skill)));
+    }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
     }
@@ -1555,6 +1560,9 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
         t.line(format!(
             "  rule {skill} is no longer in force here without that device's approval"
         ));
+    }
+    for skill in &settled.applied.not_removed {
+        t.line(format!("  {}", governance::not_removed_line(skill)));
     }
     Ok(Report::new(
         json!({
