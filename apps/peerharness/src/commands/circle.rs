@@ -158,10 +158,17 @@ pub fn describe_charter(charter: &Charter, me: Option<&DeviceKey>) -> String {
         "  changing these rules needs more than {}/{}",
         rules.amend.num, rules.amend.den
     ));
+    // Binding or advisory is what a member starts with when they join. After that
+    // the mode is each member's own (`circle mode`), and an amendment does not change
+    // it: the lines say so, because "each member is asked" was not true of a member
+    // who joined while rules were binding (ADR-050).
     t.line(if rules.binding {
-        "  passed rules are binding: they are installed for every member (you can opt out of any rule)"
+        "  passed rules are binding: they are installed for every member who has not chosen \
+         to be asked first (you can opt out of any rule)"
     } else {
-        "  passed rules are advisory: each member is asked before anything is installed"
+        "  passed rules are advisory: a member who joins is asked before a rule is installed. \
+         A member who chose to follow the circle's rules, or joined while they were binding, \
+         gets them installed without being asked until they switch (`peerharness circle mode ask`)"
     });
     t.line("  roll:");
     for entry in &charter.content.roll {

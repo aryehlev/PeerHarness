@@ -72,6 +72,11 @@ database schema it writes.
   * **Opting out in one team could remove a rule another team still had in force.**
     With the same rule in two teams, the copy now stays while you follow the other
     team, and the command says how to take it out there too.
+  * `circle members` no longer says of an advisory team that "each member is asked
+    before anything is installed": a member who joined while rules were binding
+    still follows without being asked, and the line now says so and names `circle
+    mode ask`. `rule list` says when you have left a team, where it showed its rules
+    as not installed.
 
 ## 0.4.0 (2026-11-11)
 

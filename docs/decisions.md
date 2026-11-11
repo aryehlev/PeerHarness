@@ -3544,3 +3544,31 @@ never that. The copy goes, and that circle's rule waits for its owner.
 and `a_copy_is_not_kept_for_a_circle_whose_owner_is_asked`
 (`apps/peerharness/src/governance.rs`). By hand: the reproduction of the audit.
 
+### What is said about advisory rules, and about a circle that was left
+
+**Found.** `circle members` said of an advisory charter: "each member is asked before
+anything is installed". `binding` decides the mode a member starts with when they
+join (`AdoptionMode::default_for`). After that the mode is each member's own, and an
+amendment to advisory changes nobody's. A member who joined while rules were binding
+went on getting rules installed without being asked, under a line that said the
+opposite. The description of such an amendment on a ballot said only "passed rules
+become advisory".
+
+`rule list` took the roll for being bound. An owner who left a circle on their
+machine stays on the roll until the members vote, and `apply_rules` installs nothing
+for them. The listing showed every rule of that circle as "[not installed]", with
+"your mode: follow", as if something were missing.
+
+**Decision.** The two lines say what the word does: what a member who joins starts
+with, and that a member who follows keeps following until they switch (`circle mode
+ask`). The description of an amendment that changes `binding` has a second line that
+says the same, on a ballot and in a window. `rule list` says of a circle that was
+left that it was left, and of each of its rules that it does not bind the owner.
+
+**Not changed.** The modes themselves. Asking once before switching to `follow` when
+a charter turns binding is still not written (architecture 10.9).
+
+**Tests.** `a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving`
+(`apps/peerharness/tests/circle_life.rs`) and
+`the_rules_of_the_vote_are_shown_old_and_new` (`apps/peerharness/src/amendment.rs`).
+

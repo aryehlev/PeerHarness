@@ -499,6 +499,13 @@ impl Changes {
                             force(old.binding)
                         ),
                     );
+                    // What the word does and does not change (ADR-050).
+                    out.line(
+                        2,
+                        "that is what a member who joins afterwards starts with: whether \
+                         the members of today are asked before a rule is installed stays \
+                         each member's own choice",
+                    );
                 }
             }
         }
@@ -1231,6 +1238,10 @@ mod tests {
                 "  a rule passes with more than 2/3 of its electorate (now 1/2)",
                 "  changing these rules needs more than 3/4 of the roll (now 2/3)",
                 "  passed rules become advisory (now binding)",
+                // What that word changes, and what it leaves to each member (ADR-050).
+                "    that is what a member who joins afterwards starts with: whether the \
+                 members of today are asked before a rule is installed stays each member's \
+                 own choice",
                 "the rules in force stay as they are (0 in force)",
             ]
         );

@@ -523,6 +523,25 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
         );
     }
 
+    // The charter is advisory now, and every member joined while it was binding: each
+    // still follows without being asked. What the node says about the charter does not
+    // claim otherwise (it said "each member is asked before anything is installed").
+    let members = carol.reads(&["circle", "members", "--circle", "team"]);
+    assert!(members.contains("passed rules are advisory"), "{members}");
+    assert!(!members.contains("each member is asked"), "{members}");
+    assert!(
+        members.contains("joined while they were binding"),
+        "{members}"
+    );
+    assert!(
+        members.contains("`peerharness circle mode ask`"),
+        "{members}"
+    );
+    assert_eq!(
+        carol.run(&["rule", "list"])["rules"][0]["left_circle"],
+        false
+    );
+
     // --- Carol leaves. Her machine changes at once; the roll changes by vote.
     assert_eq!(
         carol.fail_as_agent(&["circle", "leave", "--circle", "team", "--yes"]),
@@ -534,6 +553,21 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
     assert!(!carol.has_skill(&skill) && !carol.has_skill(&second_skill));
     assert_eq!(carol.roll(), ["alice", "bob", "carol"], "still on the roll");
     assert_eq!(left["requested"], true);
+    // She is still on the roll, and `rule list` does not take that for being bound:
+    // it said "[not installed]" for each rule, as if one were missing (ADR-050).
+    let listed = carol.run(&["rule", "list"]);
+    for rule in listed["rules"].as_array().unwrap() {
+        assert_eq!(rule["left_circle"], true, "{rule}");
+        assert_eq!(rule["binds_you"], false, "{rule}");
+        assert_eq!(rule["state"], "does not bind you: you left this circle");
+    }
+    assert_eq!(listed["rules"].as_array().unwrap().len(), 2);
+    let said = carol.reads(&["rule", "list"]);
+    assert!(
+        said.contains("you left this circle on this machine"),
+        "{said}"
+    );
+    assert!(!said.contains("your mode:"), "{said}");
     // Her request is on record: running it again says so and asks for nothing more.
     let again = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
     assert_eq!(again["requested"], false);
@@ -547,6 +581,10 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
     let back = carol.run(&["circle", "leave", "--circle", "team", "--undo", "--yes"]);
     assert_eq!(back["left"], false);
     assert!(carol.has_skill(&skill));
+    assert_eq!(
+        carol.run(&["rule", "list"])["rules"][0]["left_circle"],
+        false
+    );
     // And leave again. The members approve (pass is now 2/3 of three: all three, and
     // her own approval is one of them).
     let left = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
