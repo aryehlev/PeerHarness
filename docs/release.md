@@ -148,11 +148,11 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
 4. Note in the release notes draft: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`. Move the "Unreleased" entries of
    `CHANGELOG.md` under the new version in the same pull request.
-5. Tag and push:
+5. Tag and push, with the version you set in step 2 in place of `<version>`:
 
    ```sh
-   git tag -a v0.1.0 -m "PeerHarness v0.1.0"
-   git push origin v0.1.0
+   git tag -a v<version> -m "PeerHarness v<version>"
+   git push origin v<version>
    ```
 
 6. Watch the Release workflow. When it finishes, download one archive and verify it as
