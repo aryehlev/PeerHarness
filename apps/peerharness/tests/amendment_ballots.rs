@@ -991,6 +991,86 @@ fn an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window() {
     let shown = dave.run(&["proposal", "show", id]);
     assert_eq!(shown["approvals"], serde_json::json!([]));
     assert_eq!(shown["dissent"], serde_json::json!([]));
+
+    // --- An honest admission, drafted on Alice's complete node: it keeps the rule.
+    // On Dave's node it is no ballot for a window either. The window would say "and
+    // nothing else" about an amendment his node cannot compare with the rules in
+    // force: it lists a rule he does not hold.
+    let honest = invite(&c.alice, &c.erin, "erin");
+    let all = std::fs::read_to_string(
+        c.alice
+            .export(&tmp.path().join("an-honest-admission.jsonl")),
+    )
+    .unwrap();
+    let partial = tmp
+        .path()
+        .join("an-honest-admission-without-the-rule.jsonl");
+    std::fs::write(&partial, without_the_rule(&all, &c.rule).join("\n") + "\n").unwrap();
+    dave.run(&["events", "import", partial.to_str().unwrap()]);
+    let json = dave.run(&["proposal", "show", &honest]);
+    assert_eq!(
+        json["amendment"]["roll"]["admitted"][0]["member"], "erin",
+        "{json}"
+    );
+    assert_eq!(
+        json["amendment"]["rules_in_force"]["added"][0]["carried_by_charter_in_force"],
+        true
+    );
+    for decision in ["approve", "reject", "revise"] {
+        let (code, printed) = in_session(dave, &["proposal", "vote", &honest, decision]);
+        assert_eq!(code, 3, "{decision}: {printed}");
+        assert!(
+            !dave.opened.exists(),
+            "{decision}: a window was opened\n{printed}"
+        );
+        if decision != "approve" {
+            assert!(printed.contains("your own terminal"), "{printed}");
+        }
+    }
+    let shown = dave.run(&["proposal", "show", &honest]);
+    assert_eq!(shown["approvals"], serde_json::json!(["alice"]));
+    assert_eq!(shown["dissent"], serde_json::json!([]));
+    // In his own terminal the approval is refused, with `--yes` too: his node cannot
+    // show whether keeping that rule changes anything.
+    let (code, text) = dave.reads(&["proposal", "vote", &honest, "approve", "--yes"]);
+    assert_eq!(code, 3, "{text}");
+    assert!(
+        text.contains(
+            "that amendment keeps a rule that the charter in force carries and this node \
+             does not hold"
+        ),
+        "{text}"
+    );
+    // A reject and a revise approve nothing: each is his to give there, and is
+    // recorded. Of two dissenting ballots the later one is his recorded dissent, and a
+    // ballot's time is in whole seconds.
+    let dissent = |node: &Node| node.run(&["proposal", "show", &honest])["dissent"].clone();
+    let (code, text) = dave.reads(&["proposal", "vote", &honest, "reject", "--yes"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("Ballot recorded."), "{text}");
+    assert_eq!(
+        dissent(dave),
+        serde_json::json!([{ "member": "dave", "decision": "reject" }])
+    );
+    let second_of = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let rejected_in = second_of();
+    while second_of() == rejected_in {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let (code, text) = dave.reads(&["proposal", "vote", &honest, "revise", "--yes"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("Ballot recorded."), "{text}");
+    assert_eq!(
+        dissent(dave),
+        serde_json::json!([{ "member": "dave", "decision": "revise" }])
+    );
+    assert_eq!(dave.approvals(&honest), serde_json::json!(["alice"]));
+    assert!(!dave.opened.exists(), "no window was opened for any of it");
 }
 
 /// Where such amendments came from with nobody attacking: the node that lacks the rule
