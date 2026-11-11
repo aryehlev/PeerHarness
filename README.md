@@ -30,9 +30,13 @@ not.
 > passes a vote replaces a skill of the same name that you installed yourself; `rule
 > opt-in` installs without asking; a rule is not scanned when it is proposed, and the
 > scanner lacks the two high-risk rules named under [Known limits](#known-limits); a
-> step that finds no terminal says `re-run with --yes`; a ballot on an amendment shows
-> its title, not what it changes. The full list is in [CHANGELOG.md](CHANGELOG.md)
-> under Unreleased. To build 0.4.0, with Rust 1.89 or newer:
+> step that finds no terminal says `re-run with --yes`; a ballot on an amendment in a
+> terminal shows its title, not what it changes; `export --local` and a plaintext
+> `init` are not refused inside a session; `reset` does not list the skill folders it
+> leaves; a second `circle leave` is refused, and one that could not unlock the key
+> leaves the team's rules installed. The full list is in
+> [CHANGELOG.md](CHANGELOG.md) under Unreleased. To build 0.4.0, with Rust 1.89 or
+> newer:
 > `cargo install --locked --git https://github.com/aryehlev/peerharness peerharness`.
 
 **Where it runs.** Claude Code on macOS, with the windows. Linux from your own
@@ -210,8 +214,9 @@ peerharness reset --confirm
 rm ~/.local/bin/peerharness
 ```
 
-`circle leave` also asks the members to take you off the roll. Where your node cannot
-make that request, it says so and why, and running it again later makes it. A team's
+`circle leave` also asks the members to take you off the roll, and signs that request
+only as its preview showed it. Where it makes no request, it says so and why, and
+running it again once the cause is gone shows the request and makes it. A team's
 only member cannot leave it: opt out of its rules one by one. `reset --confirm` cannot
 be undone, and ballots you already cast stay on the other members' nodes. A skill
 that is still installed when you reset stays where it is, and the report lists its
@@ -390,7 +395,10 @@ check records, on the version named. *Not tried* means no run is recorded.
   with Claude Code 2.1.322 on macOS, before v0.2.0, in three runs. The real
   notification on macOS, once. `--lan` worked on macOS when it was built, before
   v0.1.0; no run of its tests is recorded. The install script with the v0.3.0 x86_64
-  Linux binary, in a container.
+  Linux binary, in a container. On Linux, with a debug build of this tree, on a
+  pseudo-terminal: when the records of a rule that passed arrive on a node while its
+  owner answers a prompt or types a passphrase, nothing is signed for a change to the
+  charter, an approval of one, a repeal or an announced opt-out.
 * **Not tried.** Clicking the buttons of the real window. The setup prompt above
   through an agent. A real agent noting, keeping, proposing, voting or joining.
   Internet mode between two different routers, over IPv6 or on Linux. `--lan` on
@@ -476,11 +484,12 @@ The other limits:
 * **Turnout.** A member who never votes makes every threshold harder to reach. Rolls
   are capped at 64 members.
 * **Leaving is immediate on your machine, and by vote on the roll.** Until the members
-  approve it, your name still counts toward every threshold. If your node could not
-  make the request (a key that did not unlock, or a rule of the charter that the node
-  does not hold), you are off the team on your machine and still on its roll. The
-  request is then made when you run `peerharness circle leave` again once the cause is
-  gone, or when a member proposes your removal.
+  approve it, your name still counts toward every threshold. If your node made no
+  request (a key that did not unlock, a rule of the charter that the node does not
+  hold, or records of the team that arrived while you confirmed), you are off the
+  team on your machine and still on its roll. The request is then made when you run
+  `peerharness circle leave` again once the cause is gone, or when a member proposes
+  your removal.
 * **A team rule is one sentence of at most 200 characters.** A note may be up to 500.
   A longer one has to be shortened before it can be proposed (`peerharness review
   <candidate-id> --edit "…"`).
