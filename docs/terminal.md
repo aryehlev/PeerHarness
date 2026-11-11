@@ -584,10 +584,9 @@ be changed. It is still installed. It is tried again each time this circle is se
 on this machine (an `events import`, or a sync with one of its members)." While the
 old copy of a rule whose scope you moved cannot be removed, the rule is not installed
 in the new place. Two circles can each have installed a rule of one name, in two
-places. When a sync removes one copy and then cannot remove the other, it prints the
-line for the one that stayed. When it comes to the copy that stays first and removes
-the other afterwards, the line is missing from that report, and the next sync or
-import that settles that circle prints it. For a circle you left, running
+places. When a sync removes one circle's copy and cannot remove the other's, it
+prints the line for the one that stayed, in whichever order it came to the two. For
+a circle you left, running
 `circle leave` again tries too, which the line does not say. Once the files can be
 changed you can also take the leftover out yourself with `skills uninstall`, unless
 you still follow the rule. The record that a vote installed that copy goes with it,

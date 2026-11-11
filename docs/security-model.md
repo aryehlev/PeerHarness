@@ -996,9 +996,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   the signatures no other process, a running daemon or an import in another
   terminal, stores a ballot or a charter (ADR-041, "After a review of the pull
   request"). The key is unlocked before the transaction begins, no prompt and no
-  window is inside it, and settling comes after it. `governance::propose`, which
-  signs under whatever charter is current, returns an error for an amendment, and no
-  command that showed its owner a preview calls it. `proposal create` and `rule
+  window is inside it, and settling comes after it.
+  `governance::propose_without_preview`, which signs under whatever charter is
+  current, returns an error for an amendment, and no command that showed its owner a
+  preview calls it. `proposal create` and `rule
   repeal` state who votes and how many approvals it takes, read from one charter,
   and are signed through `propose_under` under that charter: when the charter in
   force is another one by then, nothing is proposed, and `proposal create` saves
@@ -1126,12 +1127,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   refuses it only while they still follow the rule. The report of a sync names
   skills and not places. It keeps the line for a copy that could not be removed when
   another copy of that name, another circle's in another place, was removed earlier
-  in the same exchange. But a later settle that removed one copy of a name takes
-  back the line about another copy of that name that an earlier settle could not
-  remove, unless it failed on that one again. An exchange settles one circle after
-  the other, so the line is missing from that report when the copy that stayed was
-  settled first; the next settle of its circle names it (ADR-041, "After a review of
-  the pull request"). An edited copy that was left in
+  in the same exchange, or later in it: the report tells the copies apart by their
+  circle, and only a later settle of the same circle that removed the skill takes
+  the line back (ADR-041, "After a review of the pull request"). An edited copy that
+  was left in
   place stays until its owner takes it out; the record that a vote installed it is
   gone, so after `circle leave` `rule list` shows that rule as held by it and names
   `proposal adopt` for a circle its owner left. In the user's directory `skills

@@ -1665,7 +1665,7 @@ review of the pull request", below. The runs by hand were not made there.)
 an automated review of the pull request commented on it at commit `0ffc90e`. A comment
 was not taken as a finding. Each was first checked against the code, and what the
 entries below say was found is what that check traced. Six comments named something
-real in the code, and they are the six entries. Two named a sentence in a document:
+in the code that was then changed, and they are the six entries. Two named a sentence in a document:
 the opening of section 14 of `docs/protocol-v0.md`, which said that an outcome never
 changes later although sections 14.2 and 14.9 say what a revocation does, and step 5
 of `docs/release.md`, which tagged `v0.1.0`. Both sentences were corrected. One named
@@ -1755,7 +1755,8 @@ in `crates/ph-store`. No signed byte, wire type, schema or dependency was touche
   does): on a refusal the candidate, the library and the bundle store are as they
   were. `rule repeal` still looks at the rule first (`rule_as_shown`), with its own
   text. `governance::propose` is left to `peerharness demo`, which shows nobody a
-  preview, and to tests. It still returns an error for an amendment.
+  preview, and to tests. It still returns an error for an amendment. (It is named
+  `governance::propose_without_preview` since the review of these changes, below.)
 
   `question send` has the third of those previews: "<n> member(s) can read it",
   counted on the roll of the charter it read. After the answer and after the key is
@@ -1812,16 +1813,24 @@ in `crates/ph-store`. No signed byte, wire type, schema or dependency was touche
   failure is now taken back only by a removal that a later settle of the same
   exchange reports, never by one in the same settle or in an earlier one. No text
   and no JSON member changed. The other order of the two circles is not healed: see
-  "Not done".
+  "Not done". (It is since the review of these changes, below: the report tells the
+  copies apart by their circle.)
 * **Inside a session `circle join` reads no peer id and no address as a file.** This
   too belongs to ADR-042 ("Four more gates for a session"). The `join_circle` tool
   refuses a value that names something on disk (`mcp::member_of`) and then starts
   `circle join`, which looked at the disk again by itself and read a path that
-  exists as a file. Those are two looks. A session can write files, so one that
-  creates a file under the name of a peer id between the two could make the command
-  read it as a circle's records. What follows is still a window that shows the
-  charter from signed content and needs the owner's click. The rule is all the same
-  that a tool never makes `circle join` read a file. `circle join` now parses its
+  exists as a file. Those are two looks. How far they could differ through the tool
+  is narrower than the comment said, and narrower than this entry first said. For a
+  peer id the tool passes `--internet`, and `circle join` already refused a file
+  together with `--internet` ("--internet goes with the peer id of a member's node
+  ..., not with a file"), so no file under the name of a peer id was read that way.
+  Only a value the tool passes as an address could be read as a file, and as a path
+  such a value is absolute and begins with the name of a protocol (`/ip4/...`): it
+  needs a directory of that name at the root of the file system. The command typed
+  inside a session without `--internet` did read a file named like a peer id, and
+  that is what the test shows. The rule is all the same
+  that a tool never makes `circle join` read a file, and it rested on the tool's own
+  look. `circle join` now parses its
   argument first. Inside a session, an argument that parses as a peer id or as a
   multiaddr names a node, whether or not something of that name is on disk. A peer
   id without `--internet` gets the usage error it always got (exit 2): "that is a
@@ -1907,12 +1916,14 @@ Not done.
   only by the request handler after a peer's push, and its result goes to the
   daemon's queue and is printed by itself. The two orders were read in the code.
   The unit test adds up results by hand, and two circles with a rule of one name
-  were not run through the binary.
+  were not run through the binary. (The review of these changes ran them: see
+  below. The report tells the copies apart by their circle now.)
 * **One sentence names a cause that no longer happens.** A first `circle leave`
   whose request this node refuses reports `proposal_refused` with "the circle's
   charter changed on this node at that moment, or this node would not accept the
   request". Since the check and the signature are one transaction, the first half
-  cannot be the cause. The text was left as it is.
+  cannot be the cause. The text was left as it is. (It was shortened afterwards: see
+  below.)
 * **No test holds a prompt open.** As before, the suite has no pseudo-terminal. The
   check after a prompt in a terminal of `rule repeal`, `question send`, `proposal
   create` and a second `circle leave` was run by hand only, and in this round not at
@@ -1925,6 +1936,51 @@ Not done.
 * What the parts above list as not done stands, except the first point under "After
   a fourth review": `circle leave` from a revoked device, the root key in
   `settle_machine_first`, and a rule that passed in a scope the node cannot read.
+
+The changes of this part were then reviewed by two more agents, one for the
+transaction and the proposals and one for the rest and the documents. They ran the
+commands with daemons on every home, a peer that pushed in a loop and three
+terminals on one home: 220 commands, none failed, none met a locked database. They
+held each prompt open on a pseudo-terminal and imported a charter, a rule or a
+removal there, and the cases of the earlier parts that once signed something
+unshown were run again: nothing was signed that had not been shown. They found no
+case in which something was signed, installed or removed that its owner had not been
+shown. What they found, and what was changed for it:
+
+* **A sync report tells two circles' copies apart.** The order that was listed above
+  as not healed was run: two circles with a rule `style` in two projects, both
+  repealed, the copy of the circle that is exchanged first made unremovable. The
+  report said only "removed rule style", and a daemon that syncs on a timer never
+  printed the line for the copy that stayed. `runtime::Changes` now keeps, beside
+  the names, the circle whose settle found each (`removed_in`, `not_removed_in`),
+  and `absorb` takes a failure back only when a later settle of the same circle
+  removed that skill. Both lines are printed in either order. Test:
+  `a_failed_removal_is_taken_back_only_by_the_same_circle` (unit); the two circles
+  were not run through the binary again after the change.
+* **`circle leave --undo` names both proposals.** With the owner's request and
+  another member's wider proposal both on record, the preview named only the
+  request. It prints the line for the other one under it now, as `circle leave`
+  does. Test: `undoing_a_leave_names_another_members_proposal_that_takes_the_owner_off_the_roll`.
+* **The sentence for `proposal_refused`** no longer names a charter that changed:
+  "this node would not accept the request. You stay on the roll. Run ... again to
+  make the request."
+* **`governance::propose` is named `governance::propose_without_preview`.** It signs
+  under whatever charter is current, and only `peerharness demo` and tests call it.
+  The name is there so that a command that asked its owner does not call it by
+  habit.
+* **`question send` runs its look and its signature in the transaction too**
+  (`governance::atomically`), so the seven places above are eight and there is no
+  exception.
+* **What the entry about `circle join` said about the tool** was wider than what the
+  code did, and is corrected above.
+
+Not done from that review: the refusals of `rule repeal`, `question send` and a
+second `circle leave` are pinned by unit tests of the functions they call
+(`propose_under`, `request_as_previewed`), and by no test of the commands
+themselves. A command that went back to signing without the look would pass the
+suite. A test of the command needs a prompt held open, which the suite cannot do;
+the three were run by hand on a pseudo-terminal by the agent that made the change
+and by the one that reviewed it.
 
 CI ran the suite for the pull request at commit `0ffc90e`, on the merge of that commit
 with `main` (`e6fae27`), on 2026-11-11: 973 tests passed on Linux (Ubuntu 26.04,
@@ -2533,12 +2589,13 @@ Nothing was run on macOS.
 **After a review of the pull request.** An automated review of pull request #7
 commented on two things that belong to this ADR, and both were changed. A sync report
 dropped a skill that could not be removed when another copy of that name had been
-removed earlier in the same exchange (`runtime::Changes::absorb`); when the other
-copy is removed later in the exchange, it still does. And inside a session `circle join`
-read an argument that parses as a peer id or as an address as a file when something
-of that name was on disk, which the `join_circle` tool's own look at the disk does
-not rule out. What was traced, what changed, the tests and what is left are in
-ADR-041, "After a review of the pull request".
+removed in the same exchange (`runtime::Changes::absorb`); the report now tells the
+copies apart by their circle. And inside a session `circle join` read an argument
+that parses as a peer id or as an address as a file when something of that name was
+on disk. Through the `join_circle` tool that could happen only for an address, whose
+path needs a directory at the root of the file system; the tool's rule no longer
+rests on its own look at the disk. What was traced, what changed, the tests and what
+is left are in ADR-041, "After a review of the pull request".
 
 The same review named the point above that a session can run `skills uninstall`.
 Nothing was changed for it. It stays open: nothing in the repository records a

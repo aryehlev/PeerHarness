@@ -245,11 +245,9 @@ same lists. Several change what a command prints, asks or accepts.
   `skills uninstall`, the record that a vote installed it goes with it: the same
   text installed by you afterwards is yours, and no later vote removes it. Two
   circles can each have installed a rule of one name, in two places. The report of
-  a sync that removed the one copy and then could not remove the other now has the
-  line for the one that stayed. Before, the earlier removal took that line out of
-  the report. When the copy that stays is settled before the other one is removed,
-  the line is still missing from that report. Either way the next settle of that
-  circle names the copy.
+  a sync that removed one circle's copy and could not remove the other's now has the
+  line for the one that stayed, in whichever order it came to the two. Before, the
+  removal of the one took that line out of the report.
 * A copy that a vote installed and that you edited is still never deleted, and is no
   longer left without a word. The commands that print removed rules say once: "rule
   <name>: the copy a vote installed was edited on this machine and was left in

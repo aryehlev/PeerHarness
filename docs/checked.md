@@ -56,7 +56,8 @@ that its owner had not been shown, and three things that a command did not say;
 those were changed (ADR-042, "After a fifth review"). Then the branch was opened as
 pull request #7, and an automated review of the pull request commented on it. Each
 comment was checked against the code before anything was changed. Six named
-something real in the code, and those were changed. Two named a sentence in a
+something in the code, and those were changed; for one of them, the join tool, what
+could go wrong was narrower than the comment said. Two named a sentence in a
 document, and those were corrected. One named a point that is already listed as open,
 and nothing was changed for it (ADR-041, "After a review of the pull request"). Tests
 were added each time, and the changes are recorded in ADR-041 to ADR-045 of

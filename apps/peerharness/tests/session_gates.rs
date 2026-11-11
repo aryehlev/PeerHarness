@@ -623,12 +623,15 @@ fn the_join_tool_takes_a_peer_id_or_an_address_and_never_a_path() {
     assert_eq!(joined["member"], "bob");
 }
 
-/// The tool looks whether its argument names something on disk and then starts `circle
-/// join`, which used to look again by itself: a file that a session created under the
-/// name of a peer id between the two looks was read as the circle's records. Inside a
-/// session `circle join` no longer asks the disk about an argument that reads as a peer
-/// id. Here the file is there all along, it is a real invitation, and the window would
-/// say yes: before the fix this node joined from it.
+/// Inside a session `circle join` does not ask the disk about an argument that reads as
+/// a peer id or as an address: such an argument names a node. The `join_circle` tool
+/// has its own look at the disk before it starts the command, and the command used to
+/// look again by itself; the tool's rule that it never makes `circle join` read a file
+/// no longer rests on those two looks agreeing. (Through the tool a peer id came with
+/// `--internet`, which `circle join` already refused together with a file. The case
+/// below is the command as a session can type it, without `--internet`.) The file is
+/// there all along, it is a real invitation, and the window would say yes: before the
+/// change this node joined from it.
 #[test]
 fn inside_a_session_a_peer_id_is_never_read_as_a_file() {
     let tmp = TempDir::new().unwrap();

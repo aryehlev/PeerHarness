@@ -63,7 +63,8 @@ governance (section 10, ADR-012 onwards).
   exchange settles its circles more than once, and its report adds those settles up
   (`runtime::Changes::absorb`): a rule that waits, is held or could not be removed
   is listed once, and a skill that could not be removed leaves the list only when a
-  later settle of the same exchange removed it.
+  later settle of the same circle removed it (`Changes::not_removed_in`: two circles
+  can each have a rule of one name, in two places).
 * Not built: a delivery loop, an outbox drain, gossip. Events reach a peer when someone
   syncs. Nothing in the CLI writes the `outbox` table yet.
 * Local-only CLI commands open the store, and the keystore when they need it, directly.
@@ -819,9 +820,9 @@ again and refuses when the digest of the current charter, `RuleSet::carried_ids`
 that was shown and refuses when the current charter is another one. It signs every
 proposal that a command previewed: an amendment, and also a rule (`proposal create`)
 and a repeal (`rule repeal`), whose previews state who votes and how many approvals
-it takes, both read from that charter. `governance::propose` signs under whatever
-charter is current, returns an error for an amendment, and is called only by
-`peerharness demo` and by tests. `proposal create` asks
+it takes, both read from that charter. `governance::propose_without_preview` signs
+under whatever charter is current, returns an error for an amendment, and is called
+only by `peerharness demo` and by tests. `proposal create` asks
 `governance::charter_as_shown` before it saves anything. So does `question send`
 before it signs: its preview states how many members can read the question, counted
 on that charter's roll. `proposal vote` on an amendment checks an approval in the
@@ -834,8 +835,8 @@ read before the preview. `rule repeal` and `--announce` look again in the same p
 (`governance::rule_as_shown`) and sign nothing when that proposal is no longer the
 rule of its name.
 
-**One transaction.** Each of these checks, except the one of `question send`, runs in
-one write transaction of the store with the signatures it allows
+**One transaction.** Each of these checks, the one of `question send` included, runs
+in one write transaction of the store with the signatures it allows
 (`governance::atomically`, over `Store::transaction_with`, section 8). A process with
 a connection of its own, a running daemon or an import in another terminal, cannot
 commit between the check and a signature, and an error in a later step takes back
