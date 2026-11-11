@@ -3151,6 +3151,11 @@ a section of twenty lines needs no folding.
 its command. A command comes into "From a terminal" only when no sentence does the
 same. Every other command goes to `docs/terminal.md`.
 
+**Added the same day.** The owner asked that the README keep saying that PeerHarness
+can be used as a command-line tool. It says so in one sentence under its status,
+which points at "From a terminal", and that section opens with it. No command was
+added: the rule above stands.
+
 ## ADR-048: A project page in `site/`, static, that loads nothing from anywhere else
 The owner asked for a simple site that shows the project, on GitHub Pages.
 

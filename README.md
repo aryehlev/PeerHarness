@@ -19,6 +19,9 @@ an agent that is trying to help. It is not a sandbox ([Limits](#limits)).
 > works from a terminal, without the windows. Windows is not supported. Read
 > [Limits](#limits) before you rely on it.
 
+PeerHarness is also a command-line tool (CLI): every step here is a command too, and
+you can run it yourself without an agent. See [From a terminal](#from-a-terminal).
+
 ## Set it up
 
 Paste this into Claude Code:
@@ -197,8 +200,9 @@ The full list is in [docs/limits.md](docs/limits.md).
 
 ## From a terminal
 
-Every step above is also a command: [PeerHarness from a terminal](docs/terminal.md)
-has each one. These are done there and not through your agent:
+PeerHarness is one binary, `peerharness`, and a command-line tool by itself. Every
+step above is also a command, and [PeerHarness from a terminal](docs/terminal.md) has
+each one. These are done there and not through your agent:
 
 * **A node that stays reachable.** Your agent keeps yours reachable only while its
   session is open. For one that stays up:
