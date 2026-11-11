@@ -1154,6 +1154,12 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
   this was being confirmed", also when only the rules in force had changed: it names
   both now. And nothing kept an amendment out of `governance::propose`, which
   `peerharness demo` still used for one: it is an error there now.
+
+  Two more were changed after a review of the pull request, also below. The instant
+  between the check in `propose_under` and its signature is closed: a command runs
+  its checks and its signatures in one transaction of the store. And `proposal
+  create` and `rule repeal` sign through `propose_under` as well, so `propose` is
+  left to `peerharness demo`, for the one rule it proposes, and to tests.
 * **An approval of an amendment is checked again after the yes.** What an amendment
   changes is read against the charter and the rules in force on the voter's node, and
   both can change while a preview or a window is open. A rule that passed meanwhile
@@ -1216,7 +1222,9 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
   rule. (Which proposal counts as on record was narrowed after the third review: only
   one that is exactly this removal. And since the fourth review "changes nothing" is
   true of the request only: a second run first tries again to remove a rule that the
-  first run could not remove.) Otherwise it previews the request alone, asks,
+  first run could not remove. Since the review of the pull request what is on
+  record is read once more after the owner's answer.) Otherwise it previews the
+  request alone, asks,
   and puts it to the vote bound to the charter that was shown, like every other
   request above. Inside a session it is refused. This also ends an older fault the
   review found: `leave` marked the circle as left and then needed the device key
@@ -1263,6 +1271,8 @@ a second process. The check those commands share with `circle invite` has unit t
 reviewers ran the old behaviour at a real prompt on a pseudo-terminal; the fix was
 not run there. (The third review ran the fix at a real prompt on a pseudo-terminal,
 on Linux; what it found is next.) Nothing was run on macOS.
+(CI has since run the suite on macOS, at the head of pull request #7: "After a
+review of the pull request", below. The runs by hand were not made there.)
 
 **After a third review.** A review of the changes under "After a second review" ran
 the commands at real prompts on a pseudo-terminal, with stock commands and a second
@@ -1294,6 +1304,10 @@ signed byte, wire type or schema touched.
   cannot be called before the key is unlocked. `circle invite` and
   `circle::propose_amendment`, which `remove`, `amend`, `device` and the second run
   of `leave` share, unlock the key, call `as_drafted` and then `propose_under`.
+  (Since the review of the pull request `circle::put_amendment` unlocks the key and
+  hands it to `propose_amendment`, `circle invite` goes through `put_amendment` like
+  the other three, and the second run of `leave` signs where the first run does, in
+  `circle::request_as_previewed`.)
   `proposal vote` unlocks the key before `proposal::approval_as_shown`, which now
   holds the second reading of `amendment_changes` and of `sole_admission` and takes
   the key in the same way. `reject` and `revise` are still never refused by it.
@@ -1302,7 +1316,10 @@ signed byte, wire type or schema touched.
   one process. A charter that arrives in it is refused by `propose_under`, or leaves a
   proposal that names the earlier charter and can no longer pass. A rule that passes
   in it is not caught. For a draft, the ballot the other voters are shown names that
-  rule. For an approval, nothing more is shown to anyone.
+  rule. For an approval, nothing more is shown to anyone. (Nothing is left there
+  since the review of the pull request: the check and the signatures it allows are
+  one transaction of the store, and no other process writes inside it. "After a
+  review of the pull request", below.)
 * **A repeal and a recorded stance are checked in the same way.** Two more commands
   read what they sign before the preview and signed it after a prompt. `rule repeal`
   names the proposal it repeals, and `rule opt-out --announce` and `rule opt-in
@@ -1332,6 +1349,9 @@ signed byte, wire type or schema touched.
   ("an amendment is put to the vote under the charter it was drafted from"), and the
   demo calls `propose_under` with the digest of the charter it drafted from. The demo
   has no prompt between its draft and its signature, so nothing was at risk there.
+  (Since the review of the pull request no command that showed its owner a preview
+  calls `propose`: `proposal create` and `rule repeal` sign through `propose_under`
+  too.)
 * **The first run of `circle leave` signs the request it showed, or none.** Step 3
   above drafted the request after the answer, from what the node held then. The
   review ran two consequences. On a node that lacked a carried rule the preview said
@@ -1358,7 +1378,10 @@ signed byte, wire type or schema touched.
   very draft through `propose_under` (`circle::sign_removal`), and then the owner's
   approval. It drafts nothing anew. Where the preview announced no request, no key
   is asked for. (Since the fourth review `sign_removal` also looks once more at what
-  is on record before it signs: below.)
+  is on record before it signs: below. Since the review of the pull request the
+  check, that look and both signatures are in `circle::request_as_previewed`, in
+  one transaction, and `sign_removal` turns its outcome into the first run's
+  report.)
 
   When no request is made the command exits 0 and reports why (`reason` in the
   JSON). `missing_carried_rules` and `request_on_record` are what the preview said.
@@ -1380,7 +1403,11 @@ signed byte, wire type or schema touched.
   is checked like every other draft. It is refused with exit 3 when the node changed
   meanwhile, and a key that does not unlock is an ordinary error there. (That was
   all a second run did. Since the fourth review it first tries again, with no key,
-  to remove what the first run could not: below.)
+  to remove what the first run could not: below. And since the review of the pull
+  request it is checked like the first run's request, which is one look more than
+  every other draft gets: with the key unlocked it reads what is on record again,
+  and signs no second request when exactly this removal arrived while its owner
+  was asked.)
 
   The cost: a sync or an import that lands while the owner reads, or types a
   passphrase, costs them a second run before a request exists. Their machine is
@@ -1413,7 +1440,10 @@ signed byte, wire type or schema touched.
   off the roll is on record (proposal <id>) and stays there; the members may still
   approve it.", or "No request to take you off the roll is on record.", or, for a
   member who is off the roll, that none of the circle's rules binds them and none is
-  installed. The first run by a member who is already off the roll reported neither
+  installed. (Since the review of the pull request there is one more: another
+  member's proposal that takes the owner off the roll and is not the request is
+  named, where the preview said that no request is on record. Below.) The first
+  run by a member who is already off the roll reported neither
   `requested` nor `reason`. It reports `requested: false` and `reason:
   "off_the_roll"` like the second run. It also locates the skills directory before
   it marks the circle, and runs `apply_on` and not the whole of `settle`, so it uses
@@ -1465,9 +1495,11 @@ second process while the named prompt waited.
 The outputs of these runs are not in the repository.
 
 Not done. Nothing was run on macOS, and whether the OS keychain asks when the key is
-unlocked was not looked at. No automated test interleaves an import with a prompt in
-a terminal. The limit named under "After a review" stays: a rule that passed in a
-scope the node cannot read.
+unlocked was not looked at. (CI has since run the suite on macOS, at the head of pull
+request #7: "After a review of the pull request", below. The runs by hand were not
+made there.) No automated test interleaves an import with a prompt in a terminal. The
+limit named under "After a review" stays: a rule that passed in a scope the node
+cannot read.
 
 **After a fourth review.** A review of the changes under "After a third review" ran
 that review's cases again against the new build, at real prompts on a
@@ -1530,7 +1562,9 @@ schema touched.
   unshown was signed. It is the duplicate that the changes after the third review
   removed for a leave, an `--undo` and a second leave, left open for a race.
   `circle::sign_removal` now calls `removals_on_record` again, after `as_drafted`
-  passed and with the unlocked key in hand. When exactly this removal is on record by
+  passed and with the unlocked key in hand. (Since the review of the pull request
+  that call is in `circle::request_as_previewed`, which the second run signs
+  through as well: below.) When exactly this removal is on record by
   then, it signs nothing, and the run reports `request_on_record` as it does when the
   plan had found the proposal: the proposal, its count, and where the member's
   approval is not on it the command that gives it. In this one case of
@@ -1602,7 +1636,10 @@ the owner on it.
   admits a fourth member while the prompt waited: "It passes with 2 of 3 member
   approval(s)" was followed by a proposal that needs 3 of 4, and a question
   previewed for three readers was shared under a roll of four. The text that leaves
-  the machine is exactly what was shown. Nothing was changed.
+  the machine is exactly what was shown. Nothing was changed. (Changed after the
+  review of the pull request: `proposal create` and `rule repeal` are signed under
+  the charter that was read for the preview or not at all, and `question send` is
+  refused when the charter in force is another one by then. Below.)
 * **`circle leave` from a revoked device previews a request it cannot make.**
   `plan_request` does not look at whether this node's device is revoked. The run
   leaves the machine, reports `proposal_refused` and says to run the command again,
@@ -1621,6 +1658,282 @@ the owner on it.
   signature above.
 
 Nothing was run on macOS.
+(CI has since run the suite on macOS, at the head of pull request #7: "After a
+review of the pull request", below. The runs by hand were not made there.)
+
+**After a review of the pull request.** The branch was opened as pull request #7, and
+an automated review of the pull request commented on it at commit `0ffc90e`. A comment
+was not taken as a finding. Each was first checked against the code, and what the
+entries below say was found is what that check traced. Six comments named something
+real in the code, and they are the six entries. Two named a sentence in a document:
+the opening of section 14 of `docs/protocol-v0.md`, which said that an outcome never
+changes later although sections 14.2 and 14.9 say what a revocation does, and step 5
+of `docs/release.md`, which tagged `v0.1.0`. Both sentences were corrected. One named
+a point that the parts above already list as open, and nothing was changed for it
+("Not done", below). What was changed is in `apps/peerharness` and, for one function,
+in `crates/ph-store`. No signed byte, wire type, schema or dependency was touched.
+
+* **A check after the yes and the signatures it allows are one transaction.** "After
+  a third review" above says what was left between the check and the signature: the
+  time between two calls in one process. The comment was about that gap, and the gap
+  was real. `as_drafted` reads the charter and the rules in force, and
+  `propose_under` then reads the charter again and signs. No prompt lies between the
+  two. But a running daemon and an `events import` in another terminal each have a
+  connection of their own to the same SQLite file, and either can commit between the
+  two reads. A rule whose last approval is stored in that instant is in force and is
+  not in the draft's `carried` list. The digest of the charter is unchanged, so
+  `propose_under` signed, and the proposer's own approval followed with no look at
+  all. If such an amendment passes, the rule goes out of force. The other voters'
+  ballots name the rule, and the proposer's preview did not. `proposal vote` on an
+  amendment (`approval_as_shown`, then the ballot), `rule repeal` and `--announce`
+  (`rule_as_shown`, then the signature) had the same shape. The gap lasts as long as
+  one process takes between two calls, and no member can make a record arrive in it
+  on purpose. It was traced in the code. No run on record produced it.
+
+  The store already had what closes it. `Store::transaction` begins with `BEGIN
+  IMMEDIATE`, which takes SQLite's write lock, and is a savepoint when it is nested,
+  and `ingest` already ran in one. Its closure can fail only with the store's own
+  error, so `crates/ph-store` got `Store::transaction_with`: the same transaction for
+  a closure with an error type of its caller's. `Store::transaction` now calls it.
+  It is a transaction and decides nothing about who may do what.
+  `governance::atomically` runs a closure of the application in it. Like
+  `as_drafted`, it takes the unlocked signing key as a parameter and does nothing
+  with it: unlocking can ask for a passphrase, so the key is unlocked before the
+  transaction begins. Nothing inside the closure shows a prompt or a window, reads
+  standard input, touches the network or settles a circle.
+
+  It is called in six places. Each holds a check together with everything that is
+  signed on the strength of it:
+
+  * `circle::put_amendment`, for `circle remove`, `amend` and `device`, and now for
+    `circle invite` as well: `as_drafted`, `propose_under` and the proposer's
+    approval.
+  * `circle::request_as_previewed`, for both runs of `circle leave`: `as_drafted`,
+    the look at what is on record, `propose_under` and the owner's approval.
+  * `proposal vote`, for an approval of an amendment: `approval_as_shown` and the
+    ballot. Every other ballot is cast as before, outside a transaction.
+  * `rule repeal`: `rule_as_shown`, the check of the charter (the next entry) and the
+    proposal.
+  * `rule opt-out --announce` and `rule opt-in --announce` (`rule::put_on_record`):
+    `rule_as_shown` and the stance.
+  * `proposal create`: the check of the charter (the next entry), the library entry,
+    the candidate's walk to `Proposed`, the proposal and the candidate's link to it.
+
+  What one transaction covers, and what it does not. The owner's answer and the
+  unlocking of the key come before it: no prompt, no window and no passphrase prompt
+  is ever inside. Settling comes after the commit: publishing a RESULT, notarizing a
+  charter on the founder's node and bringing the skills directory in line. From its
+  first statement to its commit no other process writes to that home's database.
+  Another writer waits, a command or a daemon for up to five seconds
+  (`DEFAULT_BUSY_TIMEOUT_MS`), and a read is still answered. It says nothing about
+  what arrives after the commit: a rule that passes then is not in the draft, as for
+  any amendment that was drafted earlier, and the other voters' ballots name it.
+
+  No refusal text, exit code or JSON member changed. What differs is what is left
+  when a later step fails. A proposal no longer stays stored when its proposer's
+  approval cannot be stored. `proposal create` leaves no library entry and no
+  candidate marked as proposed when the proposal is refused. And after a first
+  `circle leave`, an approval that cannot be stored ends in the error that says "no
+  request to take you off the roll was made", which is then true, because the
+  proposal was taken back with it. The error that says "the request to take you off
+  the roll is stored. What follows from it failed" is left for a failure of the
+  settling after the commit.
+* **A rule and a repeal are proposed under the charter their preview counted the
+  voters on, and a question is not sent under another roll.** This is the first
+  point of "Not done" under "After a fourth review". The previews of `proposal
+  create` and `rule repeal` say "It passes with <need> of <n> member approval(s)",
+  counted on the charter in force when the preview is built. Both then signed
+  through `governance::propose`, which takes whatever charter is in force when it
+  signs. A successor that a sync or an import stored while the owner read, or typed
+  a passphrase, changed the electorate and the count under their yes. That wait is
+  as long as a person reads. Both commands now keep the digest of the charter they
+  read and sign through `propose_under` with it. When the charter in force is
+  another one by then, they refuse (exit 3) with the text a change to the charter
+  gets (`governance::CHARTER_CHANGED`), and running the command again shows the
+  count as it is. `proposal create` asks before it saves anything
+  (`governance::charter_as_shown`, which takes the unlocked key as `as_drafted`
+  does): on a refusal the candidate, the library and the bundle store are as they
+  were. `rule repeal` still looks at the rule first (`rule_as_shown`), with its own
+  text. `governance::propose` is left to `peerharness demo`, which shows nobody a
+  preview, and to tests. It still returns an error for an amendment.
+
+  `question send` has the third of those previews: "<n> member(s) can read it",
+  counted on the roll of the charter it read. After the answer and after the key is
+  unlocked it now asks `charter_as_shown` as well, and when the charter in force is
+  another one it refuses (exit 3) with a text of its own: "the circle's charter
+  changed on this node while this was being confirmed, so the members who can read
+  the question may no longer be the ones you were shown. Nothing was shared and
+  nothing was signed. Run the command again to see who would read it now." Nothing
+  is stored, and the candidate keeps its status. This one is a check and not a
+  transaction: see "Not done".
+* **A second `circle leave` makes no second request when the same one arrived while
+  its owner was asked.** Since the fourth review the first run reads what is on
+  record once more with the key in hand. The second run did not. It read the record
+  before its preview, and after the confirmation it went through `put_amendment`,
+  which checks the charter and the rules in force and nothing about proposals. A
+  member's `circle remove` of exactly this member that arrived while the owner
+  answered or typed a passphrase left two identical removals, as it had for the
+  first run. Both runs now sign through one function, `circle::request_as_previewed`:
+  one transaction with `as_drafted`, `removals_on_record`, `propose_under` and the
+  owner's approval. Its outcome is a `circle::Removal`: signed, on record, changed
+  or refused. `sign_removal` turns that into the first run's report. For the second
+  run, a removal that is on record by then gives the report it prints when it finds
+  the request before it asks: "You left <circle> on this machine already, and a
+  request to take <member> off the roll of charter <n> is on record (proposal
+  <id>):", the count, where the owner's approval is not on it the command that
+  gives it, and "Nothing was changed and nothing was signed." It exits 0, with the
+  reason `request_on_record`. A node that changed meanwhile is refused as before
+  (exit 3), with the refusal as `as_drafted` or `propose_under` gave it.
+* **`circle leave --undo` names another member's proposal that takes its owner off
+  the roll.** Its preview says what is on record. It counted the request itself, and
+  a proposal of the owner's own that takes them off the roll and changes more. A
+  proposal of another member that takes them off the roll and is not the request was
+  dropped, and the preview then said "No request to take you off the roll is on
+  record." while the members could still approve that proposal. The preview
+  (`circle::follow_again_preview`) now names it with the line `circle leave` uses:
+  "Proposal <id> on record also takes you off the roll, and changes more than that:
+  `peerharness proposal show <id>`." On a node that lacks a carried rule, which
+  drafts no removal to compare with, the line is "Proposal <id> on record takes you
+  off the roll. This node cannot show whether it changes anything else:
+  `peerharness proposal show <id>`." The sentence for a request is unchanged, and it
+  is the one printed when both are on record. `--undo` makes no request and
+  withdraws none, as before.
+* **A sync report keeps a skill that could not be removed when another copy of that
+  name was removed before it.** By its subject this belongs to ADR-042. An exchange
+  settles the circles it concerns one after the other, each more than once, and
+  `runtime::Changes::absorb` adds each settle to one report. It took a name off the
+  list of skills that could not be removed whenever that name was among everything
+  the exchange had removed so far. That was meant for a later settle that succeeds
+  where an earlier one failed. But two circles can each have installed a rule of one
+  name, in two places. When the copy of the one went, and a later settle could not
+  remove the copy of the other, the earlier removal cancelled the line about the
+  failure. The record of the copy stayed (`rule_installs`), so the next settle of
+  its circle found and named it: what was lost was the line in that one report. A
+  failure is now taken back only by a removal that a later settle of the same
+  exchange reports, never by one in the same settle or in an earlier one. No text
+  and no JSON member changed. The other order of the two circles is not healed: see
+  "Not done".
+* **Inside a session `circle join` reads no peer id and no address as a file.** This
+  too belongs to ADR-042 ("Four more gates for a session"). The `join_circle` tool
+  refuses a value that names something on disk (`mcp::member_of`) and then starts
+  `circle join`, which looked at the disk again by itself and read a path that
+  exists as a file. Those are two looks. A session can write files, so one that
+  creates a file under the name of a peer id between the two could make the command
+  read it as a circle's records. What follows is still a window that shows the
+  charter from signed content and needs the owner's click. The rule is all the same
+  that a tool never makes `circle join` read a file. `circle join` now parses its
+  argument first. Inside a session, an argument that parses as a peer id or as a
+  multiaddr names a node, whether or not something of that name is on disk. A peer
+  id without `--internet` gets the usage error it always got (exit 2): "that is a
+  peer id: pass --internet to find its node over the public network, or give the
+  node's address". In the person's own terminal nothing changed: a path that exists
+  is the file it names. `mcp::member_of` is unchanged.
+
+Tested. Unit tests in `apps/peerharness/src/governance.rs`:
+`nobody_else_writes_between_a_check_and_the_signatures_it_allows` (a store in a
+file, and a second connection that does not wait: inside `atomically`, between
+`as_drafted` and `propose_under` and again between the two signatures, the second
+connection cannot store the ballot that would put a rule in force, can still read,
+and sees nothing that is not committed; after the commit the same ballot is stored),
+`an_error_after_a_proposal_was_stored_leaves_no_proposal` and
+`a_rule_and_a_repeal_are_signed_only_under_the_charter_that_was_shown`. In
+`crates/ph-store/tests/open_and_migrate.rs`:
+`transaction_with_rolls_back_on_the_callers_own_error`; the example in the
+documentation of `Store::transaction_with` runs as a test too. Unit tests in
+`apps/peerharness/src/commands/circle.rs`:
+`a_second_leave_makes_no_second_request_when_the_same_one_arrived_meanwhile` and
+`undoing_a_leave_names_another_members_proposal_that_takes_the_owner_off_the_roll`,
+which asserts the whole preview. In `apps/peerharness/src/runtime.rs`:
+`a_failed_removal_is_taken_back_only_by_a_later_settle`. Through the binary, two
+tests. `a_rule_is_not_proposed_under_a_charter_that_arrived_while_its_proposer_read`
+in `apps/peerharness/tests/vote_and_own_skills.rs` (debug builds) asks `proposal
+create` in a stand-in window that imports charter 4 before it answers Proceed: the
+window shows "It passes with 2 of 3 member approval(s).", the command exits 3, and
+no proposal, library entry or bundle file is left; the same command with nothing
+arriving shows 3 of 4 and proposes.
+`inside_a_session_a_peer_id_is_never_read_as_a_file` in
+`apps/peerharness/tests/session_gates.rs` puts a real invitation under the name of a
+peer id into the working directory, with a stand-in window that would say Proceed:
+with either session variable, and with `--yes`, the command exits 2, no window opens
+and no circle is joined, and in the person's terminal the same argument joins from
+the file.
+
+By hand, on Linux with a debug build, and not part of the suite. On a
+pseudo-terminal, with an `events import` from a second process while "Proceed?
+[y/N]" waited. `rule repeal` and `proposal create` with charter 4 arriving: the
+refusal above, exit 3, nothing proposed, and for `proposal create` the candidate,
+the library and the bundle files as before; run again, each showed 3 of 4 and
+proposed. `question send` in the same way: previewed for 3 readers, refused with
+exit 3, the candidate unchanged; run again it showed 4 and asked. A second `circle
+leave` with a member's exact removal of the leaver arriving: the report for a
+request on record, exit 0, and one removal on the node, approved by its proposer
+alone. Without a terminal, `circle leave --undo` on a node where a member's removal
+of the owner had come to drop a rule that passed since: the preview named that
+proposal. And with a daemon running on each of three homes, over QUIC on loopback:
+`circle invite`, `proposal vote` on the admission and both runs of `circle leave`,
+and five more invitations and five more ballots while a third node pushed new
+proposals to the two daemons in a loop. Fourteen commands: none failed, none
+reported a busy database, another member's `sync` to a daemon was answered between
+the steps, and the daemons' logs had no line about a busy or locked database. The
+outputs of these runs are not in the repository.
+
+Not done.
+
+* **A session can run `skills uninstall`, and the setup preview says that the agent
+  "cannot approve, share or install anything".** The review named that sentence. It
+  is the gap that ADR-042 ("After a fourth review", Not done) and ADR-045 ("After a
+  fourth review") describe. Nothing was changed. It is open: nothing in the
+  repository records a decision of the owner on whether a session may run `skills
+  uninstall`, and what the sentence should say depends on that.
+* **`question send` checks and then signs.** Its look at the charter and its
+  signature are not one transaction, so the time between two calls in one process is
+  left there, as it was for a draft before this review. What can change in it is how
+  many members can read the question. The text is what was shown.
+* **A bundle file can stay behind a `proposal create` that fails late.** The library
+  entry is saved inside the transaction, after the check of the charter. A rollback
+  takes its rows back and not the file in the bundle store: an error after that step
+  leaves one content-addressed, read-only `SKILL.md` with the text the owner
+  confirmed and no row that names it, and storing the same text again changes
+  nothing. This was read in the code and not produced by a run.
+* **A sync report tells two copies apart by the order of their settles and not by
+  place.** Its lists hold names, and a name carries no place and no circle. A later
+  settle that removed one copy of a name still takes back an earlier failure to
+  remove another copy of that name, unless that later settle failed on it again. An
+  exchange settles one circle after the other. So of two circles with a rule of one
+  name, the line about the copy that stayed is in the report when the other
+  circle's copy went first, and is still missing when it went afterwards. The next
+  settle of the circle whose copy stayed names it. Each result that is added up
+  this way is one circle's settle. A settle of several circles together is made
+  only by the request handler after a peer's push, and its result goes to the
+  daemon's queue and is printed by itself.
+* **One sentence names a cause that no longer happens.** A first `circle leave`
+  whose request this node refuses reports `proposal_refused` with "the circle's
+  charter changed on this node at that moment, or this node would not accept the
+  request". Since the check and the signature are one transaction, the first half
+  cannot be the cause. The text was left as it is.
+* **No test holds a prompt open.** As before, the suite has no pseudo-terminal. The
+  check after a prompt in a terminal of `rule repeal`, `question send`, `proposal
+  create` and a second `circle leave` was run by hand only, and in this round not at
+  a passphrase prompt.
+* **No test writes between a check and a signature through the binary.** That
+  nobody else writes inside the transaction is a unit test of `atomically` with a
+  second connection to the same file. That each command runs its check and its
+  signatures inside it is read in the code. Two processes were not made to race for
+  that moment, before the change or after it.
+* What the parts above list as not done stands, except the first point under "After
+  a fourth review": `circle leave` from a revoked device, the root key in
+  `settle_machine_first`, and a rule that passed in a scope the node cannot read.
+
+CI ran the suite for the pull request at commit `0ffc90e`, on the merge of that commit
+with `main` (`e6fae27`), on 2026-11-11: 973 tests passed on Linux (Ubuntu 26.04,
+x86_64) and 968 on macOS (macOS 26.7, arm64, runner image `macos-26-arm64`), none
+failed and 10 were skipped on each. That is the first run on macOS on record for the
+fixes of the parts above. It is a run of the code before the changes of this part:
+nothing of this part was run on macOS, and no run by hand was made there. One of the
+new tests relies on SQLite refusing a second writer at once
+(`nobody_else_writes_between_a_check_and_the_signatures_it_allows`). An older test of
+the store that relies on the same, `short_busy_timeout_reports_busy`, was in the
+suite that CI ran on macOS, and the new one was not.
 
 ## ADR-042: A vote never replaces a skill it did not install, the name of PeerHarness's own skill is reserved, and more steps are refused inside a session
 ADR-023 recorded the installs made because a rule passed in `rule_installs`, so that a
@@ -1687,7 +2000,10 @@ unchanged: immediate, unasked, inside a session too.
   not `--from-agent` alone.
 * The `join_circle` tool takes only what parses as a peer id or a multiaddr and names
   nothing on disk (`mcp::member_of`). `circle join` reads a path that exists as a file,
-  and the tool's earlier check let an absolute path through as an address.
+  and the tool's earlier check let an absolute path through as an address. (Since
+  the review of the pull request `circle join` itself reads no argument as a file
+  inside a session when it parses as a peer id or as a multiaddr: "After a review of
+  the pull request", below.)
 
 **The refusal without a terminal** no longer says "re-run with --yes". An agent whose
 shell sets neither `CLAUDECODE` nor `PEERHARNESS_AGENT_SESSION` is not recognized as a
@@ -1986,6 +2302,8 @@ hand on a machine that had left, it answered with that circle's opt-out for the 
 that could not be removed, while the rule stayed in force for the circle. (It asks
 since the fourth review: below.) The timer of `--sync-every` still has no test. The
 case of `proposal adopt` above was not reproduced. Nothing was run on macOS.
+(CI has since run the suite on macOS, at the head of pull request #7: ADR-041,
+"After a review of the pull request". The runs by hand were not made there.)
 
 **After a fourth review.** A review of the changes under "After a third review"
 ran `skills uninstall` in every state it could build, daemons over QUIC on
@@ -2158,6 +2476,8 @@ the owner on it.
   were not run for this.
 
 Nothing was run on macOS.
+(CI has since run the suite on macOS, at the head of pull request #7: ADR-041,
+"After a review of the pull request". The runs by hand were not made there.)
 
 **After a fifth review.** Two reviews of the changes under "After a fourth review",
 one of the code and one of the documents, ran each of them through the binary again,
@@ -2205,6 +2525,22 @@ on standard error and has no JSON report of it; the documents now say so. What t
 fourth review's parts list as not done stands.
 
 Nothing was run on macOS.
+(CI has since run the suite on macOS, at the head of pull request #7: ADR-041,
+"After a review of the pull request". The runs by hand were not made there.)
+
+**After a review of the pull request.** An automated review of pull request #7
+commented on two things that belong to this ADR, and both were changed. A sync report
+dropped a skill that could not be removed when another copy of that name had been
+removed earlier in the same exchange (`runtime::Changes::absorb`); when the other
+copy is removed later in the exchange, it still does. And inside a session `circle join`
+read an argument that parses as a peer id or as an address as a file when something
+of that name was on disk, which the `join_circle` tool's own look at the disk does
+not rule out. What was traced, what changed, the tests and what is left are in
+ADR-041, "After a review of the pull request".
+
+The same review named the point above that a session can run `skills uninstall`.
+Nothing was changed for it. It stays open: nothing in the repository records a
+decision of the owner on it.
 
 ## ADR-043: A record from a file is parsed like a frame from the wire, a join from a file chooses the circle before the charter, and two more high-risk scanner rules
 ADR-019 and ADR-025 say the carrier is not trusted because every line is verified by
@@ -2641,5 +2977,10 @@ repository records a decision of the owner on it.
   it and neither was taken: word the sentence by what is refused, or refuse `skills
   uninstall` inside a session, which is the question ADR-042 leaves open. Two
   assertions in `apps/peerharness/tests/setup.rs` hold the sentences as they are.
+  (An automated review of the pull request named the same sentence. Nothing was
+  changed, and the point is still open: ADR-041, "After a review of the pull
+  request", Not done.)
 
 Nothing was run on macOS.
+(CI has since run the suite on macOS, at the head of pull request #7: ADR-041,
+"After a review of the pull request". The runs by hand were not made there.)
