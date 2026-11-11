@@ -143,8 +143,10 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             preview.line(
                 "Each one opens a window on your screen that shows exactly what would be shared, \
                  signed, installed or joined. Nothing happens unless you click Proceed in that \
-                 window. Your agent cannot answer it and --yes does not skip it. Every other \
-                 decision still needs your own terminal.",
+                 window. Inside its session your agent cannot answer the window, and --yes does \
+                 not skip it there. That guards against an agent that is trying to help, not \
+                 against a process that hides that it is one. Every other decision still needs \
+                 your own terminal.",
             );
             preview.line(
                 "When you ask it to, your agent may also found a circle, exchange with the \

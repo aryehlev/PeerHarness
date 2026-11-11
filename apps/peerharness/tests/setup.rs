@@ -137,6 +137,21 @@ fn one_command_sets_everything_up_and_a_second_run_changes_nothing() {
     assert!(out.status.success(), "{said}");
     // Each change was shown before it was made.
     assert!(said.contains("This lets your agent put seven decisions in front of you"));
+    // What the owner reads about the windows claims no more than the guard does: it
+    // holds inside a session PeerHarness recognizes, and says what it is not.
+    let said_flat = said.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        said_flat.contains(
+            "Inside its session your agent cannot answer the window, and --yes does not skip \
+             it there. That guards against an agent that is trying to help, not against a \
+             process that hides that it is one."
+        ),
+        "{said}"
+    );
+    assert!(
+        !said_flat.contains("Your agent cannot answer it and --yes does not skip it."),
+        "{said}"
+    );
     assert!(said.contains("This will install the skill peerharness-notes"));
     assert!(said.contains("This gives Claude Code the PeerHarness steps as tools"));
     // What it reports.
@@ -435,7 +450,15 @@ fn setup_says_which_keystore_an_existing_node_uses_and_warns_about_plaintext() {
         .output()
         .unwrap();
     assert!(init.status.success(), "{}", text(&init));
-    let out = m.cmd(&["setup", "--yes"]).output().unwrap();
+    // The passphrase is given to every command on this node: `setup` does not unlock
+    // the key today, and if it ever did, the prompt would read the terminal the tests
+    // were started from.
+    let passphrase = "a passphrase for tests only";
+    let out = m
+        .cmd(&["setup", "--yes"])
+        .env("PEERHARNESS_PASSPHRASE", passphrase)
+        .output()
+        .unwrap();
     let said = text(&out);
     assert!(out.status.success(), "{said}");
     assert!(said.contains("1. Your node: already there."), "{said}");
@@ -444,7 +467,12 @@ fn setup_says_which_keystore_an_existing_node_uses_and_warns_about_plaintext() {
         "{said}"
     );
     assert!(!said.contains("PLAINTEXT"), "{said}");
-    let report = json(&m.cmd(&["setup", "--yes", "--json"]).output().unwrap());
+    let report = json(
+        &m.cmd(&["setup", "--yes", "--json"])
+            .env("PEERHARNESS_PASSPHRASE", passphrase)
+            .output()
+            .unwrap(),
+    );
     assert_eq!(report["keystore"], "file");
 }
 

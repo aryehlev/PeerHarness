@@ -8,17 +8,31 @@
 //! force the amendment would drop or bring into force. A rule it would bring into force
 //! is shown with its text, and an approval is refused while this node cannot show it.
 //!
-//! Every amendment here is made with the stock commands. What a modified client can
-//! sign under a harmless title is covered by the unit tests of `amendment.rs` and
-//! `governance.rs`.
+//! Every amendment here is made with the stock commands, with one exception. What a
+//! modified client can sign under a harmless title is covered by the unit tests of
+//! `amendment.rs` and `governance.rs`. The exception is the last part: the amendment
+//! that drops a rule its voter's node does not hold is signed here with a member's own
+//! device key, the way a modified client signs it.
+//!
+//! One test turns confirmation windows on. Every command of every node therefore gets
+//! `PEERHARNESS_TEST_WINDOW_BIN`, a script that records that it was started and
+//! declines; only debug builds read that variable, and that test is compiled for debug
+//! builds only.
 
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use ph_core::{Scope, Timestamp};
+use ph_identity::{open_keystore, DeviceIdentity, KeystoreConfig, PassphraseSource};
+use ph_protocol::{
+    validate_stateless, Charter, EnvelopeBuilder, EventBody, ProposalAction, ProposalBody,
+    RollEntry,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 
 const RULE: &str = "Use pnpm, not npm, in this repository.";
+const PASSPHRASE: &str = "a passphrase for tests only";
 
 struct Node {
     name: &'static str,
@@ -26,6 +40,10 @@ struct Node {
     skills: PathBuf,
     settings: PathBuf,
     cwd: PathBuf,
+    /// Stands in for a confirmation window: it records that it was started, and
+    /// declines.
+    window: PathBuf,
+    opened: PathBuf,
 }
 
 impl Node {
@@ -36,8 +54,23 @@ impl Node {
             skills: root.join(format!("{name}-skills")),
             settings: root.join(format!("{name}-settings.json")),
             cwd: root.join(format!("{name}-project")),
+            window: root.join(format!("{name}-window.sh")),
+            opened: root.join(format!("{name}-window-opened")),
         };
         std::fs::create_dir_all(&node.cwd).unwrap();
+        std::fs::write(
+            &node.window,
+            format!(
+                "#!/bin/sh\ncat > /dev/null\necho opened >> '{}'\necho declined\n",
+                node.opened.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&node.window, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         node.run(&[
             "init",
             "--keystore",
@@ -54,9 +87,11 @@ impl Node {
         let mut cmd = Command::cargo_bin("peerharness").unwrap();
         cmd.current_dir(&self.cwd)
             .env("PEERHARNESS_HOME", &self.home)
-            .env("PEERHARNESS_PASSPHRASE", "a passphrase for tests only")
+            .env("PEERHARNESS_PASSPHRASE", PASSPHRASE)
             .env("PEERHARNESS_CLAUDE_SKILLS_DIR", &self.skills)
             .env("PEERHARNESS_CLAUDE_SETTINGS", &self.settings)
+            // Never a real window, on any machine these tests run on.
+            .env("PEERHARNESS_TEST_WINDOW_BIN", &self.window)
             .env_remove("CLAUDECODE")
             .env_remove("PEERHARNESS_AGENT_SESSION")
             .env("USER", self.name);
@@ -572,4 +607,276 @@ fn an_amendment_is_not_a_way_to_approve_a_rule_nobody_here_could_read() {
         bob.approvals(&admission),
         serde_json::json!(["alice", "bob"])
     );
+}
+
+/// The circle's current charter, read from a member's export.
+fn current_charter(export: &str) -> Charter {
+    let mut charters: Vec<Charter> = std::fs::read_to_string(export)
+        .unwrap()
+        .lines()
+        .filter_map(|raw| line(raw).get("event").map(Value::to_string))
+        .filter_map(|raw| validate_stateless(raw.as_bytes(), Timestamp::now()).ok())
+        .filter_map(|event| match &event.body {
+            EventBody::Charter(body) => Some(body.charter.clone()),
+            _ => None,
+        })
+        .collect();
+    charters.sort_by_key(|c| c.seq);
+    charters.pop().expect("the export holds a charter")
+}
+
+/// A circle of four whose charter carries a rule, and one member whose node does not
+/// hold that rule.
+struct Incomplete {
+    alice: Node,
+    dave: Node,
+    /// The rule the charter carries: its proposal id and its skill name.
+    rule: String,
+    skill: String,
+    /// An amendment that admits Erin and carries no rule, signed with Carol's device
+    /// key: its proposal id.
+    drops_the_rule: String,
+}
+
+/// Alice, Bob and Carol pass a rule. Dave is admitted by a charter that carries it, and
+/// joins from a file that lacks the rule's proposal, its ballots, its result and its
+/// text: a join whose carrier was incomplete. (A member whose scopes do not cover the
+/// rule is in the same state after every sync.) On his node no rule is in force, and
+/// `rule list` says that a carried rule has not arrived.
+///
+/// Then an amendment arrives that admits Erin and whose `carried` list is empty: what
+/// a node in Dave's state drafts, and what a modified client can sign at any time.
+/// Approved, it takes the rule out of force for everyone.
+fn a_node_that_lacks_a_carried_rule(root: &Path) -> Incomplete {
+    let (alice, bob, carol) = trio(root);
+    let dave = Node::new(root, "dave");
+    let erin = Node::new(root, "erin");
+    let fingerprint = alice.run(&["circle", "members", "--circle", "team"])["root_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (rule, skill) = propose(&alice, RULE);
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &carol]);
+    carol.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    let admission = invite(&alice, &dave, "dave");
+    carry(root, &[&alice, &bob]);
+    bob.run(&["proposal", "vote", &admission, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    let members = alice.run(&["circle", "members", "--circle", "team"]);
+    assert_eq!(members["charter"]["seq"], 4);
+    assert_eq!(members["charter"]["carried"], serde_json::json!([rule]));
+
+    // What reaches Dave: everything but the rule.
+    let all = std::fs::read_to_string(alice.export(&root.join("all.jsonl"))).unwrap();
+    let without: Vec<&str> = all
+        .lines()
+        .filter(|raw| {
+            let record = line(raw);
+            let event = &record["event"];
+            record.get("bundle").is_none()
+                && event["event_id"] != rule.as_str()
+                && event["body"]["proposal_id"] != rule.as_str()
+        })
+        .collect();
+    assert_eq!(all.lines().count() - without.len(), 5, "the rule's records");
+    let partial = root.join("without-the-rule.jsonl");
+    std::fs::write(&partial, without.join("\n") + "\n").unwrap();
+    join(&dave, partial.to_str().unwrap(), &fingerprint);
+    assert!(dave.rules().is_empty());
+    let (_, listed) = dave.reads(&["rule", "list"]);
+    assert!(listed.contains("0 rule(s) in force"), "{listed}");
+    assert!(
+        listed.contains("has not arrived on this node yet"),
+        "{listed}"
+    );
+
+    // The amendment, signed with Carol's own key under charter 4.
+    let charter = current_charter(&alice.export(&root.join("charter-4.jsonl")));
+    assert_eq!(charter.seq, 4);
+    let keystore = open_keystore(
+        &carol.home,
+        KeystoreConfig::file(PassphraseSource::fixed(PASSPHRASE)),
+    )
+    .unwrap();
+    let device = DeviceIdentity::load(&*keystore).unwrap();
+    let mut next = charter.content.clone();
+    next.roll.push(RollEntry::new(
+        "erin",
+        vec![erin.device_key().parse().unwrap()],
+        vec![Scope::all()],
+    ));
+    next.carried.clear();
+    next.normalize();
+    let proposal = EnvelopeBuilder::new(
+        charter.circle_id,
+        Scope::all(),
+        EventBody::Proposal(ProposalBody {
+            charter: charter.digest().unwrap(),
+            title: "Admit erin".to_owned(),
+            summary: String::new(),
+            action: ProposalAction::Amend { next },
+        }),
+    )
+    .sign(device.signing_key(), Timestamp::now())
+    .unwrap();
+    let event: Value = serde_json::from_str(&proposal.to_canonical_json().unwrap()).unwrap();
+    let file = root.join("admit-erin-and-carry-nothing.jsonl");
+    std::fs::write(
+        &file,
+        serde_json::json!({ "event": event }).to_string() + "\n",
+    )
+    .unwrap();
+    let file = file.to_str().unwrap().to_owned();
+    for node in [&alice, &dave] {
+        assert_eq!(node.run(&["events", "import", &file])["stored"], 1);
+    }
+    Incomplete {
+        alice,
+        dave,
+        rule,
+        skill,
+        drops_the_rule: proposal.event_id.to_string(),
+    }
+}
+
+/// The start of an id, as the commands print it (`sha256:` and twelve characters).
+fn short(id: &str) -> &str {
+    &id[.."sha256:".len() + 12]
+}
+
+/// A node that lacks a rule the charter in force carries does not hold "the rules in
+/// force". An amendment that leaves that rule out drops it for the circle. Such a node
+/// used to describe it as "the rules in force stay as they are" and sign the approval.
+#[test]
+fn a_node_that_lacks_a_carried_rule_says_so_and_approves_no_amendment_that_drops_it() {
+    let tmp = TempDir::new().unwrap();
+    let c = a_node_that_lacks_a_carried_rule(tmp.path());
+    let (alice, dave, id) = (&c.alice, &c.dave, c.drops_the_rule.as_str());
+
+    // --- On a node that holds the rule the amendment is described as what it is.
+    let named = format!(
+        "rule {} goes out of force: the amendment does not carry it",
+        c.skill
+    );
+    let preview = alice.ballot_preview(id, "approve");
+    assert!(preview.contains(&named), "{preview}");
+
+    // --- Dave's node cannot name the rule. It says that one goes out of force, with
+    // the proposal's id, and never that the rules stay as they are.
+    let unnamed = format!(
+        "a rule the charter in force carries, which this node does not hold, goes out of \
+         force: the amendment does not carry it (proposal {})",
+        short(&c.rule)
+    );
+    let (code, shown) = dave.reads(&["proposal", "show", id]);
+    assert_eq!(code, 0, "{shown}");
+    assert!(shown.contains(&unnamed), "{shown}");
+    assert!(
+        !shown.contains("the rules in force stay as they are"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(
+            "it cannot be approved on this node: it leaves out a rule the charter in force \
+             carries, which this node does not hold"
+        ),
+        "{shown}"
+    );
+    let json = dave.run(&["proposal", "show", id]);
+    let rules = &json["amendment"]["rules_in_force"];
+    assert_eq!(
+        rules["dropped"],
+        serde_json::json!([{ "skill_name": null, "proposal_id": c.rule }])
+    );
+    assert_eq!(rules["added"], serde_json::json!([]));
+    assert_eq!(json["amendment"]["can_be_approved_here"], false);
+
+    // --- An approval is refused, with `--yes` too, and nothing is signed.
+    for args in [
+        vec!["proposal", "vote", id, "approve"],
+        vec!["proposal", "vote", id, "approve", "--yes"],
+    ] {
+        let (code, text) = dave.reads(&args);
+        assert_eq!(code, 3, "{args:?}: {text}");
+        assert!(
+            text.contains(
+                "leaves out a rule that the charter in force carries and this node does not hold"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("you cannot have read what you would approve"));
+        assert!(text.contains("`peerharness events import`"), "{text}");
+    }
+    assert_eq!(dave.approvals(id), serde_json::json!([]));
+
+    // --- A reject stays possible: it approves nothing. Its preview says the same.
+    let (code, text) = dave.reads(&["proposal", "vote", id, "reject", "--yes"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains(&unnamed), "{text}");
+    assert!(
+        !text.contains("the rules in force stay as they are"),
+        "{text}"
+    );
+    assert_eq!(dave.approvals(id), serde_json::json!([]));
+
+    // --- With the rule's records on his node, Dave reads which rule it is, and the
+    // decision is his again.
+    let full = alice.export(&tmp.path().join("everything.jsonl"));
+    dave.run(&["events", "import", &full]);
+    assert_eq!(dave.rules(), [c.skill.as_str()]);
+    let (_, shown) = dave.reads(&["proposal", "show", id]);
+    assert!(shown.contains(&named), "{shown}");
+    assert!(
+        !shown.contains("cannot be approved on this node"),
+        "{shown}"
+    );
+    assert_eq!(
+        dave.run(&["proposal", "show", id])["amendment"]["can_be_approved_here"],
+        true
+    );
+}
+
+/// The same amendment, with windows on. It admits one member and its `carried` list
+/// equals the rules in force on Dave's node (none), so it used to be put to him in a
+/// window as "What this amendment changes, and nothing else: admit erin". It is not a
+/// ballot for a window while his node lacks a rule the charter carries.
+#[cfg(all(unix, debug_assertions))]
+#[test]
+fn an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window() {
+    let tmp = TempDir::new().unwrap();
+    let c = a_node_that_lacks_a_carried_rule(tmp.path());
+    let (dave, id) = (&c.dave, c.drops_the_rule.as_str());
+    let on = dave.run(&["watch", "claude", "--install", "--dialogs", "--yes"]);
+    assert_eq!(on["circle_windows"], true);
+
+    // His agent's session starts each kind of ballot. None opens a window, and nothing
+    // is signed: the approval is refused for what the node cannot show, and a reject is
+    // a step for his own terminal.
+    for decision in ["approve", "reject", "revise"] {
+        let out = dave
+            .bare()
+            .args(["--json", "proposal", "vote", id, decision])
+            .env("CLAUDECODE", "1")
+            .output()
+            .unwrap();
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(3), "{decision}: {printed}");
+        assert!(
+            !dave.opened.exists(),
+            "{decision}: a window was opened\n{printed}"
+        );
+        if decision != "approve" {
+            assert!(printed.contains("your own terminal"), "{printed}");
+        }
+    }
+    let shown = dave.run(&["proposal", "show", id]);
+    assert_eq!(shown["approvals"], serde_json::json!([]));
+    assert_eq!(shown["dissent"], serde_json::json!([]));
 }

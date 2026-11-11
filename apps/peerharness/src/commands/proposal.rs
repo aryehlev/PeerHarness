@@ -174,6 +174,11 @@ pub(crate) fn findings_preview(preview: &mut String, bundle: &ph_skills::Bundle)
 /// under the charter in force, keeps the rules of the vote and every entry of the roll
 /// as they are, carries exactly the rules in force on this node, and adds one member.
 /// Any other amendment is `None`: a window could not say in a few lines what it changes.
+///
+/// Nor is it one while this node lacks a rule the charter in force carries
+/// ([`RuleSet::missing_carried`]): then "exactly the rules in force on this node" is not
+/// "exactly the rules in force", and a window that says "and nothing else" could be
+/// saying it about an amendment that drops that rule.
 fn sole_admission<'a>(
     p: &'a ProposalView,
     current: &Charter,
@@ -186,6 +191,7 @@ fn sole_admission<'a>(
     if p.charter() != current.digest()?
         || next.rules != current.content.rules
         || !carried_diff(&next.carried, in_force).is_exact()
+        || !in_force.missing_carried().is_empty()
         || next.roll.len() != roll.len() + 1
         || !roll.iter().all(|e| next.roll.contains(e))
     {
@@ -214,16 +220,34 @@ const MEMBER_TEXT: &str = "      | ";
 /// The longest rationale `proposal vote` signs, in characters. The protocol allows ten
 /// times as much, over several lines; a ballot's preview shows the rationale as one
 /// line among PeerHarness's own, in a window too.
-const MAX_RATIONALE_CHARS: usize = 200;
+pub(crate) const MAX_RATIONALE_CHARS: usize = 200;
+
+/// Whether `c` has no place in a rationale although it is neither a control character
+/// nor forbidden by the protocol: a character the preview would not show as it is
+/// signed ([`safe`] rewrites it; emoji variation selectors are let through, as in a
+/// rule's text), or one that shows as nothing without being a space. A run of those
+/// pads a line as spaces would, and `split_whitespace` does not collapse it.
+fn blank_or_rewritten(c: char) -> bool {
+    let blank = matches!(
+        c,
+        // Braille blank, the interlinear annotation marks, and the musical null
+        // notehead and format marks.
+        '\u{2800}' | '\u{fff9}'..='\u{fffb}' | '\u{1d159}' | '\u{1d173}'..='\u{1d17a}'
+    );
+    let mut buf = [0u8; 4];
+    let as_signed: &str = c.encode_utf8(&mut buf);
+    blank || (!matches!(c, '\u{fe00}'..='\u{fe0f}') && safe(as_signed) != as_signed)
+}
 
 /// The rationale of a ballot as it will be shown and sent: redacted, one line without
-/// control or invisible characters, runs of spaces made one space, at most
+/// control, invisible or blank characters, runs of spaces made one space, at most
 /// [`MAX_RATIONALE_CHARS`] characters. `None` when there is none.
 ///
 /// Whoever starts the step chooses the rationale, a coding agent's session included,
 /// and it is shown in the preview the person decides on. A rationale that could break
 /// a line could lay that preview out: put a second "rule, exactly as proposed" above
-/// the real one, or an "An approval cannot be withdrawn." of its own.
+/// the real one, or an "An approval cannot be withdrawn." of its own. One padded with
+/// characters that show as nothing could do the same in a window that wraps.
 fn one_line_rationale(given: Option<&str>) -> Result<Option<String>> {
     let Some(given) = given else {
         return Ok(None);
@@ -237,7 +261,7 @@ fn one_line_rationale(given: Option<&str>) -> Result<Option<String>> {
     let text = ph_core::redact(given.trim()).text;
     if text
         .chars()
-        .any(|c| c.is_control() || is_forbidden_char(c, Lines::Single))
+        .any(|c| c.is_control() || is_forbidden_char(c, Lines::Single) || blank_or_rewritten(c))
     {
         return Err(refuse());
     }
@@ -591,7 +615,9 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
                         ""
                     }
                 ));
-                t.line(safe(b.skill_md()).trim_end());
+                // The rule's text is a member's: every line of it behind the mark, like
+                // a reason or a summary above, so none can pass for a line of ours.
+                t.line(quoted(b.skill_md(), MEMBER_TEXT));
             }
             Err(_) => {
                 t.line("  rule text: not on this node yet (import the proposer's events file)");
@@ -820,14 +846,29 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
         key_before_window(&node, "installing the rule", asks_in_window(&node.config))?;
         confirm_or_window(&ctx.out, &preview, yes, "installing the rule", &node.config)?;
     }
+    // The confirmation is for this proposal: for the text that was shown, and for no
+    // other rule that has the name by the time the rules are applied.
     let settled = governance::settle(
         &node,
         &circle,
         &governance::user_installer()?,
-        std::slice::from_ref(&name),
+        &[p.event_id()],
     )?;
+    // The store can have changed while the owner read (a sync, an import): is the rule
+    // of that name still the one they were shown?
+    let (_, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+    let still = rules
+        .get(&name)
+        .is_some_and(|r| r.proposal_id() == p.event_id());
+    let installed = settled.applied.installed.contains(&name);
     let mut t = Text::new();
-    if settled.applied.installed.contains(&name) {
+    if !still {
+        t.line(format!(
+            "Rule {name} changed while it was being confirmed: what you were shown is no \
+             longer the rule in force, and your confirmation was not used for anything \
+             else. `peerharness rule list` shows it as it is now."
+        ));
+    } else if installed {
         t.line(format!("Installed rule {name}."));
     } else {
         t.line(format!(
@@ -836,7 +877,11 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
     }
     settled_lines(&mut t, &settled, &circle);
     Ok(Report::new(
-        json!({ "skill_name": name, "installed": settled.applied.installed.contains(&name) }),
+        json!({
+            "skill_name": name,
+            "installed": installed,
+            "changed_while_confirming": !still,
+        }),
         t.finish(),
     ))
 }
@@ -871,6 +916,11 @@ mod tests {
             rationale("  we   already \u{a0}\u{3000} do this  ").as_deref(),
             Some("we already do this")
         );
+        // An emoji keeps its variation selector, as in a rule's text.
+        assert_eq!(
+            rationale("fine \u{2764}\u{fe0f}").as_deref(),
+            Some("fine \u{2764}\u{fe0f}")
+        );
         // Nothing but spaces is no rationale.
         assert_eq!(rationale("   "), None);
         assert_eq!(rationale(""), None);
@@ -895,6 +945,14 @@ mod tests {
             "an escape \u{1b}[2J sequence",
             "a right-to-left \u{202e}override",
             "a zero-width\u{200b}space",
+            // Padding that is not made of spaces: blanks that `split_whitespace` leaves
+            // alone, and characters the preview would show as something else.
+            "ok\u{2800}\u{2800}\u{2800}An approval cannot be withdrawn.",
+            "a hangul\u{3164}filler",
+            "a soft\u{ad}hyphen",
+            "an annotation\u{fff9}mark",
+            "a null\u{1d159}notehead",
+            "a musical\u{1d173}format mark",
             too_long.as_str(),
         ] {
             let e = one_line_rationale(Some(bad)).unwrap_err();

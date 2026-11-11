@@ -262,23 +262,18 @@ pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
 /// same), so the rule is installed in either mode. When no rule of that name binds the
 /// owner now there is no text to show: the preview says that only the opt-out goes, and
 /// nothing is installed.
+///
+/// The confirmation counts for the proposal that was shown and for no other. If the
+/// rule of that name is another one by the time the owner answers (a sync or an import
+/// stored a newer proposal while the prompt waited), nothing changes: the opt-out
+/// stands, and the owner runs the command again to read the rule as it is now.
 fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> Result<Report> {
     if !ph_core::is_valid_skill_name(name) {
         return Err(usage("that is not a rule (skill) name"));
     }
     let id = &circle.circle_id;
-    let (charter, rules, _) = governance::rule_set(&node.store, id)?;
-    let left = node.store.circle_left_at(id)?.is_some();
-    let rule = rules.get(name).filter(|r| {
-        !left
-            && charter
-                .content
-                .voter(
-                    &node.device_key(),
-                    &ph_protocol::Electorate::Scope(r.scope()),
-                )
-                .is_some()
-    });
+    let rule = binding_rule(node, circle, name)?;
+    let rule = rule.as_ref();
     let installer = governance::user_installer()?;
     let again = format!(
         "You can opt out again at any time: `peerharness rule opt-out {name} --circle {}`.",
@@ -326,14 +321,21 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
     };
     crate::consent::confirm(&ctx.out, &preview, yes, "following the rule again")?;
 
+    // What was shown, by the id of its proposal, which signs the rule's name, the
+    // digest of its text and its scope. The store can have changed while the owner
+    // read: looked at again before anything is changed.
+    let shown = rule.map(ph_governance::Rule::proposal_id);
+    if binding_rule(node, circle, name)?.map(|r| r.proposal_id()) != shown {
+        return Err(refused(
+            "the rule changed while it was being confirmed: nothing was changed, and your \
+             opt-out stands. Run the command again to read the rule as it is now.",
+        ));
+    }
     node.store.clear_rule_opt_out(id, name)?;
     // The owner has read the text and said yes: that is the confirmation an install
-    // needs, for this rule and no other.
-    let confirmed: Vec<String> = rule
-        .map(|r| r.skill_name().to_owned())
-        .into_iter()
-        .collect();
-    let settled = governance::settle(node, circle, &installer, &confirmed)?;
+    // needs, for the proposal they were shown and no other (`apply_rules` reads the
+    // rules once more, and counts the confirmation only for that proposal).
+    let settled = governance::settle(node, circle, &installer, shown.as_slice())?;
     let mut t = Text::new();
     t.line(format!("Following {name} again."));
     if settled.applied.installed.iter().any(|s| s == name) {
@@ -372,6 +374,32 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
         }),
         t.finish(),
     ))
+}
+
+/// The rule named `name` that binds this node's owner in `circle` now, if there is
+/// one: it is in force, the owner has not left the circle on this machine, and they are
+/// in its electorate.
+fn binding_rule(
+    node: &Node,
+    circle: &CircleRow,
+    name: &str,
+) -> Result<Option<ph_governance::Rule>> {
+    let id = &circle.circle_id;
+    let (charter, rules, _) = governance::rule_set(&node.store, id)?;
+    let left = node.store.circle_left_at(id)?.is_some();
+    Ok(rules
+        .get(name)
+        .filter(|r| {
+            !left
+                && charter
+                    .content
+                    .voter(
+                        &node.device_key(),
+                        &ph_protocol::Electorate::Scope(r.scope()),
+                    )
+                    .is_some()
+        })
+        .cloned())
 }
 
 /// The rule named `name` in force in `circle`, which must bind this node's owner.

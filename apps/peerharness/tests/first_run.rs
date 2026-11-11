@@ -526,9 +526,12 @@ fn a_key_that_cannot_be_unlocked_is_said_once() {
     assert!(!node.home.join("daemon.json").exists());
 }
 
-/// Kills the daemon when the test ends, however it ends.
+/// Kills the daemon when the test ends, however it ends. (Compiled where its one test
+/// is: unused code fails the build on macOS otherwise.)
+#[cfg(not(target_os = "macos"))]
 struct Daemon(std::process::Child);
 
+#[cfg(not(target_os = "macos"))]
 impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.0.kill();

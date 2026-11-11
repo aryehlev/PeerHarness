@@ -156,7 +156,7 @@ pub enum KdfProfileArg {
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    /// Where to keep private keys (default: os on macOS/Windows, file elsewhere).
+    /// Where to keep private keys (default: os on macOS, file on Linux).
     #[arg(long, value_enum)]
     pub keystore: Option<KeystoreArg>,
     /// Required with `--keystore insecure-dev`: keys are stored in PLAINTEXT.
@@ -723,6 +723,8 @@ pub enum ProposalCommand {
     Release {
         /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters).
         id: String,
+        /// Accepted and has no effect: this command asks nothing. A result states a
+        /// count that every node verifies for itself.
         #[arg(long)]
         yes: bool,
     },
@@ -734,6 +736,9 @@ pub enum ProposalCommand {
         /// Skip the confirmation prompt (after reviewing the preview).
         #[arg(long)]
         yes: bool,
+        /// Accepted and has no effect today. A rule with a high-risk scanner finding is
+        /// shown with its findings and confirmed like any other rule, in your terminal
+        /// and never in a window, with or without this flag.
         #[arg(long)]
         accept_risk: bool,
     },

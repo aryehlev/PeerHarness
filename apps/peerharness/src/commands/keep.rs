@@ -87,14 +87,23 @@ pub fn run(ctx: &Ctx, a: &KeepArgs) -> Result<Report> {
         ));
     }
 
-    let preview = format!(
+    let mut preview = format!(
         "This keeps the following rule for your own agent. It is installed at {dir} and \
          your agent reads it from its next session. Nothing is shared with anyone.\n\n\
-         {md}\n\n\
-         Take it out again with `peerharness skills uninstall {name}`.",
+         {md}\n",
         dir = dir.display(),
         md = safe(draft.skill_md()).trim_end(),
     );
+    // What the scanner finds in the text, as on a ballot and before an install. (A
+    // high-risk finding was refused above.) Without a finding this adds nothing, and
+    // the preview reads as it always did.
+    crate::commands::proposal::findings_preview(&mut preview, &draft);
+    if !preview.ends_with('\n') {
+        preview.push('\n');
+    }
+    preview.push_str(&format!(
+        "\nTake it out again with `peerharness skills uninstall {name}`."
+    ));
     confirm_own_or_window(&ctx.out, &preview, a.yes, "keeping the rule", &node.config)?;
 
     // Confirmed: the owner has read it and said yes. Save exactly that text, then

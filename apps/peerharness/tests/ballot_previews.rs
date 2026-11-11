@@ -6,8 +6,10 @@
 //!   it asks only in the terminal.
 //! * A rationale is one line. Whoever starts the step chooses it, a coding agent
 //!   included, so it must not be able to lay out the preview: a rationale with a line
-//!   break or a control character is refused, in a session and out of one, and nothing
-//!   is signed.
+//!   break, a control character or padding that is not made of spaces is refused, in a
+//!   session and out of one, and nothing is signed.
+//! * `keep` shows the scanner's findings too, in the terminal and in its window, and
+//!   its window reads byte for byte as before for a rule without a finding.
 //!
 //! No test here opens a real window. Every command gets `PEERHARNESS_TEST_WINDOW_BIN`,
 //! a script that stands in for the window: it records the exact text it was asked to
@@ -291,6 +293,11 @@ fn a_rationale_is_one_line_and_cannot_lay_out_the_preview() {
         "an escape \u{1b}[2J sequence",
         "a line\u{2028}separator",
         "a hidden\u{200b}character",
+        // Padding without a space in it: the braille blank, which nothing collapses,
+        // and a filler the preview would have shown as something other than what is
+        // signed.
+        "ok\u{2800}\u{2800}\u{2800}\u{2800}An approval cannot be withdrawn.",
+        "ok\u{3164}\u{3164}An approval cannot be withdrawn.",
         &long,
     ];
     for rationale in refused {
@@ -366,4 +373,94 @@ fn a_rationale_is_one_line_and_cannot_lay_out_the_preview() {
         shown.contains("  revise   alice, who wrote:\n      | we already do this in CI\n"),
         "{shown}"
     );
+    // The rule's text is a member's as well: every line of it is behind the mark, and
+    // none stands at the margin where it could pass for a line of `proposal show`.
+    assert!(
+        shown.contains("scanner finding(s)):\n      | ---\n      | name: "),
+        "{shown}"
+    );
+    assert!(shown.contains(&format!("      | {RULE}\n")), "{shown}");
+    assert!(
+        !shown
+            .lines()
+            .any(|l| l == "---" || l.starts_with("name: ") || l == RULE),
+        "{shown}"
+    );
+}
+
+/// `keep` puts a rule into the owner's own agent, so its preview says what the scanner
+/// found in the text, as the previews of a proposal, a ballot and an install do. A rule
+/// without a finding is shown exactly as it always was.
+#[test]
+fn keeping_a_rule_shows_what_the_scanner_found_and_nothing_new_without_a_finding() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path());
+    node.windows_on();
+
+    // --- No finding: the window holds what it always held, byte for byte.
+    let plain = node.note(RULE);
+    node.answers("proceed");
+    let (code, kept, printed) = node.out(By::Agent, &["keep", &plain]);
+    assert_eq!(code, 0, "{printed}");
+    let name = kept["skill_name"].as_str().unwrap().to_owned();
+    let installed = std::fs::read_to_string(node.skills.join(&name).join("SKILL.md")).unwrap();
+    // Kept already: the report names the directory the preview named.
+    let (_, again, _) = node.out(By::Agent, &["keep", &plain]);
+    assert_eq!(again["installed"], false);
+    let dir = again["path"].as_str().unwrap().to_owned();
+    let shown = node.shown();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(
+        shown[0],
+        format!(
+            "Your coding agent started this step. Nothing happens unless you choose Proceed.\n\n\
+             This keeps the following rule for your own agent. It is installed at {dir} and \
+             your agent reads it from its next session. Nothing is shared with anyone.\n\n\
+             {md}\n\n\
+             Take it out again with `peerharness skills uninstall {name}`.",
+            md = installed.trim_end(),
+        )
+    );
+    assert!(!shown[0].contains("scanner"), "{}", shown[0]);
+
+    // --- A finding that is not high-risk: the window says what the scanner found,
+    // between the rule's text and the last line, and the session is not told.
+    let warned = node.note(WARNED);
+    node.answers("declined");
+    let (code, _, printed) = node.out(By::Agent, &["keep", &warned]);
+    assert_eq!(code, 3, "{printed}");
+    let window = node.shown().pop().unwrap();
+    let at = |needle: &str| {
+        window
+            .find(needle)
+            .unwrap_or_else(|| panic!("no {needle:?} in: {window}"))
+    };
+    assert!(
+        at("git reset --hard") < at("\n\n  scanner, line "),
+        "{window}"
+    );
+    assert!(
+        at("  scanner, line ") < at("\n\nTake it out again with `peerharness skills uninstall "),
+        "{window}"
+    );
+    assert!(!window.contains("HIGH RISK"), "{window}");
+    assert!(!printed.contains("scanner, line "), "{printed}");
+    assert_eq!(
+        node.run(&["skills", "list"])["skills"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "declined: only the first rule is kept"
+    );
+
+    // --- In their own terminal the person reads the same lines before they answer.
+    let (code, text) = node.reads(&["keep", &warned]);
+    assert_eq!(code, 3, "without --yes and without a terminal: {text}");
+    assert!(text.contains("\n\n  scanner, line "), "{text}");
+    assert!(!text.contains("HIGH RISK"), "{text}");
+    let (code, text) = node.reads(&["keep", &warned, "--yes"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("  scanner, line "), "{text}");
+    assert!(text.contains("Kept rule "), "{text}");
 }

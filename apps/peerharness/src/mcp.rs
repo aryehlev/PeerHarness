@@ -87,6 +87,8 @@ enum Kind {
     Word,
     /// A sentence the user said.
     Sentence,
+    /// A sentence the user said, of at most this many characters.
+    Line(usize),
     /// One of a fixed list of words.
     OneOf(&'static [&'static str]),
 }
@@ -231,10 +233,12 @@ const TOOLS: &[Tool] = &[
             },
             Param {
                 name: "rationale",
-                description: "A reason, in the user's own words, published with the ballot. \
-                    Leave it out unless the user gave one.",
+                description: "A reason, in the user's own words, published with the ballot: \
+                    one line of at most 200 characters. Leave it out unless the user gave one.",
                 required: false,
-                kind: Kind::Sentence,
+                // What `proposal vote` accepts, and no more: a longer one is refused
+                // here, before a command runs.
+                kind: Kind::Line(crate::commands::proposal::MAX_RATIONALE_CHARS),
             },
         ],
         needs: Asked::Rules,
@@ -659,6 +663,11 @@ fn checked(tool: &Tool, arguments: Option<&Value>) -> Result<Args, String> {
         }
         match p.kind {
             Kind::Sentence => {}
+            Kind::Line(max) => {
+                if value.chars().count() > max {
+                    return Err(format!("`{name}` is at most {max} characters"));
+                }
+            }
             Kind::Word => {
                 // A value is never a flag, and never more than one argument.
                 if value.starts_with('-') || value.chars().any(char::is_whitespace) {
@@ -1110,6 +1119,27 @@ mod tests {
                 .contains("single line")
         );
         assert!(refused(r#"["abc","approve"]"#).contains("object"));
+        // A rationale is as long as `proposal vote` signs one, and the tool says so.
+        let max = crate::commands::proposal::MAX_RATIONALE_CHARS;
+        let longest = "é".repeat(max);
+        let ok = call(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"vote","arguments":{{"proposal_id":"abc","decision":"revise","rationale":"{longest}"}}}}}}"#
+        ));
+        assert_eq!(ok.args["rationale"], longest);
+        let said = refused(&format!(
+            r#"{{"proposal_id":"abc","decision":"revise","rationale":"{longest}x"}}"#
+        ));
+        assert_eq!(said, format!("`rationale` is at most {max} characters"));
+        let described = tool("vote")
+            .params
+            .iter()
+            .find(|p| p.name == "rationale")
+            .unwrap()
+            .description;
+        assert!(
+            described.contains(&format!("one line of at most {max} characters")),
+            "{described}"
+        );
         let long = "x".repeat(MAX_ARGUMENT_CHARS + 1);
         assert!(refused(&format!(
             r#"{{"proposal_id":"{long}","decision":"approve"}}"#

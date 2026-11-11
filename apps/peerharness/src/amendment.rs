@@ -11,7 +11,10 @@
 //! * for members who stay, the devices added and removed and any change of scopes;
 //! * the rules of the vote, old and new, when they change;
 //! * the rules in force on this node that `next.carried` leaves out, and the proposals
-//!   it lists that are not in force here, with the text of each such rule.
+//!   it lists that are not in force here, with the text of each such rule;
+//! * the rules the charter in force carries that this node does not hold and that
+//!   `next.carried` leaves out. Such a rule goes out of force as well, and this node
+//!   cannot name it: it says so, and no approval is signed here.
 //!
 //! [`changes`] is a pure function of the two contents and of what this node knows about
 //! the rules ([`Rules`], which `governance::amendment_changes` reads from the store).
@@ -44,10 +47,13 @@ struct MemberChange {
     scopes: Option<(Vec<Scope>, Vec<Scope>)>,
 }
 
-/// A rule in force on this node that the amendment does not carry.
+/// A rule the amendment does not carry: one in force on this node, or one the charter
+/// in force carries that this node does not hold.
 pub struct Dropped {
-    /// The rule's skill name.
-    pub skill_name: String,
+    /// The rule's skill name. `None` when the charter in force carries the proposal and
+    /// this node does not hold it: the rule exists for the circle, and this node can
+    /// say neither its name nor its text.
+    pub skill_name: Option<String>,
     /// The `adopt` proposal that put it in force.
     pub proposal_id: EventId,
 }
@@ -81,7 +87,8 @@ pub enum Rules {
     Compared {
         /// How many rules are in force on this node.
         in_force: usize,
-        /// Rules in force that the amendment leaves out.
+        /// Rules in force that the amendment leaves out, and rules the charter in force
+        /// carries, which this node does not hold, that it leaves out.
         dropped: Vec<Dropped>,
         /// Listed proposals that are not in force here.
         added: Vec<Added>,
@@ -89,13 +96,16 @@ pub enum Rules {
 }
 
 /// Why an approval cannot be given on this node: something the amendment would put in
-/// force cannot be shown here, so its voter cannot have read it.
+/// force, or take out of force, cannot be shown here, so its voter cannot have read it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Unread {
     /// The amendment carries an id this node does not hold as a rule proposal.
     Proposal,
     /// The amendment carries a rule whose text this node does not have.
     Text,
+    /// The amendment leaves out a rule that the charter in force carries and this node
+    /// does not hold: it would take a rule out of force that this node cannot name.
+    Dropped,
 }
 
 impl Unread {
@@ -112,6 +122,12 @@ impl Unread {
                  so you cannot have read what you would approve. Import the proposer's events \
                  file first."
             }
+            Unread::Dropped => {
+                "that amendment leaves out a rule that the charter in force carries and this \
+                 node does not hold, so this node cannot show which rule it would take out of \
+                 force and you cannot have read what you would approve. Import the events \
+                 file of a member who holds that rule first (`peerharness events import`)."
+            }
         }
     }
 
@@ -120,6 +136,10 @@ impl Unread {
         match self {
             Unread::Proposal => "it carries a rule proposal this node does not hold",
             Unread::Text => "it would put a rule in force whose text is not on this node",
+            Unread::Dropped => {
+                "it leaves out a rule the charter in force carries, which this node does not \
+                 hold"
+            }
         }
     }
 }
@@ -289,16 +309,24 @@ impl Changes {
     /// Why an approval cannot be given on this node, if anything the amendment would
     /// put in force cannot be shown here.
     pub fn unread(&self) -> Option<Unread> {
-        let Rules::Compared { added, .. } = &self.rules else {
+        let Rules::Compared { added, dropped, .. } = &self.rules else {
             return None;
         };
         if added.iter().any(|a| a.rule.is_none()) {
             return Some(Unread::Proposal);
         }
-        added
+        if added
             .iter()
             .any(|a| a.rule.as_ref().is_some_and(|r| r.text.is_none()))
-            .then_some(Unread::Text)
+        {
+            return Some(Unread::Text);
+        }
+        // Losing a rule this node can name is something its owner may approve. Losing
+        // one it cannot name is not something they can have read.
+        dropped
+            .iter()
+            .any(|d| d.skill_name.is_none())
+            .then_some(Unread::Dropped)
     }
 
     fn who(&self, member: &str) -> String {
@@ -447,14 +475,20 @@ impl Changes {
             } => {
                 out.line(0, format!("the rules in force ({in_force} now):"));
                 for rule in dropped {
+                    let id = short_id(&rule.proposal_id);
                     out.line(
                         1,
-                        format!(
-                            "rule {} goes out of force: the amendment does not carry it \
-                             (proposal {})",
-                            rule.skill_name,
-                            short_id(&rule.proposal_id)
-                        ),
+                        match &rule.skill_name {
+                            Some(name) => format!(
+                                "rule {name} goes out of force: the amendment does not carry \
+                                 it (proposal {id})"
+                            ),
+                            None => format!(
+                                "a rule the charter in force carries, which this node does \
+                                 not hold, goes out of force: the amendment does not carry it \
+                                 (proposal {id}). This node cannot say which rule that is"
+                            ),
+                        },
                     );
                 }
                 for listed in added {
@@ -785,7 +819,7 @@ mod tests {
         let rules = Rules::Compared {
             in_force: 2,
             dropped: vec![Dropped {
-                skill_name: "use-pnpm".into(),
+                skill_name: Some("use-pnpm".into()),
                 proposal_id: id(5),
             }],
             added: Vec::new(),
@@ -803,6 +837,46 @@ mod tests {
             c.json()["rules_in_force"]["dropped"][0]["skill_name"],
             "use-pnpm"
         );
+    }
+
+    /// A rule the charter in force carries and this node does not hold: an amendment
+    /// that leaves it out takes it out of force for the circle. This node cannot name
+    /// it, so it does not say that the rules stay as they are, and it signs no approval.
+    #[test]
+    fn a_dropped_rule_this_node_does_not_hold_is_said_and_blocks_an_approval() {
+        let named = trio();
+        let rules = Rules::Compared {
+            in_force: 0,
+            dropped: vec![Dropped {
+                skill_name: None,
+                proposal_id: id(6),
+            }],
+            added: Vec::new(),
+        };
+        let c = changes(4, &named, &named.clone(), rules, None);
+        assert_eq!(c.unread(), Some(Unread::Dropped));
+        let said = c.describe("");
+        assert!(!said.contains("stay as they are (0 in force)"), "{said}");
+        assert!(said.contains("the rules in force (0 now):\n"), "{said}");
+        assert!(
+            said.contains(&format!(
+                "  a rule the charter in force carries, which this node does not hold, goes \
+                 out of force: the amendment does not carry it (proposal {}). This node \
+                 cannot say which rule that is",
+                short_id(&id(6))
+            )),
+            "{said}"
+        );
+        let json = c.json();
+        assert_eq!(json["can_be_approved_here"], false);
+        let dropped = &json["rules_in_force"]["dropped"][0];
+        assert_eq!(dropped["skill_name"], Value::Null);
+        assert_eq!(dropped["proposal_id"], json!(id(6)));
+        // The refusal names nothing a member wrote, and says what to do.
+        let refusal = Unread::Dropped.refusal();
+        assert!(refusal.contains("you cannot have read what you would approve"));
+        assert!(refusal.contains("`peerharness events import`"));
+        assert!(!Unread::Dropped.missing().is_empty());
     }
 
     #[test]
