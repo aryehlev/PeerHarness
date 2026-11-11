@@ -1241,6 +1241,10 @@ pub struct HeldRule {
     pub proposal_id: EventId,
     /// Why it is held.
     pub why: Held,
+    /// The project directory this machine puts rules of that scope in (`circle
+    /// place`), or `None` for the user's skills directory: where the skill in the way
+    /// is, and so where taking it out has to happen.
+    pub place: Option<String>,
 }
 
 /// What installs a held rule once the skill in its way is out: the second step of the
@@ -1293,12 +1297,22 @@ impl HeldRule {
                         format!("`peerharness rule opt-in {name} --circle {circle}` again")
                     }
                 };
+                // The skill in the way is where rules of this scope go. In a project
+                // that is not where `skills uninstall` looks by itself, and a copy a
+                // vote installed for every project can exist beside it.
+                let first = match &self.place {
+                    Some(dir) => format!(
+                        "`peerharness skills uninstall {name} --scope project`, run in {}",
+                        crate::output::safe(dir)
+                    ),
+                    None => format!("`peerharness skills uninstall {name}`"),
+                };
                 format!(
                     "a skill named {name} that no vote of this circle installed is already \
                      there, with another text, and a vote never replaces it. To follow the \
-                     rule, take the one that is there out (`peerharness skills uninstall \
-                     {name}`), then {second}. To keep the one that is there: `peerharness \
-                     rule opt-out {name} --circle {circle}`."
+                     rule, take the one that is there out ({first}), then {second}. To keep \
+                     the one that is there: `peerharness rule opt-out {name} --circle \
+                     {circle}`."
                 )
             }
         }
@@ -1494,6 +1508,7 @@ pub fn apply_rules(
                     name,
                     proposal_id: rule.proposal_id(),
                     why,
+                    place: target.dir.clone(),
                 });
                 continue;
             }
@@ -1778,6 +1793,7 @@ pub fn refuse_held(
         name: rule.skill_name().to_owned(),
         proposal_id: rule.proposal_id(),
         why,
+        place: target.dir.clone(),
     };
     Err(crate::error::refused(format!(
         "rule {} is held on this machine: {}",
@@ -2940,6 +2956,7 @@ mod tests {
             name: "commit-style".to_owned(),
             proposal_id: EventId::from_digest(Digest::sha256(b"p")),
             why: Held::OwnSkill,
+            place: None,
         };
         let id = crate::output::short_id(&held.proposal_id);
         let person = held.explain_to("team", Then::Adopt, false);
@@ -2970,6 +2987,26 @@ mod tests {
                 assert!(!session.contains(command), "{command}: {session}");
             }
         }
+        // Where the rule's scope is placed in a project, the skill in the way is in
+        // that project: the person is told the directory and the scope to pass. A
+        // plain `skills uninstall` would not find it there, or would be refused as
+        // ambiguous beside a copy a vote installed for every project.
+        let placed = HeldRule {
+            place: Some("/work/web".to_owned()),
+            ..held.clone()
+        };
+        let person = placed.explain_to("team", Then::Adopt, false);
+        assert!(
+            person.contains(&format!(
+                "take the one that is there out (`peerharness skills uninstall commit-style \
+                 --scope project`, run in /work/web), then `peerharness proposal adopt {id}`."
+            )),
+            "{person}"
+        );
+        let session = placed.explain_to("team", Then::Adopt, true);
+        assert_eq!(session, held.explain_to("team", Then::Adopt, true));
+        assert!(!session.contains("/work/web"), "{session}");
+
         // The reserved name has no way out to tell anyone.
         let reserved = HeldRule {
             why: Held::ReservedName,

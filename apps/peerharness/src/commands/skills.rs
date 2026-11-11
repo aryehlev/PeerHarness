@@ -391,11 +391,17 @@ fn uninstall(node: &Node, a: &SkillsUninstallArgs) -> Result<Report> {
             if node.store.is_rule_opted_out(id, &s.name)? {
                 continue;
             }
-            // Not when that rule is held because of this very skill (a copy of the
-            // rule's text that the owner kept and then edited): taking it out is the
-            // way out the hold names, and what follows is the rule as it passed.
+            // Not when that rule is held in this directory because of this very skill
+            // (a copy of the rule's text that the owner kept and then edited): taking
+            // it out is the way out the hold names, and what follows is the rule as it
+            // passed. That is the case only when the rule's place is this directory.
+            // A rule placed in a project and held there by another skill says nothing
+            // about the copy here, which a vote installed and its owner follows.
             let target = crate::governance::rule_target(&node.store, id, &installer, rule.scope())?;
-            if crate::governance::held(&node.store, id, &target, rule)?.is_some() {
+            if target.dir.is_none()
+                && crate::governance::held(&node.store, id, &target, rule)?
+                    == Some(crate::governance::Held::OwnSkill)
+            {
                 continue;
             }
             return Err(usage(format!(

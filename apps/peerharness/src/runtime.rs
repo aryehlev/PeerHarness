@@ -1380,6 +1380,7 @@ mod tests {
                 name: name.to_owned(),
                 proposal_id: EventId::from_digest(Digest::sha256(name.as_bytes())),
                 why: governance::Held::OwnSkill,
+                place: None,
             },
             circle.to_owned(),
         )

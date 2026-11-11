@@ -165,6 +165,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                     name: rule.skill_name().to_owned(),
                     proposal_id: rule.proposal_id(),
                     why,
+                    place: target.dir.clone(),
                 };
                 t.line(format!("      {}", held.explain(&c.name)));
             }
