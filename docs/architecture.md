@@ -30,7 +30,7 @@ governance (section 10, ADR-012 onwards).
     config.toml            # local configuration (0600)
     peerharness.db         # SQLite, WAL mode (0600)
     keys/                  # encrypted key files when the file keystore is used (0700 dir, 0600 files)
-    spool/observations.jsonl  # hook fallback spool (0600), drained on the next CLI/daemon run
+    spool/observations.jsonl  # hook fallback spool (0600), drained by the next Stop hook, `status` or `inbox`
     bundles/<hex-digest>/SKILL.md  # immutable content-addressed skill bundles
     daemon.json            # {"pid", "peer_id", "listen_addrs"} (0600) while the daemon runs; no secret
     daemon.lock            # locked exclusively by the running daemon

@@ -14,11 +14,13 @@
 //!
 //! * Each append is a single `write` of one complete line, so concurrent hooks do not
 //!   interleave lines on local filesystems.
-//! * [`drain`] claims the spool by atomically renaming it to a unique claim file
+//! * [`claim_spool`] claims the spool by atomically renaming it to a unique claim file
 //!   (`observations.jsonl.processing-<unix-secs>-<pid>-<n>`), so two concurrent drains
-//!   (CLI and daemon) never read or delete each other's data. Claim files left behind by
-//!   a crashed drain (older than [`STALE_CLAIM_SECS`]) and the legacy
-//!   `observations.jsonl.processing` file are re-claimed and drained by the next run.
+//!   (CLI and daemon) never read or delete each other's data. A claim file is deleted
+//!   only by [`Claimed::release`], which its caller calls once the observations are
+//!   stored. Claim files left behind by a drain that crashed or could not store (older
+//!   than [`STALE_CLAIM_SECS`]) and the legacy `observations.jsonl.processing` file
+//!   are re-claimed and read by a later run.
 //! * A hook that opened the spool just before [`drain`] renamed it may still append to
 //!   the claimed file after it was read; that one observation is lost. Observations are
 //!   low-value hints, so this is accepted.
@@ -158,25 +160,63 @@ pub struct Drained {
     pub skipped_lines: usize,
 }
 
-/// Takes everything out of the spool.
+/// What [`claim_spool`] took out of the spool: the observations, and the claim files
+/// they were read from, which are still on disk.
+///
+/// Call [`Claimed::release`] once the observations are stored. A `Claimed` that is
+/// dropped without it leaves its files where they are, and a drain that runs
+/// [`STALE_CLAIM_SECS`] later reads them again: nothing is lost when the store could
+/// not take them. Storing has to be idempotent by observation id for that reason.
+#[derive(Debug, Default)]
+pub struct Claimed {
+    /// Observations in file order (left-over claim files first, then the spool).
+    pub observations: Vec<NormalizedObservation>,
+    /// Lines that were malformed or too long and were skipped.
+    pub skipped_lines: usize,
+    files: Vec<PathBuf>,
+}
+
+impl Claimed {
+    /// Deletes the claim files: their observations are stored.
+    pub fn release(self) -> Result<(), SpoolError> {
+        for path in &self.files {
+            remove_claim(path)?;
+        }
+        Ok(())
+    }
+}
+
+/// Takes everything out of the spool and deletes it: [`claim_spool`] followed by
+/// [`Claimed::release`]. Data is deleted once read, so a caller that stores the result
+/// and can fail to should use the two steps instead.
+pub fn drain(spool: &Path) -> Result<Drained, SpoolError> {
+    let mut claimed = claim_spool(spool)?;
+    let out = Drained {
+        observations: std::mem::take(&mut claimed.observations),
+        skipped_lines: claimed.skipped_lines,
+    };
+    claimed.release()?;
+    Ok(out)
+}
+
+/// Claims everything in the spool and reads it, without deleting it.
 ///
 /// 1. Left-over files from interrupted earlier drains (the legacy `.processing` file and
-///    claim files older than [`STALE_CLAIM_SECS`]) are claimed, read and deleted.
-/// 2. The spool is atomically renamed to a fresh, unique claim file, read, and deleted.
+///    claim files older than [`STALE_CLAIM_SECS`]) are claimed and read.
+/// 2. The spool is atomically renamed to a fresh, unique claim file and read.
 ///
 /// Every claim is a `rename`, so of two concurrent drains exactly one gets each file.
 /// Malformed lines are skipped and counted. Every observation is re-normalized on the
 /// way out (text redacted and bounded again, `repo_key` bounded), so a tampered spool
 /// cannot inject unredacted text. A missing spool gives an empty result. A symlinked
 /// spool gives [`SpoolError::Symlink`]; a non-regular file found at a claimed path is
-/// deleted (it is only a directory entry in our spool namespace) and skipped. Data is
-/// deleted once read: the caller should store the result promptly, idempotently by
-/// observation id.
-pub fn drain(spool: &Path) -> Result<Drained, SpoolError> {
+/// deleted (it is only a directory entry in our spool namespace) and skipped. The
+/// claim files stay until [`Claimed::release`].
+pub fn claim_spool(spool: &Path) -> Result<Claimed, SpoolError> {
     if is_symlink(spool) {
         return Err(SpoolError::Symlink);
     }
-    let mut out = Drained::default();
+    let mut out = Claimed::default();
     let dir = parent_dir(spool);
     let Some(spool_name) = spool.file_name().and_then(|n| n.to_str()) else {
         return Err(SpoolError::Io {
@@ -205,16 +245,16 @@ pub fn drain(spool: &Path) -> Result<Drained, SpoolError> {
             continue;
         }
         if let Some(claimed) = claim(&path, spool)? {
-            read_and_delete(&claimed, &mut out)?;
+            read_claim(claimed, &mut out)?;
         }
     }
     if let Some(claimed) = claim(spool, spool)? {
-        read_and_delete(&claimed, &mut out)?;
+        read_claim(claimed, &mut out)?;
     }
     tracing::debug!(
-        drained = out.observations.len(),
+        claimed = out.observations.len(),
         skipped = out.skipped_lines,
-        "spool drained"
+        "spool claimed"
     );
     Ok(out)
 }
@@ -266,14 +306,16 @@ fn claim(path: &Path, spool: &Path) -> Result<Option<PathBuf>, SpoolError> {
     }
 }
 
-fn read_and_delete(path: &Path, out: &mut Drained) -> Result<(), SpoolError> {
-    let f = match open_regular(fs::OpenOptions::new().read(true), path, false) {
+/// Reads the claim file at `path` into `out` and records it there, to be deleted when
+/// the caller releases what it claimed.
+fn read_claim(path: PathBuf, out: &mut Claimed) -> Result<(), SpoolError> {
+    let f = match open_regular(fs::OpenOptions::new().read(true), &path, false) {
         Ok(f) => f,
         // Re-claimed by a concurrent drain: it owns the data now.
         Err(OpenFailure::NotFound) => return Ok(()),
         Err(OpenFailure::Symlink) | Err(OpenFailure::NotRegularFile) => {
             tracing::debug!("spool claim is not a regular file; removed");
-            return remove_claim(path);
+            return remove_claim(&path);
         }
         Err(OpenFailure::Io(e)) => return Err(io_err("open")(e)),
     };
@@ -303,7 +345,8 @@ fn read_and_delete(path: &Path, out: &mut Drained) -> Result<(), SpoolError> {
             Err(_) => out.skipped_lines += 1,
         }
     }
-    remove_claim(path)
+    out.files.push(path);
+    Ok(())
 }
 
 /// Deletes a claim file; already gone is fine.

@@ -8,7 +8,7 @@ use ph_core::{
     NormalizedObservation, ObservationId, ObservationKind, ObservationSource, Timestamp,
 };
 use ph_observer::spool::{processing_path, spool_path, MAX_SPOOL_BYTES, MAX_SPOOL_LINE_BYTES};
-use ph_observer::{append_observation, drain, AppendOutcome, SpoolError};
+use ph_observer::{append_observation, claim_spool, drain, AppendOutcome, SpoolError};
 
 fn obs(i: usize, text: &str) -> NormalizedObservation {
     NormalizedObservation::from_raw(
@@ -294,4 +294,62 @@ fn stale_claims_are_recovered_and_fresh_ones_left_alone() {
     assert_eq!(texts, ["stale", "new"]);
     assert!(!stale.exists());
     assert!(fresh.exists());
+}
+
+/// What was claimed is deleted when its caller says it is stored, and not before
+/// (ADR-050). A caller that could not store it drops the claim: the lines stay on
+/// disk and a later drain reads them again. The spool used to be deleted as soon as
+/// it was read.
+#[test]
+fn a_claim_keeps_its_lines_until_it_is_released() {
+    let (_d, p) = setup();
+    let dir = p.parent().unwrap().to_path_buf();
+    let files = || -> Vec<PathBuf> {
+        let mut all: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        all.sort();
+        all
+    };
+    let items: Vec<_> = (0..3).map(|i| obs(i, &format!("line {i}"))).collect();
+    for o in &items {
+        append_observation(&p, o).unwrap();
+    }
+
+    // Claimed and read: the spool is a claim file now, and the lines are in it.
+    let claimed = claim_spool(&p).unwrap();
+    assert_eq!(claimed.observations, items);
+    assert!(!p.exists());
+    let kept = files();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(fs::read_to_string(&kept[0]).unwrap().lines().count(), 3);
+
+    // The caller could not store them. Nothing is deleted.
+    drop(claimed);
+    assert_eq!(files(), kept);
+    // A drain that runs at once leaves another drain's fresh claim alone...
+    assert!(claim_spool(&p).unwrap().observations.is_empty());
+    assert_eq!(files(), kept);
+    // ...and one that runs later reads the same lines again.
+    let stale = PathBuf::from(format!(
+        "{}-{}-1-0",
+        processing_path(&p).display(),
+        Timestamp::now().unix_seconds() - 3600
+    ));
+    fs::rename(&kept[0], &stale).unwrap();
+    append_observation(&p, &obs(3, "line 3")).unwrap();
+    let again = claim_spool(&p).unwrap();
+    let texts: Vec<&str> = again.observations.iter().map(|o| o.text.as_str()).collect();
+    assert_eq!(texts, ["line 0", "line 1", "line 2", "line 3"]);
+    assert_eq!(
+        files().len(),
+        2,
+        "the old claim and the spool, both claimed"
+    );
+
+    // Stored this time: released, and nothing is left.
+    again.release().unwrap();
+    assert!(files().is_empty());
+    assert!(drain(&p).unwrap().observations.is_empty());
 }

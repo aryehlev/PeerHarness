@@ -59,4 +59,6 @@ pub use settings::{
     claude_user_settings_path, hooks_status, install_hooks, remove_hooks, remove_hooks_for,
     HookCommand, HookStatus, InstallReport, InstalledHook, RemoveReport, SettingsError,
 };
-pub use spool::{append_observation, drain, AppendOutcome, Drained, SpoolError};
+pub use spool::{
+    append_observation, claim_spool, drain, AppendOutcome, Claimed, Drained, SpoolError,
+};

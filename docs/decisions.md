@@ -3823,3 +3823,37 @@ day has room again.
 (`crates/ph-store/tests/repositories.rs`). The audit's script was run again with
 three nodes: after bob's hundred questions carol's one is `new` on alice's node and
 in her list, where it was `muted`.
+
+### The spool loses no line while the database is busy
+
+**Found.** A hook that cannot write to the database appends its observation to the
+spool, and the next `Stop` hook, `status` or `inbox` drains it. The drain renamed the
+spool to a claim file, read it, deleted it, and then inserted the lines one by one.
+Each insert waited for the lock on its own (250 ms in a hook), and a line that failed
+was appended to the spool again, where a full spool dropped it. With 200 lines in the
+spool and the database held by another process, one `Stop` hook stalled for as long
+as its 200 waits took. A hook has a time limit: killed after three seconds, it had
+put eight lines back, and the other 192 were gone, since the file they came from was
+deleted before the first insert.
+
+**Decision.** The drain takes the write lock of the database first
+(`detect::drain_spool`). While another process holds it, the drain waits once and
+leaves the spool as it is. With the lock in hand it claims the spool
+(`ph_observer::claim_spool`), inserts the lines in that one transaction, and deletes
+the claim files only after the commit (`Claimed::release`). If anything fails in
+between, nothing is stored and the claim files stay: a drain that runs a minute
+later reads them again, as it reads the claim file of a drain that crashed. Inserting
+is by observation id, so a line read twice is stored once.
+
+**Not changed.** A hook that opened the spool just before it was claimed can still
+append one line to the claimed file after it was read, and that line is lost (the
+crate documentation of `ph_observer::spool` says so). Appends are still dropped when
+the spool holds 5 MiB.
+
+**Tests.** `a_claim_keeps_its_lines_until_it_is_released`
+(`crates/ph-observer/tests/spool.rs`) and
+`a_drain_while_the_database_is_busy_leaves_the_spool_as_it_is`
+(`apps/peerharness/src/detect.rs`). By hand, with the two binaries: 200 lines in the
+spool, the database held by `sqlite3`, one `Stop` hook killed after three seconds.
+0.4.0 ran into the limit and left 8 of the 200 lines. This branch returned after
+0.77 seconds with every line in the spool, and stored all 200 once the lock was gone.

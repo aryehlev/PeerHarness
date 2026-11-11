@@ -113,6 +113,11 @@ database schema it writes.
     questions from one member used up the team's day. A held-back question also kept
     the same question from anyone else out of the inbox. The limits now count what
     was shown, and a held-back question takes no text.
+  * **A `Stop` hook could stall and lose what the hooks had set aside.** While
+    another process held the database, the hook deleted its spool file, waited for
+    the lock once for every line, and lost the lines it had not put back when it ran
+    into its time limit. It now waits once, leaves the spool alone while the
+    database is busy, and deletes a spool file only after its lines are stored.
 
 ## 0.4.0 (2026-11-11)
 
