@@ -2310,9 +2310,18 @@ fn finish_join(node: &Node, plan: &JoinPlan, lines: &[&str]) -> Result<(Value, T
 fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
     // A path that exists is a file or a directory. Anything else that reads as a
     // multiaddr is a member's node; with --internet, so is a peer id.
-    if !args.invite_file.exists() {
-        let text = args.invite_file.to_string_lossy().trim().to_owned();
-        let peer = crate::internet::peer_id_of(&text);
+    //
+    // Inside a coding agent's session the first sentence does not hold for an argument
+    // that reads as a peer id or as a multiaddr: it names a node, whether or not
+    // something of that name is on disk. A session can write files, and the `join_circle`
+    // tool looks for one of that name before it starts this command: a file that
+    // appears between its look and this one is not read as a circle's records.
+    let text = args.invite_file.to_string_lossy().trim().to_owned();
+    let peer = crate::internet::peer_id_of(&text);
+    let addr = text.parse::<ph_network::Multiaddr>().ok();
+    let names_a_node = peer.is_some() || addr.is_some();
+    let read_as_file = args.invite_file.exists() && !(names_a_node && in_agent_session());
+    if !read_as_file {
         if let (true, Some(peer)) = (args.internet, peer) {
             return join_from_peer(ctx, args, JoinFrom::Found(peer));
         }
@@ -2322,7 +2331,7 @@ fn join(ctx: &Ctx, args: CircleJoinArgs) -> Result<Report> {
                  network, or give the node's address",
             ));
         }
-        if let Ok(addr) = text.parse::<ph_network::Multiaddr>() {
+        if let Some(addr) = addr {
             return join_from_peer(ctx, args, JoinFrom::Addr(addr));
         }
     }

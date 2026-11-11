@@ -11,7 +11,9 @@
 //! * A note written inside a session is an agent's note whatever flags it was given:
 //!   labelled so, and counted against the cap on waiting agent notes.
 //! * The `join_circle` tool of `peerharness mcp` takes a peer id or an address, never a
-//!   path, so an agent cannot make a join read a file it wrote.
+//!   path, so an agent cannot make a join read a file it wrote. `circle join` itself
+//!   holds to that inside a session: what reads as a peer id or as an address is never
+//!   read as a file there, whatever is on disk under that name.
 //! * Without a terminal a consent step does not tell whoever reads the refusal to pass
 //!   `--yes`.
 //!
@@ -619,6 +621,81 @@ fn the_join_tool_takes_a_peer_id_or_an_address_and_never_a_path() {
         "team",
     ]);
     assert_eq!(joined["member"], "bob");
+}
+
+/// The tool looks whether its argument names something on disk and then starts `circle
+/// join`, which used to look again by itself: a file that a session created under the
+/// name of a peer id between the two looks was read as the circle's records. Inside a
+/// session `circle join` no longer asks the disk about an argument that reads as a peer
+/// id. Here the file is there all along, it is a real invitation, and the window would
+/// say yes: before the fix this node joined from it.
+#[test]
+fn inside_a_session_a_peer_id_is_never_read_as_a_file() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    let bob = Node::new(root, "bob");
+    let created = alice.run(&["circle", "create", "team"]);
+    let fingerprint = created["root_fingerprint"].as_str().unwrap().to_owned();
+    let invite = root.join("invite.jsonl");
+    let invite = invite.to_str().unwrap().to_owned();
+    let invited = alice.run(&[
+        "circle",
+        "invite",
+        &bob.status("device_key"),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--yes",
+        "--out",
+        &invite,
+    ]);
+    assert_eq!(invited["passed"], true);
+
+    // Bob allowed the circle steps, and his window would say yes.
+    bob.windows_on();
+    bob.answers("proceed");
+    // The invitation, under a name that reads as a peer id, in the directory the
+    // command runs in.
+    let peer_id = alice.status("peer_id");
+    std::fs::copy(&invite, bob.cwd.join(&peer_id)).unwrap();
+    let join = [
+        "circle",
+        "join",
+        peer_id.as_str(),
+        "--expect-fingerprint",
+        fingerprint.as_str(),
+        "--name",
+        "team",
+    ];
+    let join_yes = [&join[..], &["--yes"]].concat();
+
+    // --- Inside a session: the argument is a peer id, and without --internet that is
+    // a usage error. The file is not read, no window opens and nothing is joined.
+    for (by, args) in [
+        (By::Agent, &join[..]),
+        (By::Agent, &join_yes[..]),
+        (By::Marked, &join[..]),
+    ] {
+        let (code, json, printed) = bob.out(by, args);
+        assert_eq!(code, 2, "{args:?}: {printed}");
+        assert_eq!(json["error"]["kind"], "usage", "{printed}");
+        assert_eq!(
+            json["error"]["message"],
+            "that is a peer id: pass --internet to find its node over the public network, \
+             or give the node's address",
+            "{printed}"
+        );
+        assert!(bob.shown().is_empty(), "no window: {:?}", bob.shown());
+        assert_eq!(bob.run(&["status"])["circles"], json!([]));
+    }
+
+    // --- In his own terminal nothing changed: a path that exists is the file it
+    // names, whatever else its name reads as, and Bob joins with it.
+    let joined = bob.run(&join_yes);
+    assert_eq!(joined["member"], "bob");
+    assert!(bob.shown().is_empty());
 }
 
 /// consent-9. An agent whose shell sets neither variable is not marked as a session.
