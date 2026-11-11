@@ -521,6 +521,17 @@ fn seen_by(hub: &hub::Hub) -> usize {
     state.connected.len() + state.identified.len() + state.asked.len()
 }
 
+/// A child process that is stopped and reaped when the test is done with it, also when
+/// the test fails first.
+struct Reaped(Child);
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// `circle join <peer id> --internet` gets the charter it then asks about from a
 /// member's node: it joins the public network, looks the peer id up and dials it.
 /// Inside a session it used to do all of that before the confirmation refused it, also
@@ -537,8 +548,20 @@ fn a_join_nobody_can_be_asked_about_goes_nowhere_near_the_network() {
     let tmp = TempDir::new().unwrap();
     let node = Node::new(tmp.path()).on(&hub);
     node.init();
-    // A peer id to look for. Any will do: it names a key that is on no roll here.
-    let peer = hub.peer_id.to_string();
+    // A peer id to look for: a throwaway key that is on no roll here, and not the
+    // hub's own. A node that goes to the network has to ask the hub where that peer is,
+    // and the hub keeps every such question (`HubState::asked`). Looking for the hub
+    // itself would leave nothing lasting: the node knows that address already, so all
+    // the hub would see is a connection that comes and goes.
+    let sought = ph_network::peer_id_from_device_key(&common::device_key(77));
+    assert_ne!(sought, hub.peer_id);
+    let peer = sought.to_string();
+    let asked_for_it = |hub: &hub::Hub| -> bool {
+        hub.state()
+            .asked
+            .iter()
+            .any(|(_, key)| *key == sought.to_bytes())
+    };
     let join = |session: bool| {
         let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
         node.env(&mut cmd);
@@ -577,23 +600,46 @@ fn a_join_nobody_can_be_asked_about_goes_nowhere_near_the_network() {
     assert!(node.shown().is_empty());
 
     // --- The control: the same command in the person's own terminal does go to the
-    // network, so the hub would have seen the session's. (It finds no circle there;
-    // it is stopped as soon as the hub has seen it.)
-    let mut person = join(false)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    // network, so the hub would have seen the session's. It asks the hub for the peer,
+    // which nobody knows; the command would go on looking for some seconds and then
+    // say so, and is stopped here once the hub has the question. Should it end before
+    // the hub was asked, the test fails at once with what the command printed.
+    let said = tmp.path().join("the-persons-join.out");
+    let to_file = || {
+        Stdio::from(
+            std::fs::File::options()
+                .create(true)
+                .append(true)
+                .open(&said)
+                .unwrap(),
+        )
+    };
+    let mut person = Reaped(
+        join(false)
+            .stdout(to_file())
+            .stderr(to_file())
+            .spawn()
+            .unwrap(),
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while seen_by(&hub) == 0 {
+    while !asked_for_it(&hub) {
+        if let Some(status) = person.0.try_wait().unwrap() {
+            // It has ended. The question may have arrived in the same moment.
+            assert!(
+                asked_for_it(&hub),
+                "the person's join ended ({status}) before the hub was asked for the peer:\n{}",
+                std::fs::read_to_string(&said).unwrap_or_default()
+            );
+            break;
+        }
         assert!(
             std::time::Instant::now() < deadline,
-            "the person's join never reached the network"
+            "the person's join never asked the network for the peer:\n{}",
+            std::fs::read_to_string(&said).unwrap_or_default()
         );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    let _ = person.kill();
-    let _ = person.wait();
+    drop(person);
     assert_eq!(node.run(&["status"])["circles"], json!([]));
     runtime.block_on(hub.stop());
 }
