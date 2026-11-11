@@ -302,6 +302,13 @@ const AMENDMENT_CHANGED: &str =
      rules in force changed on this node while you read. Nothing was signed. Run the command \
      again.";
 
+/// The refusal of `proposal adopt` when the rule it showed is no longer the rule of
+/// that name. Names nothing a member wrote.
+const RULE_CHANGED: &str =
+    "the rule changed while it was being confirmed: what you were shown is no longer the \
+     rule in force, and nothing was installed on your confirmation. `peerharness rule list` \
+     shows the rule as it is now.";
+
 /// Why this node cannot say what an amendment changes. (A proposal is stored only once
 /// the charter it names is here, so this is a damaged store, not an everyday case.)
 const NO_NAMED_CHARTER: &str = "this node does not hold the charter that amendment names";
@@ -882,29 +889,34 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
         key_before_window(&node, "installing the rule", asks_in_window(&node.config))?;
         confirm_or_window(&ctx.out, &preview, yes, "installing the rule", &node.config)?;
     }
-    // The confirmation is for this proposal: for the text that was shown, and for no
-    // other rule that has the name by the time the rules are applied.
+    // The confirmation is for this proposal: for the text that was shown. The store can
+    // have changed while the owner read (a sync, an import): when the rule of that
+    // name is another one now, or none, nothing is installed on that yes, and the
+    // command says so with a refusal, as `rule opt-in` does.
+    let still_the_rule = |node: &Node| -> Result<bool> {
+        let (_, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
+        Ok(rules
+            .get(&name)
+            .is_some_and(|r| r.proposal_id() == p.event_id()))
+    };
+    if !still_the_rule(&node)? {
+        return Err(refused(RULE_CHANGED));
+    }
+    // `apply_rules` reads the rules once more and counts the confirmation for this
+    // proposal only, so a rule that takes the name in the instant between is not
+    // installed on it either. That is looked at afterwards.
     let settled = governance::settle(
         &node,
         &circle,
         &governance::user_installer()?,
         &[p.event_id()],
     )?;
-    // The store can have changed while the owner read (a sync, an import): is the rule
-    // of that name still the one they were shown?
-    let (_, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
-    let still = rules
-        .get(&name)
-        .is_some_and(|r| r.proposal_id() == p.event_id());
+    if !still_the_rule(&node)? {
+        return Err(refused(RULE_CHANGED));
+    }
     let installed = settled.applied.installed.contains(&name);
     let mut t = Text::new();
-    if !still {
-        t.line(format!(
-            "Rule {name} changed while it was being confirmed: what you were shown is no \
-             longer the rule in force, and your confirmation was not used for anything \
-             else. `peerharness rule list` shows it as it is now."
-        ));
-    } else if installed {
+    if installed {
         t.line(format!("Installed rule {name}."));
     } else {
         t.line(format!(
@@ -916,7 +928,6 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
         json!({
             "skill_name": name,
             "installed": installed,
-            "changed_while_confirming": !still,
         }),
         t.finish(),
     ))

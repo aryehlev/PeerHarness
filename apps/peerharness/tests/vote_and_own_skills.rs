@@ -996,11 +996,18 @@ fn a_yes_to_one_text_does_not_install_another_that_took_its_name_meanwhile() {
     assert_eq!(carol.rule(name)["proposal_id"], second.as_str());
 
     // Her click was for the first text. Nothing is installed: not the first, which is
-    // no longer the rule, and not the second, which she never saw.
-    assert!(out.status.success(), "{printed}");
+    // no longer the rule, and not the second, which she never saw. The command says so
+    // as a refusal, so that nothing that follows it takes the rule for installed.
+    assert_eq!(out.status.code(), Some(3), "{printed}");
     let report: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["installed"], false, "{report}");
-    assert_eq!(report["changed_while_confirming"], true, "{report}");
+    assert_eq!(report["error"]["kind"], "refused", "{report}");
+    assert_eq!(
+        report["error"]["message"],
+        "the rule changed while it was being confirmed: what you were shown is no longer \
+         the rule in force, and nothing was installed on your confirmation. `peerharness \
+         rule list` shows the rule as it is now.",
+        "{report}"
+    );
     assert!(
         !carol.skill_file(name).exists(),
         "installed after a yes to another text:\n{}",
