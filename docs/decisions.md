@@ -4050,3 +4050,29 @@ a line in the inbox: nothing is kept, installed or shared without its owner's ye
 (`apps/peerharness/tests/session_gates.rs`). The audit's two scripts were run again:
 60 notes at once left exactly 20 in four runs out of four, and the import was refused
 with the cap full, the inbox holding the 20 notes and nothing else.
+
+### An invitation shows the scopes it is signed with
+
+**Found.** `circle invite` takes `--scope` (default `*`) and signs an amendment that
+admits the new member with those scopes. Its preview named the member and the device
+fingerprint and not the scopes, in the terminal and in the window that a session's
+step opens. The command line of a step that a session starts is the agent's. An owner
+who clicked Proceed approved a roll entry of which they had seen two parts of three,
+and the one they had not seen decides what the new member reads and votes on. The
+ballot the other members get for the same amendment did show the scopes.
+
+**Decision.** The preview's line about the new member is the roll entry of the
+charter that was drafted, which is what gets signed, in the form the ballot uses
+(`amendment::entry_line`): `admit bob (device 6dd8-…, scopes docs, team/backend) to
+the roll of charter 1`. The tool `invite` of `peerharness mcp` takes no scope and
+still admits with `*`.
+
+**Not changed.** The window's sentence about what the device's holder gets ("a vote
+in the circle, and can read its proposals and ballots") is the same for every scope.
+It says the most a member can get, so it overstates for a member with fewer scopes.
+
+**Tests.** `an_invitation_shows_the_scopes_it_is_signed_with`
+(`apps/peerharness/tests/agent_windows.rs`): the terminal's preview, the window, and
+the roll after Proceed carry the same scopes. The two tests that quoted the line were
+changed with it. The audit's script was run again: the window says `scopes
+secret-only`, and that is what the roll holds.

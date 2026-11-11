@@ -542,9 +542,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   on after previewing every step it allows: proposing to admit a member, a ballot on an
   amendment that admits one member and changes nothing else, and joining a circle.
   Windows that were turned on before these steps existed do not cover them. The window
-  shows the device fingerprint or the root fingerprint and the whole charter, taken
-  from the signed content and not from a title, and says to check it with the other
-  person. Inside a session `circle invite` writes no file with the circle's records.
+  shows the device fingerprint and the scopes the new member would get, or the root
+  fingerprint and the whole charter, taken from the signed content and not from a
+  title, and says to check it with the other person. (Until ADR-051 the preview of
+  `circle invite` did not name the scopes, in a window or in the terminal.) Inside a session `circle invite` writes no file with the circle's records.
   Removing a member, leaving, changing the rules of the vote, devices, revoking and
   every other ballot on the charter still refuse inside a session.
 * **The MCP server (ADR-038).** `peerharness mcp` offers an agent a fixed list of tools.

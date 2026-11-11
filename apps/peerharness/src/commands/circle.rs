@@ -329,6 +329,14 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     let next = admit_member(&current.content, &rules, entry)
         .map_err(|e| usage(format!("cannot propose that admission: {e}")))?;
     let need = current.content.rules.pass.need(current.content.roll.len());
+    // What the preview says about the new member is read from the charter that was
+    // drafted, which is what gets signed: the device and the scopes (ADR-051). The
+    // scopes come from the command line, and inside a session that is the agent's.
+    let admitted = next
+        .roll
+        .iter()
+        .find(|e| e.member == args.member)
+        .ok_or_else(|| anyhow!("the drafted charter does not hold the new member"))?;
 
     // A file with the circle's records is the person's own step (`events export`): inside
     // an agent's session none is written, and asking for one there is refused.
@@ -338,12 +346,12 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     }
     let mut preview = format!(
         "This puts an amendment of {circle} to the vote and casts your approval:\n  \
-         admit {member} (device {fp}) to the roll of charter {seq}\n  \
+         admit {member} {entry} to the roll of charter {seq}\n  \
          it passes with {need} of {n} member approval(s); yours is one\n\
          An approval cannot be withdrawn.",
         circle = safe(&circle.name),
         member = args.member,
-        fp = device.fingerprint(),
+        entry = crate::amendment::entry_line(admitted),
         seq = current.seq,
         n = current.content.roll.len(),
     );

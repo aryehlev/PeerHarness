@@ -321,7 +321,7 @@ fn scope_list(scopes: &[Scope]) -> String {
 }
 
 /// A roll entry in one line: `(device 1234-..., scopes *)`.
-fn entry_line(entry: &RollEntry) -> String {
+pub(crate) fn entry_line(entry: &RollEntry) -> String {
     format!(
         "(device{} {}, scopes {})",
         plural(entry.devices.len()),

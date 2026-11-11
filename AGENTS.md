@@ -182,7 +182,10 @@ stop, leave the feature disabled, and document the blocker.
 * Inside a session no command writes a circle's records to a file: that is `events
   export`, in the person's terminal. A window that asks about a device or a circle
   takes what it shows from the signed content (the amendment, the charter), never from
-  a title or any other text a member wrote.
+  a title or any other text a member wrote. It shows every part of a roll entry that
+  the step signs: `circle invite` names the new member's scopes beside the device,
+  read from the charter it drafted (ADR-051). An option of a command that changes what
+  is signed is shown in that command's preview.
 * Inside a session `export --local` is refused as well, on standard output as to a
   file, and `init` refuses the plaintext keystore and the weak key-file profile
   (`fast-insecure-test`, ADR-051), whether a flag or an existing

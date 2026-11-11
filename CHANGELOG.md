@@ -145,6 +145,9 @@ database schema it writes.
     candidates that looked like the owner's own corrections. The limit is now counted
     and applied in one step, and `observe import` and `observe demo` are refused
     inside a session.
+  * **An invitation did not show the scopes it gave.** `circle invite --scope ...`
+    asked its owner about a member and a device, in the terminal and in a window, and
+    signed the scopes without showing them. The preview now names them.
 
 ## 0.4.0 (2026-11-11)
 

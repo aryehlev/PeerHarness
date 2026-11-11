@@ -528,6 +528,67 @@ fn every_other_decision_still_needs_the_terminal() {
     assert_eq!(node.proposals().len(), 2);
 }
 
+/// An admission is signed with the scopes its command line names, and inside a session
+/// that is the agent's command line. The preview named the member and the device and
+/// not the scopes (ADR-051): the owner approved a member whose rights they were not
+/// shown. Window and terminal show them now, read from the drafted charter.
+#[test]
+fn an_invitation_shows_the_scopes_it_is_signed_with() {
+    let tmp = TempDir::new().unwrap();
+    let alice = Node::new(&tmp.path().join("alice"));
+    let bob = Node::new(&tmp.path().join("bob"));
+    alice.run(&["circle", "create", "team"]);
+    alice.windows_on();
+    let bob_key = bob.device_key();
+    let invite = [
+        "circle",
+        "invite",
+        bob_key.as_str(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--scope",
+        "team/backend",
+        "--scope",
+        "docs",
+    ];
+    // The charter keeps a member's scopes sorted, and the preview is read from it.
+    let line = format!(
+        "admit bob (device {}, scopes docs, team/backend) to the roll of charter 1",
+        bob.fingerprint()
+    );
+
+    // In the owner's terminal: the preview is printed, and without an answer nothing
+    // is signed.
+    let out = alice.bare(By::Person).args(invite).output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(printed.contains(&line), "{printed}");
+    assert_eq!(alice.roll(), ["alice"]);
+
+    // In a window, when the agent's session starts the step.
+    alice.answers("declined", 0);
+    assert!(alice.refused(&invite).contains("declined in the window"));
+    let window = alice.shown().pop().unwrap();
+    assert!(window.contains(&line), "{window}");
+    assert_eq!(alice.roll(), ["alice"]);
+
+    // What the window showed is what is signed.
+    alice.answers("proceed", 0);
+    let (code, _, printed) = alice.agent(&invite);
+    assert_eq!(code, 0, "{printed}");
+    assert!(alice.shown().pop().unwrap().contains(&line));
+    let members = alice.run(&["circle", "members", "--circle", "team"]);
+    let roll = members["charter"]["roll"].as_array().unwrap();
+    let entry = roll.iter().find(|e| e["member"] == "bob").unwrap();
+    assert_eq!(entry["scopes"], serde_json::json!(["docs", "team/backend"]));
+}
+
 #[test]
 fn inviting_joining_and_admitting_are_asked_in_a_window() {
     let tmp = TempDir::new().unwrap();
@@ -594,7 +655,7 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     assert!(window.starts_with("Your coding agent started this step."));
     assert!(window.contains("This puts an amendment of team to the vote and casts your approval:"));
     assert!(window.contains(&format!(
-        "admit bob (device {}) to the roll of charter 1",
+        "admit bob (device {}, scopes *) to the roll of charter 1",
         bob.fingerprint()
     )));
     assert!(window.contains("Check the device with bob first"));
