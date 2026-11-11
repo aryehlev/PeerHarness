@@ -20,8 +20,8 @@ database schema it writes.
 
 A check of 0.4.0 before any tag found defects, and the changes below fix some of them
 (ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). A review of those fixes
-found more, and so did a second and a third review. What was changed for them is in
-the same lists. Several change what a command prints, asks or accepts.
+found more, and so did a second, a third and a fourth review. What was changed for
+them is in the same lists. Several change what a command prints, asks or accepts.
 
 **What a voter is shown**
 
@@ -110,13 +110,19 @@ the same lists. Several change what a command prints, asks or accepts.
   request from a node that lacked a rule listed that rule by id, which brought a rule
   back into force that had been repealed since.
 * A second `circle leave` on a machine that already left is no longer a usage error.
-  It makes the request when the first run did not, after its own preview and
-  confirmation, and is refused inside a session. If you are off the roll, or your
-  request is on record, it says so and signs nothing.
+  It first tries again, with no key, to remove a rule the circle installed that the
+  first run could not remove, and prints what it did ("removed rule <name>", or the
+  line for a rule that still cannot be removed or for a copy you edited). Then it
+  makes the request when the first run did not, after its own preview and
+  confirmation. Inside a session it is refused before anything is removed. If you
+  are off the roll, or your request is on record, it says so and signs nothing.
 * A request is on record when a proposal under the charter in force is exactly the
   removal your node would ask for now: your own, or a member's `circle remove`. A
   first `circle leave` looks for one as well, so leaving again after `--undo` makes
-  no second request. A proposal that takes you off the roll and changes anything
+  no second request. It looks once more after the key is unlocked: if exactly that
+  removal arrived while you read or typed your passphrase, it signs no second one
+  and ends with "No request to take you off the roll was made by this run: one is
+  on record already". A proposal that takes you off the roll and changes anything
   else is not your request: `circle leave` names it ("Proposal <id> on record also
   takes you off the roll, and changes more than that"), and shows and makes your
   own.
@@ -125,10 +131,34 @@ the same lists. Several change what a command prints, asks or accepts.
   `proposal_refused`, `off_the_roll` or `request_on_record`), also on the first run
   of a member who is already off the roll, which uses no key. With
   `request_on_record` it has the `proposal_id` and the count of the request on
-  record.
+  record. A second run has `removed_rules`, `not_removed_rules` and
+  `kept_edited_rules` like the first.
 * `circle leave --undo` says in its preview whether a request to take you off the
   roll is on record, and names it. It no longer says that one stays on record when
   none was made.
+
+**When your key does not unlock**
+
+* `rule opt-out` and `proposal refuse` change your machine before any key is asked
+  for. Where a vote had passed on your node without its result being signed (an
+  import while the key was locked leaves that), they asked for the key first, and
+  with a key that did not unlock they failed with the rule still installed. Now the
+  rule is removed first. The key is asked for afterwards, and only when there is
+  something to sign. If it does not unlock, the command still exits 0 and says that
+  what the node could sign for the circle was not signed and is signed the next time
+  the circle is settled with the key unlocked. `rule opt-in` installs what you
+  confirmed in the same order. `--json` of the three has `device_key_locked`.
+* `rule opt-out --announce` and `rule opt-in --announce` with a key that does not
+  unlock report what they did on your machine and then end with exit 3 and "nothing
+  was announced: the device key could not be unlocked, and a stance is signed with
+  it. What was changed on this machine stands. Run the command again to put it on
+  the record." Before, they ended with the key error and exit 1, and did not say
+  what had been done.
+* `proposal create` unlocks the key directly after your confirmation, before it
+  saves the rule to your library and marks your note as proposed. With a key that
+  does not unlock it fails as before (exit 1), and the note and the library are as
+  they were. Before, `status` counted the note as proposed although nothing had been
+  signed.
 
 **What a vote may do to your own skills**
 
@@ -159,7 +189,14 @@ the same lists. Several change what a command prints, asks or accepts.
   circle and its opt-out. Your own skill that holds a rule in that project, and a
   copy you installed yourself of a rule that lives elsewhere, are still yours to
   take out. Before, nothing was refused in a project, and a repeal could later
-  remove a skill you had installed yourself.
+  remove a skill you had installed yourself. In your user directory every copy with
+  the text of a rule you follow is refused, also one you installed yourself while
+  the rule lives in a project.
+* `skills uninstall` refuses nothing for a circle you left on this machine (`circle
+  leave`), or for a rule that does not bind you because you are not in its
+  electorate. A copy of such a rule's text is yours to take out, in a project and in
+  your user directory. Before, it answered with the opt-out of a circle you had
+  left.
 * A skill that a vote installed and that cannot be removed when it should go (its
   files cannot be changed) is no longer forgotten. The commands that print removed
   rules print "rule <name> could not be removed: its files could not be changed. It
@@ -168,7 +205,20 @@ the same lists. Several change what a command prints, asks or accepts.
   `not_removed_rules` beside `removed_rules` (`circle leave`, `remove`, `amend`,
   `device`) and `not_removed` beside `removed` (`events import`, `sync`, `rule
   opt-out`, `rule opt-in`). While the old copy of a rule whose scope you moved cannot
-  be removed, the rule is not installed in the new place.
+  be removed, the rule is not installed in the new place. A second `circle leave`
+  tries the removal again too. When you take such a leftover out yourself with
+  `skills uninstall`, the record that a vote installed it goes with it: the same
+  text installed by you afterwards is yours, and no later vote removes it.
+* A copy that a vote installed and that you edited is still never deleted, and is no
+  longer left without a word. The commands that print removed rules say once: "rule
+  <name>: the copy a vote installed was edited on this machine and was left in
+  place. `peerharness skills uninstall <name> --allow-modified` takes it out." For a
+  copy in a project the command it names has `--scope project` and the directory to
+  run it in. Where you still follow a rule with that text and the copy is in your
+  user directory, the line says that `skills uninstall` refuses it, and inside a
+  coding agent's session it names no command. The JSON has `kept_edited_rules`
+  beside `not_removed_rules` and `kept_edited` beside `not_removed`. The copy is
+  yours from then on.
 * Your yes to `rule opt-in` and to `proposal adopt` counts for the rule you were shown
   and for no other rule of that name. If a newer proposal took the name while you
   read, `rule opt-in` changes nothing and leaves your opt-out in place, and `proposal
@@ -184,9 +234,18 @@ the same lists. Several change what a command prints, asks or accepts.
   report that is printed for another reason does not repeat it. A hold that a
   peer's push created is printed when the push is settled, as a line of its own
   ("rule <name> is in force and is held on this machine: …"), with or without
-  `--sync-every` and also by a daemon that never dials that peer. A rule that waits
-  for your confirmation is still printed on every tick while it waits. A one-shot
-  `sync` lists every hold. `sync --json` lists a held rule once.
+  `--sync-every` and also by a daemon that never dials that peer. A one-shot `sync`
+  lists every hold. `sync --json` lists a held rule once.
+* A running daemon also says what else a peer's push changed for you, each as a
+  line of its own: "installed rule <name> for your agent" and "removed rule <name>"
+  when it happens, a copy you edited that was left in place, and on the founder's
+  node "an amendment passed; issued charter <n>". A rule that the push left waiting
+  for your confirmation is printed once per proposal per run, with the command that
+  confirms it, and a skill that could not be removed once per name. Before, a
+  daemon that only answers printed none of these. With a report of its own exchange
+  a daemon lists a waiting rule every time, as before. If more than 64 such reports
+  wait to be printed, further ones are dropped, and an "installed" or "removed"
+  line in them is not printed: `peerharness rule list` shows what is installed.
 
 **What runs inside a session**
 

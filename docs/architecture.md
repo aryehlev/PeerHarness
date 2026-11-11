@@ -54,8 +54,12 @@ governance (section 10, ADR-012 onwards).
   a settle found held (10.9), each hold once for as long as it runs: with the report
   of its own exchange that first has it, or, for a settle that the request handler
   ran after a peer's push, as soon as the handler hands it over on a bounded queue
-  (`runtime::held_queue`, ADR-042). Only holds pass through that queue, and every
-  other command that starts the transport prints nothing for a push.
+  (`runtime::changes_queue`, ADR-042). That queue carries what each such settle
+  changed for the owner (`runtime::Changes`), and the daemon prints it as lines of
+  their own (`net::pushed_report`): a rule installed or removed and a charter issued
+  when it happens, a rule that waits for the owner once per proposal, a skill that
+  could not be removed once per name. A batch that finds the queue full is dropped.
+  Every other command that starts the transport prints nothing for a push.
 * Not built: a delivery loop, an outbox drain, gossip. Events reach a peer when someone
   syncs. Nothing in the CLI writes the `outbox` table yet.
 * Local-only CLI commands open the store, and the keystore when they need it, directly.
@@ -902,7 +906,11 @@ what one rule in force means on this machine, in this order:
   no such record and is never removed by a vote (ADR-023). A removal that fails keeps
   the record: the skill is reported (`Applied::not_removed`) and the next settle tries
   again, and while the old copy of a rule whose scope was moved cannot be removed, the
-  rule is not installed in the new place (ADR-042).
+  rule is not installed in the new place (ADR-042). A recorded copy that was edited
+  since is left in place and reported once (`Applied::kept_edited`); its record is
+  cleared, so it is the owner's from then on. `skills uninstall` clears the record of
+  a copy it removes (`governance::voted_install`), so that a record never outlives
+  the copy it stands for.
 * **A vote installs over nothing it did not install** (ADR-042). Before `adoption_step`
   is asked, and before the bundle is fetched, `apply_rules` checks each rule that binds
   the node and is not opted out with `governance::held`. A rule is held when a skill
@@ -932,19 +940,27 @@ what one rule in force means on this machine, in this order:
   the preview was built from, and that very draft signed through `propose_under` and
   approved (`circle::request_removal`, `circle::sign_removal`). Nothing is drafted
   anew after the answer. No request is made when the device key does not unlock,
-  when the node changed meanwhile, when the proposal is refused or when the member is
-  off the roll: the report says so (`requested`, `reason`). A second `circle leave`
-  on a machine that left (`circle::leave_again`) makes the request when none is on
-  record, after a preview and a confirmation of its own, and is checked like every
-  other draft. A node that is voted off learns of it from a peer (section 7, the
+  when the node changed meanwhile, when exactly this removal arrived on record
+  meanwhile (`sign_removal` reads `removals_on_record` again after `as_drafted`),
+  when the proposal is refused or when the member is off the roll: the report says so
+  (`requested`, `reason`). A second `circle leave` on a machine that left
+  (`circle::leave_again`) first runs `governance::apply_on` again, which removes
+  what the first run could not and uses no key. It then makes the request when none
+  is on record, after a preview and a confirmation of its own, and is checked like
+  every other draft. A node that is voted off learns of it from a peer (section 7, the
   removal notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step). `rule
   list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force. `rule
-  opt-out` is immediate and unasked. `rule opt-in` is a confirmation step in the
-  terminal (ADR-042): its preview has the rule's exact text, the scanner's findings and
-  the install directory, and its confirmation counts as the one an install needs, so the
-  rule is installed in mode `ask` too. `proposal adopt` confirms a rule that is waiting
+  opt-out` is immediate and unasked, and waits for no key: it and `proposal refuse`
+  change the machine with `apply_on` first, and unlock the device key only afterwards
+  and only when `settle` has something to sign (`governance::settle_machine_first`). A
+  key that does not unlock leaves that unsigned and is no error. `rule opt-in` is a
+  confirmation step in the terminal (ADR-042): its preview has the rule's exact text,
+  the scanner's findings and the install directory, and its confirmation counts as
+  the one an install needs, so the rule is installed in mode `ask` too, in the same
+  order: the machine first, a key only afterwards. `proposal adopt` confirms a rule
+  that is waiting
   for the owner. Both refuse a held rule before they ask. Both pass their confirmation
   on as the id of the proposal that was shown (`Owner::confirmed`), and `apply_rules`
   counts it for that proposal only: a rule that took the name while the owner read does
@@ -953,11 +969,16 @@ what one rule in force means on this machine, in this order:
   looks again after the confirmation and once more after the rules were applied, and
   refuses when the rule of that name is no longer the proposal it showed; where the
   shown text was installed before the name was taken, the refusal says so. `skills
-  uninstall` refuses a skill installed with the text of a rule in force that its
-  owner has not opted out of, in the user's skills directory and in a project, except
-  where that skill is itself what holds the rule in that directory
-  (`Held::OwnSkill`). In a project the refusal is for a rule that lives in the
-  project the command runs in, and for a copy that `rule_installs` records there.
+  uninstall` refuses a skill installed with the text of a rule in force that its owner
+  follows, in the user's skills directory and in a project, except where that skill is
+  itself what holds the rule in that directory (`Held::OwnSkill`). The owner follows a
+  rule that binds this node, that they have not opted out of, in a circle they have
+  not left on this machine (`circles.left_at`). In a project the refusal is for a rule
+  that lives in the project the command runs in, and for a copy that `rule_installs`
+  records there. In the user's directory it is for every copy with that text, also one
+  the owner installed while the rule is placed in a project. `proposal create` unlocks
+  the device key directly after the confirmation, before it saves the rule to the
+  library and marks the candidate as proposed.
   `circle invite`, `remove`, `leave`, `amend` (the thresholds, binding or advisory)
   and `device add` / `remove` propose amendments. `circle revoke` is the emergency of
   10.8. Not written yet: asking once before switching to `follow` when an amendment
