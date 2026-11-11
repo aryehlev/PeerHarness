@@ -539,6 +539,42 @@ fn a_vote_neither_replaces_nor_removes_a_rule_the_owner_kept_for_themselves() {
     assert_eq!(code, 3, "{msg}");
     assert!(msg.contains("a vote never replaces it"), "{msg}");
     assert_eq!(carol.skill_text(name), carols_before);
+    // Her agent's session reads the same refusal, the same list and the same line after
+    // an import. It is told whose choice this is, and is given no command to make it
+    // with: taking her rule out asks nobody, and would be followed by the circle's.
+    let in_session = |args: &[&str]| -> String {
+        let out = carol
+            .bare()
+            .args(args)
+            .env("CLAUDECODE", "1")
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let again = bob.export(root, "passed-again");
+    for args in [
+        vec!["proposal", "adopt", &proposal],
+        vec!["rule", "list"],
+        vec!["events", "import", &again],
+    ] {
+        let read = in_session(&args);
+        assert!(
+            read.contains("a vote never replaces it"),
+            "{args:?}: {read}"
+        );
+        assert!(read.contains("the owner's choice"), "{args:?}: {read}");
+        assert!(
+            read.contains("take nothing out yourself"),
+            "{args:?}: {read}"
+        );
+        assert!(!read.contains("skills uninstall"), "{args:?}: {read}");
+        assert!(!read.contains("proposal adopt "), "{args:?}: {read}");
+    }
+    assert_eq!(carol.skill_text(name), carols_before);
 
     // --- Bob takes his own rule out. Now the circle's rule is installed for him.
     assert_eq!(bob.rule(name)["held"], "held_own_skill");
@@ -655,6 +691,97 @@ fn no_rule_can_take_the_name_of_peerharness_own_skill() {
     assert_eq!(inbox["candidates"][0]["status"], "local_review");
     node.run(&["review", &old, "--reject"]);
     assert!(!node.windows_opened());
+}
+
+/// The way out of a hold that the owner is told is one that works, in each state the
+/// hold is told in.
+///
+/// * Her own copy of the rule's text, which she then edited by hand: `skills uninstall`
+///   used to refuse it as "a rule in force", before it looked at `--allow-modified`.
+/// * A rule she had opted out of, held when she opts back in: the second step named was
+///   `proposal adopt`, which does not install an opted-out rule.
+#[test]
+fn the_way_out_of_a_hold_is_one_that_works() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    alice.run(&["circle", "create", "team"]);
+    // In a circle of one her approval passes a rule.
+    let pass = |candidate: &str| -> String {
+        let proposal =
+            id_of(&alice.run(&["proposal", "create", candidate, "--circle", "team", "--yes"]));
+        let voted = alice.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        assert_eq!(voted["passed"], true, "{voted}");
+        proposal
+    };
+
+    // --- She keeps a rule for herself, and then the circle passes that very text. It
+    // stays her copy, and the rule counts as in place.
+    let name = "small-commits";
+    let noted = alice.note(name, "Keep commits small.");
+    alice.run(&["keep", &noted, "--yes"]);
+    let proposal = pass(&noted);
+    assert_eq!(alice.rule(name)["state"], "installed");
+    assert_eq!(alice.rule(name)["held"], Value::Null);
+    let passed = alice.skill_text(name);
+    // She edits her copy. Now it is another text, and the rule is held.
+    std::fs::write(
+        alice.skill_file(name),
+        format!("{passed}\nExcept on Fridays.\n"),
+    )
+    .unwrap();
+    assert_eq!(alice.rule(name)["held"], "held_own_skill");
+    let listed = alice.reads(&["rule", "list"]);
+    assert!(
+        listed.contains(&format!("(`peerharness skills uninstall {name}`)")),
+        "{listed}"
+    );
+    // The first step it names: an edited file needs the flag for edited files, and
+    // with it the copy goes. It is not refused as a rule in force.
+    let (code, msg) = alice.fail(&["skills", "uninstall", name]);
+    assert_eq!(code, 3, "{msg}");
+    assert!(msg.contains("--allow-modified"), "{msg}");
+    assert!(!msg.contains("is a rule in force"), "{msg}");
+    alice.run(&["skills", "uninstall", name, "--allow-modified"]);
+    assert!(!alice.skill_file(name).exists());
+    // The second step: the rule as it passed.
+    let adopted = alice.reads(&["proposal", "adopt", &proposal, "--yes"]);
+    assert!(
+        adopted.contains(&format!("Installed rule {name}.")),
+        "{adopted}"
+    );
+    assert_eq!(alice.skill_text(name), passed);
+    assert_eq!(alice.rule(name)["held"], Value::Null);
+    // What a vote installed and she follows is still not taken out this way.
+    let (code, msg) = alice.fail(&["skills", "uninstall", name]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains("is a rule in force"), "{msg}");
+    assert_eq!(alice.skill_text(name), passed);
+
+    // --- A rule of her own, and a circle's rule of the same name that she opted out
+    // of. Opting back in is refused while hers is in the way, and the second step it
+    // names is the opt-in itself.
+    let name = "branch-names";
+    let own = alice.note(name, "Name branches after the issue they close.");
+    alice.run(&["keep", &own, "--yes"]);
+    let theirs = alice.note(name, "Branch names are at most twenty characters.");
+    pass(&theirs);
+    assert_eq!(alice.rule(name)["held"], "held_own_skill");
+    alice.run(&["rule", "opt-out", name, "--circle", "team"]);
+    let (code, msg) = alice.fail(&["rule", "opt-in", name, "--circle", "team", "--yes"]);
+    assert_eq!(code, 3, "{msg}");
+    assert!(
+        msg.contains(&format!("then `peerharness rule opt-in {name} --circle")),
+        "{msg}"
+    );
+    assert!(!msg.contains("proposal adopt"), "{msg}");
+    assert_eq!(alice.rule(name)["opted_out"], true);
+    // Both steps, as named.
+    alice.run(&["skills", "uninstall", name]);
+    let back = alice.reads(&["rule", "opt-in", name, "--circle", "team", "--yes"]);
+    assert!(back.contains("installed it for your agent"), "{back}");
+    assert!(alice.skill_text(name).contains("twenty characters"));
+    assert!(!alice.windows_opened());
 }
 
 /// A yes is for the text that was shown. Carol is asked before a rule is installed. A

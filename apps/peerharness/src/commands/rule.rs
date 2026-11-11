@@ -282,7 +282,9 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
     let preview = match rule {
         Some(rule) => {
             // Told before anything is asked: a held rule is not installed by a yes.
-            governance::refuse_held(node, circle, rule)?;
+            // Once the hold is gone, this command is the one to run again: an
+            // opted-out rule is not installed by `proposal adopt`.
+            governance::refuse_held(node, circle, rule, governance::Then::OptIn)?;
             let bundle = crate::library::bundle_store(&node.home)
                 .get(&rule.bundle_digest())
                 .map_err(|_| {

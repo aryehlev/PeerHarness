@@ -829,7 +829,7 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
         .filter(|r| r.proposal_id() == p.event_id())
         .ok_or_else(|| refused("that rule is not in force here, so there is nothing to install"))?;
     // A rule that is held is not installed whatever is confirmed: say so before asking.
-    governance::refuse_held(&node, &circle, rule)?;
+    governance::refuse_held(&node, &circle, rule, governance::Then::Adopt)?;
     let bundles = crate::library::bundle_store(&node.home);
     let bundle = bundles
         .get(&rule.bundle_digest())

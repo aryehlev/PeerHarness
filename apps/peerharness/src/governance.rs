@@ -1154,25 +1154,64 @@ pub struct HeldRule {
     pub why: Held,
 }
 
+/// What installs a held rule once the skill in its way is out: the second step of the
+/// way out that [`HeldRule::explain`] names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Then {
+    /// Confirming the install (`proposal adopt`). In mode `follow` the next settle
+    /// installs the rule by itself as well.
+    Adopt,
+    /// Following the rule again (`rule opt-in`): the owner had opted out, and an
+    /// opted-out rule is not installed by `proposal adopt`.
+    OptIn,
+}
+
 impl HeldRule {
     /// Why the rule is held and what its owner can do, as one sentence or two.
     /// `circle` is the circle's name as the owner types it after `--circle`. Nothing
     /// else in the text was written by a member.
+    ///
+    /// Inside a coding agent's session the text says whose choice it is and names no
+    /// command: the way out of a hold is to take a skill out of the owner's agent, and
+    /// `skills uninstall` asks nobody.
     pub fn explain(&self, circle: &str) -> String {
+        self.explain_to(circle, Then::Adopt, crate::consent::in_agent_session())
+    }
+
+    /// [`Self::explain`], with the second step of the way out given, and with who reads
+    /// it: the person, or a coding agent's session (`in_session`).
+    pub fn explain_to(&self, circle: &str, then: Then, in_session: bool) -> String {
         let name = &self.name;
         match self.why {
             Held::ReservedName => format!(
                 "{name} is the name of PeerHarness's own skill, and no vote installs \
                  anything under that name. It was not installed."
             ),
-            Held::OwnSkill => format!(
+            Held::OwnSkill if in_session => format!(
                 "a skill named {name} that no vote of this circle installed is already \
-                 there, with another text, and a vote never replaces it. To follow the \
-                 rule, take yours out (`peerharness skills uninstall {name}`), then \
-                 `peerharness proposal adopt {id}`. To keep yours: `peerharness rule \
-                 opt-out {name} --circle {circle}`.",
-                id = crate::output::short_id(&self.proposal_id),
+                 there, with another text, and a vote never replaces it. Which of the two \
+                 this machine follows is the owner's choice, made in their own terminal \
+                 (`peerharness rule list` shows it to them). Tell them so, and take \
+                 nothing out yourself."
             ),
+            Held::OwnSkill => {
+                let second = match then {
+                    Then::Adopt => format!(
+                        "`peerharness proposal adopt {}`",
+                        crate::output::short_id(&self.proposal_id)
+                    ),
+                    Then::OptIn => {
+                        format!("`peerharness rule opt-in {name} --circle {circle}` again")
+                    }
+                };
+                format!(
+                    "a skill named {name} that no vote of this circle installed is already \
+                     there, with another text, and a vote never replaces it. To follow the \
+                     rule, take the one that is there out (`peerharness skills uninstall \
+                     {name}`), then {second}. To keep the one that is there: `peerharness \
+                     rule opt-out {name} --circle {circle}`."
+                )
+            }
         }
     }
 
@@ -1617,11 +1656,13 @@ pub fn rule_target(
 }
 
 /// Refuses a step that would install `rule` while it is held on this node ([`held`]):
-/// the owner is told why before they are asked to confirm anything.
+/// the owner is told why before they are asked to confirm anything. `then` is the step
+/// that is being refused, which is the one to take again once the hold is gone.
 pub fn refuse_held(
     node: &crate::node::Node,
     circle: &CircleRow,
     rule: &ph_governance::Rule,
+    then: Then,
 ) -> Result<()> {
     let id = &circle.circle_id;
     let target = rule_target(&node.store, id, &user_installer()?, rule.scope())?;
@@ -1637,7 +1678,7 @@ pub fn refuse_held(
         "rule {} is held on this machine: {}",
         held.name,
         // An error names no circle: the owner knows which one they asked about.
-        held.explain("<circle>")
+        held.explain_to("<circle>", then, crate::consent::in_agent_session())
     )))
 }
 
@@ -2744,6 +2785,57 @@ mod tests {
         assert!(store.rule_installs(&circle).unwrap().is_empty());
         // Her other skill was never part of any of it.
         assert_eq!(machine.text("commit-style").unwrap(), hers);
+    }
+
+    /// What a held rule's owner is told. The person gets the way out, with the step
+    /// that works in their state as its second half. A coding agent's session gets no
+    /// command at all: the way out takes a skill out of the owner's agent, and
+    /// `skills uninstall` asks nobody.
+    #[test]
+    fn the_way_out_of_a_hold_is_told_to_the_person_and_not_to_a_session() {
+        let held = HeldRule {
+            name: "commit-style".to_owned(),
+            proposal_id: EventId::from_digest(Digest::sha256(b"p")),
+            why: Held::OwnSkill,
+        };
+        let id = crate::output::short_id(&held.proposal_id);
+        let person = held.explain_to("team", Then::Adopt, false);
+        assert!(person.contains("a vote never replaces it"), "{person}");
+        assert!(
+            person.contains(&format!(
+                "take the one that is there out (`peerharness skills uninstall commit-style`), \
+                 then `peerharness proposal adopt {id}`."
+            )),
+            "{person}"
+        );
+        assert!(person.contains("`peerharness rule opt-out commit-style --circle team`"));
+        // An opted-out rule is not installed by `proposal adopt`: the second step is
+        // the one that was refused.
+        let opted_out = held.explain_to("team", Then::OptIn, false);
+        assert!(
+            opted_out.contains("then `peerharness rule opt-in commit-style --circle team` again"),
+            "{opted_out}"
+        );
+        assert!(!opted_out.contains("proposal adopt"), "{opted_out}");
+
+        for then in [Then::Adopt, Then::OptIn] {
+            let session = held.explain_to("team", then, true);
+            assert!(session.contains("a vote never replaces it"), "{session}");
+            assert!(session.contains("the owner's choice"), "{session}");
+            assert!(session.contains("take nothing out yourself"), "{session}");
+            for command in ["skills uninstall", "proposal adopt", "opt-in", "opt-out"] {
+                assert!(!session.contains(command), "{command}: {session}");
+            }
+        }
+        // The reserved name has no way out to tell anyone.
+        let reserved = HeldRule {
+            why: Held::ReservedName,
+            ..held
+        };
+        assert_eq!(
+            reserved.explain_to("team", Then::Adopt, false),
+            reserved.explain_to("team", Then::OptIn, true)
+        );
     }
 
     /// A record that a vote installed something does not make whatever is there now

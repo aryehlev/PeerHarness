@@ -141,7 +141,7 @@ struct Shared {
 }
 
 /// What settling circles on the node thread changed, for the report.
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct Changes {
     pub installed: Vec<String>,
     pub removed: Vec<String>,
@@ -155,22 +155,48 @@ pub struct Changes {
     pub signed: usize,
 }
 
+/// A held rule comes with the name of its circle, which is no text for a log: `Debug`
+/// prints how many there are.
+impl std::fmt::Debug for Changes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Changes")
+            .field("installed", &self.installed)
+            .field("removed", &self.removed)
+            .field("asking", &self.asking)
+            .field("held", &self.held.len())
+            .field("charters_issued", &self.charters_issued)
+            .field("signed", &self.signed)
+            .finish()
+    }
+}
+
 impl Changes {
     fn absorb(&mut self, other: Changes) {
         self.installed.extend(other.installed);
         self.removed.extend(other.removed);
-        self.asking.extend(other.asking);
-        self.held.extend(other.held);
+        // A circle is settled more than once in one exchange, and a rule that waits or
+        // is held is found each time: it is reported once.
+        for waiting in other.asking {
+            if !self.asking.contains(&waiting) {
+                self.asking.push(waiting);
+            }
+        }
+        for held in other.held {
+            if !self.held.contains(&held) {
+                self.held.push(held);
+            }
+        }
         self.charters_issued.extend(other.charters_issued);
         self.signed += other.signed;
     }
 
-    /// Whether anything visible to the owner happened.
+    /// Whether anything visible to the owner happened. A rule that is held is a state,
+    /// not something that happened: a sync that exchanged nothing does not report it
+    /// again, tick after tick (`rule list` shows it at any time).
     pub fn is_empty(&self) -> bool {
         self.installed.is_empty()
             && self.removed.is_empty()
             && self.asking.is_empty()
-            && self.held.is_empty()
             && self.charters_issued.is_empty()
     }
 }
@@ -1341,4 +1367,81 @@ pub async fn internet_info(run: &Running) -> Option<crate::daemon_info::Internet
             .map(Multiaddr::to_string)
             .collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ph_core::{Digest, EventId};
+
+    fn held(name: &str, circle: &str) -> (governance::HeldRule, String) {
+        (
+            governance::HeldRule {
+                name: name.to_owned(),
+                proposal_id: EventId::from_digest(Digest::sha256(name.as_bytes())),
+                why: governance::Held::OwnSkill,
+            },
+            circle.to_owned(),
+        )
+    }
+
+    /// One exchange settles a circle twice. A rule that is held, or that waits, is
+    /// found both times and reported once.
+    #[test]
+    fn a_rule_that_is_held_or_waits_is_reported_once_per_exchange() {
+        let waiting = governance::Waiting {
+            name: "small-commits".to_owned(),
+            proposal_id: EventId::from_digest(Digest::sha256(b"small-commits")),
+            why: "ask_mode",
+        };
+        let settled = || Changes {
+            asking: vec![waiting.clone()],
+            held: vec![held("style", "team")],
+            ..Changes::default()
+        };
+        let mut report = Changes::default();
+        report.absorb(settled());
+        report.absorb(settled());
+        assert_eq!(report.asking, std::slice::from_ref(&waiting));
+        assert_eq!(report.held, [held("style", "team")]);
+        // The same name in another circle is another rule.
+        report.absorb(Changes {
+            held: vec![held("style", "other")],
+            ..Changes::default()
+        });
+        assert_eq!(report.held.len(), 2);
+    }
+
+    /// A daemon prints a peer's report when something happened. A hold alone is not
+    /// something that happened, so a tick that exchanged nothing stays silent.
+    #[test]
+    fn a_hold_alone_is_no_news() {
+        let only_held = Changes {
+            held: vec![held("style", "team")],
+            ..Changes::default()
+        };
+        assert!(only_held.is_empty());
+        let installed = Changes {
+            installed: vec!["style".to_owned()],
+            ..Changes::default()
+        };
+        assert!(!installed.is_empty());
+    }
+
+    /// A circle's name is no text for a log.
+    #[test]
+    fn debug_of_changes_names_no_circle() {
+        let changes = Changes {
+            held: vec![held("style", "skunkworks-7")],
+            ..Changes::default()
+        };
+        let printed = format!("{changes:?}");
+        assert!(!printed.contains("skunkworks-7"), "{printed}");
+        assert!(printed.contains("held: 1"), "{printed}");
+        let report = SyncReport {
+            changes,
+            ..SyncReport::default()
+        };
+        assert!(!format!("{report:?}").contains("skunkworks-7"));
+    }
 }

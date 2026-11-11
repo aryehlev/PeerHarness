@@ -383,17 +383,26 @@ fn uninstall(node: &Node, a: &SkillsUninstallArgs) -> Result<Report> {
     // import: the way to keep it off this machine is the opt-out.
     if scope == SkillScope::User {
         for circle in node.store.circles()? {
-            let (_, rules, _) = crate::governance::rule_set(&node.store, &circle.circle_id)?;
-            let in_force = rules
-                .get(&s.name)
-                .is_some_and(|r| r.bundle_digest() == digest);
-            if in_force && !node.store.is_rule_opted_out(&circle.circle_id, &s.name)? {
-                return Err(usage(format!(
-                    "{} is a rule in force in {}. To keep it off this machine, opt out: \
-                     `peerharness rule opt-out {} --circle {}`",
-                    s.name, circle.name, s.name, circle.name
-                )));
+            let id = &circle.circle_id;
+            let (_, rules, _) = crate::governance::rule_set(&node.store, id)?;
+            let Some(rule) = rules.get(&s.name).filter(|r| r.bundle_digest() == digest) else {
+                continue;
+            };
+            if node.store.is_rule_opted_out(id, &s.name)? {
+                continue;
             }
+            // Not when that rule is held because of this very skill (a copy of the
+            // rule's text that the owner kept and then edited): taking it out is the
+            // way out the hold names, and what follows is the rule as it passed.
+            let target = crate::governance::rule_target(&node.store, id, &installer, rule.scope())?;
+            if crate::governance::held(&node.store, id, &target, rule)?.is_some() {
+                continue;
+            }
+            return Err(usage(format!(
+                "{} is a rule in force in {}. To keep it off this machine, opt out: \
+                 `peerharness rule opt-out {} --circle {}`",
+                s.name, circle.name, s.name, circle.name
+            )));
         }
     }
     let gone = installer
