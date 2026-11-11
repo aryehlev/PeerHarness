@@ -1196,7 +1196,13 @@ intended.
 * **A device key does not prove human identity.** A credential binds roles to a device
   key, and the roll binds device keys to a member handle. Whether a key belongs to the
   person you think rests on the invitation process, an out-of-band fingerprint check and
-  the members who voted to admit that handle. One person's several devices are one vote,
+  the members who voted to admit that handle. The key itself is public and may travel by
+  chat or through an agent. What that does not protect is which key arrives: one that
+  was exchanged on the way admits its holder under the invitee's name. So every preview
+  that admits a device, in a window or in the terminal, names it by its fingerprint and
+  says to compare that with the one `peerharness status` shows on the invitee's machine,
+  by phone or in person. PeerHarness cannot make that comparison and does not know
+  whether it was made. One person's several devices are one vote,
   but nothing in the protocol stops a circle from admitting the same person under two
   handles. A key can be shared, and a device can be re-enrolled with a new key.
 * **The root-key holder is still a single point of authority in v0.** It alone can cut

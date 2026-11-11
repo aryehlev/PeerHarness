@@ -17,6 +17,8 @@
 //!   apart what another made;
 //! * `circle invite` has no option that does nothing, and its help names the file it
 //!   writes;
+//! * the preview of an invitation and of a further device says to check the device
+//!   with its owner, by the fingerprint that `status` shows them;
 //! * a circle name that is not on this node is answered with where the names are, and
 //!   with no circle's name;
 //! * `circle mode ask` does not list an installed rule as waiting, and a rule that does
@@ -339,6 +341,72 @@ fn the_project_page_tells_machines_what_it_shows_its_readers() {
         .find_map(|line| line.trim().strip_prefix("KEY: "))
         .expect("site.yml names no key");
     assert_eq!(read(&format!("site/{key}.txt")), key, "the key file");
+}
+
+/// A device key is not a secret, and it reaches the member who invites by chat. One that
+/// was exchanged on the way admits whoever holds it under the invitee's name. So the
+/// preview of an invitation and of a further device says, in a terminal as in a window,
+/// to check the device with the person it is said to belong to, and names the
+/// fingerprint that `status` shows on their machine (ADR-037). The line about one's
+/// agent is the window's alone, and taking a device off names no check.
+#[test]
+fn an_invitation_says_to_check_the_device_with_its_owner() {
+    let tmp = TempDir::new().unwrap();
+    let alice = Node::new(tmp.path(), "alice");
+    let bob = Node::new(tmp.path(), "bob");
+    let laptop = Node::new(tmp.path(), "laptop");
+    alice.ok(&["circle", "create", "team"]);
+    let of = |node: &Node| -> (String, String) {
+        let status = node.json(&["status"]);
+        (
+            status["device_key"].as_str().unwrap().to_owned(),
+            status["fingerprint"].as_str().unwrap().to_owned(),
+        )
+    };
+
+    // A second device of Alice's, while she is the only member: its holder would sign
+    // with her vote.
+    let (key, fingerprint) = of(&laptop);
+    // What its owner reads out is on their screen without `--json` too.
+    assert!(laptop.ok(&["status"]).contains(&fingerprint));
+    let out = alice.out(&["circle", "device", "add", &key, "--circle", "team", "--yes"]);
+    let shown = said(&out);
+    assert!(out.status.success(), "{shown}");
+    assert!(
+        shown.contains(&format!("add device {fingerprint} to ")),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("first: `peerharness status` on that machine shows the same fingerprint."),
+        "{shown}"
+    );
+    assert!(shown.contains("'s vote in team"), "{shown}");
+    let out = alice.out(&[
+        "circle", "device", "remove", &key, "--circle", "team", "--yes",
+    ]);
+    let shown = said(&out);
+    assert!(out.status.success(), "{shown}");
+    assert!(!shown.contains("Check the device"), "{shown}");
+
+    // An invitation.
+    let (key, fingerprint) = of(&bob);
+    let out = alice.out(&[
+        "circle", "invite", &key, "--circle", "team", "--member", "bob", "--yes",
+    ]);
+    let shown = said(&out);
+    assert!(out.status.success(), "{shown}");
+    assert!(
+        shown.contains(&format!("admit bob (device {fingerprint})")),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(
+            "Check the device with bob first: `peerharness status` on their machine shows \
+             the same fingerprint. Whoever holds that device gets a vote in team"
+        ),
+        "{shown}"
+    );
+    assert!(!shown.contains("choose Cancel"), "{shown}");
 }
 
 /// Help that says what is true: Windows is not supported, so `init` does not name it as

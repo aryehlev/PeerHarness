@@ -32,7 +32,7 @@ use. The other words:
 | Word | What it is | Who gives it to whom |
 |---|---|---|
 | charter, roll | The charter is the signed document every member holds: the thresholds of the vote and the roll, the list of members with their device keys | Every node holds a copy and checks it for itself |
-| device key | Your node's public key (`ed25519:…`). It is not a secret | Whoever wants to join sends theirs to the member who invites them, by any channel |
+| device key | Your node's public key (`ed25519:…`). It is not a secret | Whoever wants to join sends theirs to the member who invites them, by any channel, and reads them its fingerprint by phone or in person: `status` shows both |
 | peer id | Your node's name on the network (`12D3…`), made from the same key | The member who invited sends theirs to the person joining, by any channel |
 | root fingerprint | A short form of the team's root key (`8e8d-…`). It is how you know a team is the one you mean | The founder tells it to the person joining, by phone or in person, apart from the rest |
 
@@ -250,6 +250,9 @@ peerharness init
 peerharness circle create team
 
 # Alice proposes admitting Bob's device. She is the only member, so her approval passes it.
+# The preview names the device by its fingerprint. Bob reads her the one that
+# `peerharness status` shows him, and she goes on only if they are the same: a key that
+# was exchanged on its way to her would admit someone else under his name.
 # (It also writes peerharness-team-events.jsonl into the current directory, for joining
 # without a network. Not needed here.)
 peerharness circle invite <bob's device key> --circle team --member bob

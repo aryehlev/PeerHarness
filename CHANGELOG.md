@@ -9,6 +9,12 @@ database schema it writes.
 
 ## Unreleased
 
+* `circle invite` and `circle device add` say in the terminal what the invitation
+  window already said: check the device with the person it is said to belong to,
+  whose `peerharness status` shows the same fingerprint, before the yes. The README
+  and the project page now say that a device key is public, so it can go by chat and
+  to your agent, and that the invitee reads you their fingerprint before you click
+  Proceed (ADR-037). The protocol and the database schema are unchanged.
 * PeerHarness connects Codex, opencode, Pi, Google Antigravity and DeepSeek Harness
   besides Claude Code. `peerharness setup` connects each one it finds, after a preview
   of its own, and `peerharness watch <agent> --install | --remove | --status` does it

@@ -1294,7 +1294,8 @@ written down directly.
   every step it allows): `circle invite`, `proposal vote` on an amendment that admits
   one member and changes nothing else, and `circle join`. They go through
   `consent::confirm_circle_or_window`. The admission windows name the device
-  fingerprint from the amendment and tell the owner to check it with the invitee; the
+  fingerprint from the amendment and tell the owner to check it with the invitee, and
+  so do the terminal's previews of `circle invite` and `circle device add`; the
   join window is the terminal's preview, with the root fingerprint and the whole
   charter. Inside a session `circle invite` writes no events file and refuses `--out`.
   `circle join <peer id or address>` fetches the charter before it can show it, so

@@ -114,18 +114,23 @@ single rule on your own machine.
 
 Dana wants to join acme. She sets PeerHarness up as above, and then:
 
-1. **Dana:** "What is my PeerHarness device key?" She sends you the key.
-2. **You:** "Invite Dana to acme. Her device key is ed25519:…" A window names Dana's
-   device. After Proceed your agent keeps your node reachable and tells you what Dana
-   needs: your node's peer id, by any channel, and the team's root fingerprint, by
-   phone or in person.
+1. **Dana:** "What is my PeerHarness device key, and its fingerprint?" She sends you
+   the key. It is a public key, not a secret: chat is fine, and so is giving it to
+   your agent.
+2. **You:** "Invite Dana to acme. Her device key is ed25519:…" A window shows the
+   fingerprint of the device you would admit. Before you click, have Dana read hers
+   to you, by phone or in person. If they match, Proceed. Your agent then keeps your
+   node reachable and tells you what Dana needs: your node's peer id, by any channel,
+   and the team's root fingerprint, which you tell her the same way.
 3. **Dana:** "Join the team. The peer id is 12D3…, the fingerprint is 8e8d-…" A window
    shows the fingerprint and who is in the team. Proceed joins.
 
-The fingerprint is how Dana knows the team is yours, so it travels apart from the
-rest. From then on a rule needs both of your votes, and so does admitting a third
-member, asked in the same kind of window. PeerHarness's own word for a team is a
-*circle*.
+The two fingerprints are how each of you knows the other. Hers tells you that the
+device you admit is Dana's and not one that was put in its place on the way: whoever
+holds it gets a vote. The team's tells her that the team is yours. So both are said
+aloud, apart from what travels by chat. From then on a rule needs both of your votes,
+and so does admitting a third member, asked in the same kind of window. PeerHarness's
+own word for a team is a *circle*.
 
 A few steps are still done in a terminal: they are [at the bottom](#from-a-terminal).
 

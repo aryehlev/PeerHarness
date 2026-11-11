@@ -786,6 +786,24 @@ fingerprint together was left out on purpose, because the fingerprint is meant t
 travel by another channel. (An MCP server that gives an agent these steps as tools
 followed in ADR-038.)
 
+**Added on 2026-11-12: the check is asked for in the terminal and in the README too.**
+The invitation window has said since this ADR to check the device with the invitee.
+The same command in a terminal did not: its preview named the fingerprint and no more,
+and `circle device add`, which is never asked in a window, likewise. The README told
+the inviter to give the key to their agent and to click Proceed in "a window that
+names Dana's device", with no word on what to do with the name. A device key is
+public, so giving it to an agent or sending it by chat discloses nothing. The risk is
+the other one: a key that was exchanged on its way, in the chat or by whatever wrote
+it into the conversation, admits its holder under the invitee's name, with a vote and
+the circle's records. Only the fingerprint, compared by a channel the key did not
+take, shows that. So the terminal's previews of `circle invite` and `circle device
+add` now carry the sentence the window has (`circle::device_check`, and for a
+member's further device `circle::further_device_check`), and the README, the project
+page and `docs/terminal.md` say that the key is not a secret and that the invitee
+reads their fingerprint to the inviter before the yes. The window's text is unchanged
+and keeps its last line about the agent, which a terminal does not need. Nothing
+enforces the comparison: a person who skips it is not stopped, as before.
+
 ## ADR-038: An MCP server gives an agent the same steps as tools
 With ADR-037 an agent can take its user through setting up a team, by running commands
 it read in a skill. That works where the agent has a shell, reads skills and picks the
