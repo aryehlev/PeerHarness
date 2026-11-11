@@ -164,7 +164,9 @@ answers in its "Questions" section stand a second time in the structured data in
 head: change both, and the same test says so when they differ. `site/llms.txt` says
 the same in plain text, and `site/sitemap.xml` has the page's address. The file named
 with 32 hexadecimal digits is the IndexNow key that `site.yml` sends: it is public,
-leave it where it is. Put no rating, review or count of users in the structured data.
+leave it where it is. `site/google4db5dfdafaf7ce0f.html` is the file by which Google
+Search Console knows the page as its owner's: the page stays verified there only
+while it is served. Put no rating, review or count of users in the structured data.
 
 ### Pull requests
 
