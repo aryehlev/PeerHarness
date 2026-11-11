@@ -16,8 +16,9 @@
 //! What is put to the vote is what was shown. Each of these commands drafts from the
 //! charter and the rules in force it read before its preview. After the owner answered
 //! it unlocks the key, checks that the node still holds exactly that, and signs, in
-//! that order ([`put_amendment`]). `leave` is no exception: its first run changes the
-//! machine and then signs the request it previewed, or none.
+//! that order, with the check and the signatures in one transaction of the store
+//! ([`put_amendment`]). `leave` is no exception: its first run changes the machine and
+//! then signs the request it previewed, or none.
 //!
 //! Two commands act on this machine alone. `mode` is the owner's standing choice about
 //! rules that pass. `revoke` is the founder's emergency brake for a lost device: it cuts
@@ -295,7 +296,6 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
             .collect::<Result<Vec<_>>>()?
     };
     let id = circle.circle_id;
-    let now = node.now();
     let (current, rules, _) = governance::rule_set(&node.store, &id)?;
     holds_every_carried_rule(&rules)?;
     let entry = RollEntry::new(&args.member, vec![device], scopes);
@@ -337,34 +337,18 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     // The yes was for an admission to the charter the preview named. What this node
     // holds can have changed while the owner read (a sync, an import), and unlocking
     // the key can ask for a passphrase, which is one more wait. So the key is unlocked
-    // first and the node is checked after, with no prompt between the check and the
-    // signature: when the node changed, nothing is signed.
-    let key = node.device()?.signing_key();
-    let drafted = governance::as_drafted(&node.store, key, &id, &current, &rules)?;
+    // first and the node is checked after, in the transaction that signs: when the
+    // node changed, nothing is signed (`put_amendment`).
+    let from = Drafted {
+        current: &current,
+        rules: &rules,
+    };
     let title = format!("Admit {}", args.member);
-    let proposal = governance::propose_under(
-        &node.store,
-        key,
-        &id,
-        &drafted,
-        NewProposal {
-            scope: &Scope::all(),
-            title: &title,
-            summary: "",
-            action: ProposalAction::Amend { next },
-        },
-        now,
-    )?;
-    governance::cast_vote(
-        &node.store,
-        key,
-        &proposal,
-        VoteDecision::Approve,
-        None,
-        now,
-    )?;
-    let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
-    let (_, tally) = governance::count(&node.store, &proposal)?;
+    let Put {
+        proposal,
+        settled,
+        tally,
+    } = put_amendment(&node, &circle, &title, next, &from)?;
 
     let mut t = Text::new();
     t.line(format!(
@@ -579,6 +563,14 @@ struct Drafted<'a> {
 /// or changed the rules in force while the owner read or typed a passphrase, this
 /// refuses after the key is unlocked and before it signs, and nothing is stored
 /// ([`governance::as_drafted`]).
+///
+/// The order is: the key, then one transaction that holds the check, the proposal and
+/// the proposer's approval, then settling. Unlocking can ask for a passphrase, so it
+/// comes before the transaction, in which nothing waits for anyone. Nobody else writes
+/// to the store inside it ([`governance::atomically`]), so no ballot and no charter
+/// arrives between the check and the two signatures, and an approval that cannot be
+/// stored leaves no proposal either. Settling changes the owner's skills and comes
+/// after the commit.
 fn put_amendment(
     node: &Node,
     circle: &CircleRow,
@@ -586,33 +578,34 @@ fn put_amendment(
     next: CharterContent,
     from: &Drafted<'_>,
 ) -> Result<Put> {
-    let proposal = propose_amendment(node, circle, title, next, from)?;
-    approve_and_settle(node, circle, proposal)
+    let key = node.device()?.signing_key();
+    let now = node.now();
+    let proposal = governance::atomically(&node.store, key, |store| {
+        let proposal = propose_amendment(store, key, &circle.circle_id, title, next, from, now)?;
+        approve(store, key, &proposal, now)?;
+        Ok(proposal)
+    })?;
+    settled(node, circle, proposal)
 }
 
-/// The first half of [`put_amendment`]: unlocks the key, checks that the draft is still
-/// what this node would draft, and signs the proposal, in that order. Unlocking can ask
-/// for a passphrase, so it comes before the check: no prompt lies between the check
-/// and the signature. An error here means that nothing was stored.
+/// The check and the first signature of [`put_amendment`], for the inside of its
+/// transaction: that the draft is still what this node would draft, then the proposal
+/// under the charter it was drafted from. `key` is the unlocked device key. An error
+/// here means that nothing was stored.
 fn propose_amendment(
-    node: &Node,
-    circle: &CircleRow,
+    store: &Store,
+    key: &SigningKey,
+    circle: &CircleId,
     title: &str,
     next: CharterContent,
     from: &Drafted<'_>,
+    now: Timestamp,
 ) -> Result<ProposalView> {
-    let key = node.device()?.signing_key();
-    let drafted = governance::as_drafted(
-        &node.store,
-        key,
-        &circle.circle_id,
-        from.current,
-        from.rules,
-    )?;
+    let drafted = governance::as_drafted(store, key, circle, from.current, from.rules)?;
     governance::propose_under(
-        &node.store,
+        store,
         key,
-        &circle.circle_id,
+        circle,
         &drafted,
         NewProposal {
             scope: &Scope::all(),
@@ -620,22 +613,20 @@ fn propose_amendment(
             summary: "",
             action: ProposalAction::Amend { next },
         },
-        node.now(),
+        now,
     )
 }
 
-/// The second half of [`put_amendment`]: the proposer's approval of the amendment they
-/// just proposed, and what follows from it.
-fn approve_and_settle(node: &Node, circle: &CircleRow, proposal: ProposalView) -> Result<Put> {
-    let key = node.device()?.signing_key();
-    governance::cast_vote(
-        &node.store,
-        key,
-        &proposal,
-        VoteDecision::Approve,
-        None,
-        node.now(),
-    )?;
+/// The proposer's approval of the amendment they just proposed: signed in the same
+/// transaction as the proposal.
+fn approve(store: &Store, key: &SigningKey, proposal: &ProposalView, now: Timestamp) -> Result<()> {
+    governance::cast_vote(store, key, proposal, VoteDecision::Approve, None, now)?;
+    Ok(())
+}
+
+/// What follows from an amendment that was proposed and approved, after the
+/// transaction that stored both: settling the circle, and the count.
+fn settled(node: &Node, circle: &CircleRow, proposal: ProposalView) -> Result<Put> {
     let settled = governance::settle(node, circle, &governance::user_installer()?, &[])?;
     let (_, tally) = governance::count(&node.store, &proposal)?;
     Ok(Put {
@@ -771,8 +762,10 @@ enum NoRequest {
     /// or while the key was being unlocked. What the preview said about the request is
     /// not carried out on another state.
     Changed,
-    /// The proposal was refused when it was to be stored: the charter changed in the
-    /// instant after the check, or this node would not accept the event.
+    /// The proposal was refused when it was to be stored: this node would not accept
+    /// the event. (The sentence for it also names a charter that changed in the instant
+    /// after the check. Since the check and the signature are one transaction, that no
+    /// longer happens.)
     Refused,
     /// The member is no longer on the roll of the charter in force.
     OffTheRoll,
@@ -1001,10 +994,13 @@ fn plan_request(
 /// the reason is that one is on record ([`NoRequest::OnRecord`]).
 type NotRequested = (NoRequest, Option<Box<(ProposalView, Tally)>>);
 
-/// Signs the request a first `circle leave` previewed: the removal `next`, drafted from
-/// `from` before the owner was asked, under the charter it was drafted from. `key` is
-/// the unlocked device key, so no prompt lies between the checks here and the
-/// signature.
+/// Signs the request a first `circle leave` previewed, and its owner's approval of it:
+/// the removal `next`, drafted from `from` before the owner was asked, under the charter
+/// it was drafted from. `key` is the unlocked device key, so no prompt lies between the
+/// checks here and the signatures. The checks, the proposal and the approval are one
+/// transaction ([`governance::atomically`]): no other process writes to the store
+/// between a check and a signature, and an approval that cannot be stored leaves no
+/// proposal.
 ///
 /// The first check is the one every change to a charter gets
 /// ([`governance::as_drafted`]). When this node no longer holds what the preview was
@@ -1026,40 +1022,48 @@ fn sign_removal(
     from: &Drafted<'_>,
     now: Timestamp,
 ) -> Result<std::result::Result<ProposalView, NotRequested>> {
-    let drafted = match governance::as_drafted(store, key, circle, from.current, from.rules) {
-        Ok(drafted) => drafted,
-        Err(e) if exit_kind(&e) == ExitKind::Refused => return Ok(Err((NoRequest::Changed, None))),
-        Err(e) => return Err(e),
-    };
-    let me = DeviceKey::from_signing_key(key);
-    let on_record = removals_on_record(store, &me, from.current, Some(&next), member)?;
-    if let Some(found) = on_record.request {
-        return Ok(Err((NoRequest::OnRecord, Some(Box::new(found)))));
-    }
-    let title = format!("Remove {member}");
-    let signed = governance::propose_under(
-        store,
-        key,
-        circle,
-        &drafted,
-        NewProposal {
-            scope: &Scope::all(),
-            title: &title,
-            summary: "",
-            action: ProposalAction::Amend { next },
-        },
-        now,
-    );
-    match signed {
-        Ok(proposal) => Ok(Ok(proposal)),
-        Err(e) if exit_kind(&e) == ExitKind::Refused => Ok(Err((NoRequest::Refused, None))),
-        Err(e) => Err(e),
-    }
+    governance::atomically(store, key, |store| {
+        let drafted = match governance::as_drafted(store, key, circle, from.current, from.rules) {
+            Ok(drafted) => drafted,
+            Err(e) if exit_kind(&e) == ExitKind::Refused => {
+                return Ok(Err((NoRequest::Changed, None)))
+            }
+            Err(e) => return Err(e),
+        };
+        let me = DeviceKey::from_signing_key(key);
+        let on_record = removals_on_record(store, &me, from.current, Some(&next), member)?;
+        if let Some(found) = on_record.request {
+            return Ok(Err((NoRequest::OnRecord, Some(Box::new(found)))));
+        }
+        let title = format!("Remove {member}");
+        let signed = governance::propose_under(
+            store,
+            key,
+            circle,
+            &drafted,
+            NewProposal {
+                scope: &Scope::all(),
+                title: &title,
+                summary: "",
+                action: ProposalAction::Amend { next },
+            },
+            now,
+        );
+        let proposal = match signed {
+            Ok(proposal) => proposal,
+            Err(e) if exit_kind(&e) == ExitKind::Refused => {
+                return Ok(Err((NoRequest::Refused, None)))
+            }
+            Err(e) => return Err(e),
+        };
+        approve(store, key, &proposal, now)?;
+        Ok(Ok(proposal))
+    })
 }
 
 /// The request half of a first `circle leave`, after the machine was changed: unlocks
 /// the device key, then signs the removal the preview described and the owner's
-/// approval of it ([`sign_removal`]).
+/// approval of it ([`sign_removal`]), and settles.
 ///
 /// Nothing in here undoes the leave. A request that cannot be made is a reason in the
 /// report (`Err` of the inner result), and a later `circle leave` shows and makes it.
@@ -1074,6 +1078,7 @@ fn request_removal(
     let Ok(device) = node.device() else {
         return Ok(Err((NoRequest::KeyLocked, None)));
     };
+    // An error here took back whatever the transaction had stored: no request exists.
     let signed = sign_removal(
         &node.store,
         device.signing_key(),
@@ -1088,7 +1093,7 @@ fn request_removal(
         Ok(proposal) => proposal,
         Err(why) => return Ok(Err(why)),
     };
-    let put = approve_and_settle(node, circle, proposal).context(LEFT_AND_REQUESTED)?;
+    let put = settled(node, circle, proposal).context(LEFT_AND_REQUESTED)?;
     Ok(Ok(put))
 }
 

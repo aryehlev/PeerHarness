@@ -665,6 +665,31 @@ pub struct NewProposal<'a> {
     pub action: ph_protocol::ProposalAction,
 }
 
+/// Runs `f` in one write transaction of the store: everything it reads is what it
+/// writes on, and an error from it takes back everything it wrote.
+///
+/// A check after the owner's answer and the signature it allows are two reads of the
+/// store. Between them another process with a connection of its own (a running
+/// daemon's sync, an import in another terminal) could store a ballot or a charter:
+/// the check then held for a state the signature was no longer made on. Inside `f`
+/// nobody else writes ([`Store::transaction_with`]: `BEGIN IMMEDIATE` at the outermost
+/// level, a savepoint where a repository call or [`ingest`] opens its own), so a
+/// command puts its check and everything it signs on the strength of it in one `f`.
+///
+/// `unlocked` is the key `f` signs with. Nothing is done with it here. It is a
+/// parameter so that the key is unlocked before the transaction begins: unlocking can
+/// ask for a passphrase, and nothing in `f` may wait for a person. `f` shows no
+/// prompt and no window, reads no standard input, does not touch the network and does
+/// not settle a circle; while it runs, every other writer on this home waits.
+pub fn atomically<T>(
+    store: &Store,
+    unlocked: &SigningKey,
+    f: impl FnOnce(&Store) -> Result<T>,
+) -> Result<T> {
+    let _ = unlocked;
+    store.transaction_with(f)
+}
+
 /// Puts an `adopt` or a `repeal` proposal to the vote under the circle's current
 /// charter.
 ///
@@ -701,9 +726,12 @@ pub const CHARTER_CHANGED: &str =
 /// can store a newer charter while they read, and a draft of the older one signed under
 /// the newer one would undo whatever that one changed. So `drafted` is the digest of
 /// the charter the draft was built from: when the circle's current charter is another
-/// one, nothing is signed, and otherwise the proposal names `drafted` itself. A charter
-/// that arrives in the instant between this check and the signature leaves a proposal
-/// that names the earlier charter, which can no longer pass.
+/// one, nothing is signed, and otherwise the proposal names `drafted` itself.
+///
+/// A command calls this inside [`atomically`], after [`as_drafted`], so that no
+/// charter arrives between the check here and the signature. Called outside of one, a
+/// charter that arrives in that instant leaves a proposal that names the earlier
+/// charter, which can no longer pass.
 pub fn propose_under(
     store: &Store,
     key: &SigningKey,
@@ -733,7 +761,8 @@ pub fn propose_under(
 /// unlocking can ask for a passphrase on the terminal, and a prompt is a place where
 /// the node changes (a sync by a running daemon, an import from another terminal). The
 /// check therefore comes after the key is unlocked and before it signs, with no prompt
-/// between the two.
+/// between the two, and a command runs both in one transaction ([`atomically`]), so
+/// that no other process writes between them either.
 pub fn as_drafted(
     store: &Store,
     unlocked: &SigningKey,
@@ -2129,6 +2158,12 @@ pub(crate) mod tests {
     /// (device 2, every scope) and carol (device 3, only `team/backend`).
     pub(crate) fn node() -> (Store, CircleId, Timestamp) {
         let store = Store::open_in_memory().unwrap();
+        let (circle, now) = found(&store);
+        (store, circle, now)
+    }
+
+    /// Makes `store` the node that [`node`] describes.
+    fn found(store: &Store) -> (CircleId, Timestamp) {
         let now = Timestamp::now();
         store
             .set_identity(&ph_store::IdentityMetadata {
@@ -2165,7 +2200,7 @@ pub(crate) mod tests {
             })
             .unwrap();
         store.insert_charter(&charter, now).unwrap();
-        (store, circle, now)
+        (circle, now)
     }
 
     fn question(seed: u8, circle: &CircleId, scope: &str, text: &str, now: Timestamp) -> Vec<u8> {
@@ -4307,5 +4342,145 @@ pub(crate) mod tests {
         // and no stance to record about a rule that is not in force.
         repeal(&store, &circle, &second, later);
         assert!(!shown(&second));
+    }
+
+    /// A ballot signed by `seed`'s device on `proposal`, as raw bytes: what a peer
+    /// pushes or an events file holds.
+    fn ballot(seed: u8, proposal: &ProposalView, now: Timestamp) -> Vec<u8> {
+        EnvelopeBuilder::new(
+            proposal.circle_id(),
+            proposal.scope().clone(),
+            EventBody::Vote(VoteBody {
+                proposal_id: proposal.event_id(),
+                decision: VoteDecision::Approve,
+                rationale: None,
+            }),
+        )
+        .sign(&key(seed), now)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    /// The check after the owner's answer and the signatures it allows are one write
+    /// transaction (`atomically`). A running daemon and an import in another terminal
+    /// have connections of their own to the same file, and one of them used to be able
+    /// to commit between `as_drafted` and `propose_under`: a rule whose last approval
+    /// was stored in that instant was in force, was not in the draft's `carried`, and
+    /// the amendment that dropped it was signed, and approved by its proposer, under a
+    /// preview that said the rules stay as they are.
+    ///
+    /// No sleeps and no threads: the second connection does not wait (busy timeout 0),
+    /// so the write that used to slip in fails at once while the transaction is open,
+    /// and the same write succeeds after the commit.
+    #[test]
+    fn nobody_else_writes_between_a_check_and_the_signatures_it_allows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("peerharness.db");
+        let store = Store::open(&path).unwrap();
+        let (circle, now) = found(&store);
+        // A rule that lacks one approval. Bob's, which would put it in force, is what
+        // the other process is about to store.
+        let rule = adopt(&store, &circle, "*", now);
+        cast_vote(&store, &key(1), &rule, VoteDecision::Approve, None, now).unwrap();
+        let last_approval = ballot(2, &rule, now);
+        let other = Store::open_with_busy_timeout(&path, 0).unwrap();
+        let busy = |e: &anyhow::Error| {
+            e.downcast_ref::<ph_store::StoreError>()
+                .is_some_and(ph_store::StoreError::is_busy)
+        };
+
+        // Before the preview: no rule is in force, so the draft carries none.
+        let (shown, rules, _) = rule_set(&store, &circle).unwrap();
+        assert!(rules.is_empty());
+        let signed = atomically(&store, &key(1), |store| {
+            let drafted = as_drafted(store, &key(1), &circle, &shown, &rules)?;
+            // Between the check and the signature: the other process cannot store the
+            // ballot. It can still read, as a daemon that answers a peer does.
+            let refused = ingest(&other, &last_approval, None, now).unwrap_err();
+            assert!(busy(&refused), "{refused:?}");
+            assert_eq!(votes_for(&other, &rule.event_id())?.len(), 1);
+            let proposal = propose_under(
+                store,
+                &key(1),
+                &circle,
+                &drafted,
+                admission(&shown, "dave", 4),
+                now,
+            )?;
+            // Between the two signatures: the same.
+            let refused = ingest(&other, &last_approval, None, now).unwrap_err();
+            assert!(busy(&refused), "{refused:?}");
+            cast_vote(store, &key(1), &proposal, VoteDecision::Approve, None, now)?;
+            // Nothing of this is visible to the other connection before the commit.
+            assert_eq!(other.proposals(&circle)?.len(), 1, "the rule alone");
+            Ok(proposal)
+        })
+        .unwrap();
+
+        // After the commit the same write succeeds: the rule passes, and the amendment
+        // and its proposer's approval were signed on the state the check saw.
+        assert_eq!(
+            ingest(&other, &last_approval, None, now).unwrap(),
+            Ingest::Stored
+        );
+        assert_eq!(other.proposals(&circle).unwrap().len(), 2);
+        assert_eq!(votes_for(&other, &signed.event_id()).unwrap().len(), 1);
+        let (_, in_force, _) = rule_set(&store, &circle).unwrap();
+        assert_eq!(in_force.carried_ids(), [rule.event_id()]);
+        // A draft made now is checked against this state, and the old one is refused.
+        assert!(as_drafted(&store, &key(1), &circle, &shown, &rules).is_err());
+    }
+
+    /// Whatever a command signs inside `atomically` stands or falls together. A
+    /// proposal used to stay stored when its proposer's approval could not be: here
+    /// the ballot is signed by a device that is on no roll, which this node refuses.
+    #[test]
+    fn an_error_after_a_proposal_was_stored_leaves_no_proposal() {
+        let (store, circle, now) = node();
+        let first = current_charter(&store, &circle).unwrap();
+        let drafted = first.digest().unwrap();
+        let events = |store: &Store| store.event_ids_for_circle(&circle, now).unwrap().len();
+        let before = events(&store);
+
+        let failed = atomically(&store, &key(1), |store| {
+            let proposal = propose_under(
+                store,
+                &key(1),
+                &circle,
+                &drafted,
+                admission(&first, "dave", 4),
+                now,
+            )?;
+            assert_eq!(store.proposals(&circle)?.len(), 1, "stored inside");
+            cast_vote(store, &key(9), &proposal, VoteDecision::Approve, None, now)?;
+            Ok(proposal)
+        })
+        .unwrap_err();
+        assert_eq!(
+            crate::error::exit_kind(&failed),
+            crate::error::ExitKind::Refused,
+            "{failed}"
+        );
+        assert!(store.proposals(&circle).unwrap().is_empty());
+        assert_eq!(events(&store), before, "nothing of it was stored");
+
+        // Without the error both are stored, and the value comes back.
+        let signed = atomically(&store, &key(1), |store| {
+            let proposal = propose_under(
+                store,
+                &key(1),
+                &circle,
+                &drafted,
+                admission(&first, "dave", 4),
+                now,
+            )?;
+            cast_vote(store, &key(1), &proposal, VoteDecision::Approve, None, now)?;
+            Ok(proposal)
+        })
+        .unwrap();
+        assert_eq!(store.proposals(&circle).unwrap().len(), 1);
+        assert_eq!(votes_for(&store, &signed.event_id()).unwrap().len(), 1);
     }
 }

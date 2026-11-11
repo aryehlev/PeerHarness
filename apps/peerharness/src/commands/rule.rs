@@ -541,13 +541,24 @@ fn put_on_record(
         ));
     };
     let key = device.signing_key();
-    if !governance::rule_as_shown(
-        &node.store,
-        key,
-        &circle.circle_id,
-        name,
-        &rule.proposal_id(),
-    )? {
+    // The look and the stance are one transaction: no other process stores a rule of
+    // this name between them. `None` is a rule that changed: nothing was signed.
+    let announced = governance::atomically(&node.store, key, |store| {
+        if !governance::rule_as_shown(store, key, &circle.circle_id, name, &rule.proposal_id())? {
+            return Ok(None);
+        }
+        governance::announce_stance(
+            store,
+            key,
+            &circle.circle_id,
+            &rule,
+            stance,
+            reason,
+            node.now(),
+        )
+        .map(Some)
+    })?;
+    let Some(env) = announced else {
         // What was done on this machine stands, and is said first. The error after it
         // names nothing.
         ctx.out.note(done.text.trim_end());
@@ -556,16 +567,7 @@ fn put_on_record(
              what you were shown is no longer the rule in force. Run the command again to \
              see the rule as it is now.",
         ));
-    }
-    let env = governance::announce_stance(
-        &node.store,
-        key,
-        &circle.circle_id,
-        &rule,
-        stance,
-        reason,
-        node.now(),
-    )?;
+    };
     done.json["announced"] = json!(true);
     done.json["stance_id"] = json!(env.event_id);
     done.text.push_str(&format!(
@@ -636,27 +638,30 @@ fn repeal(
     // A repeal names the proposal it repeals, which was read before the preview. The
     // key first, then a look at whether that proposal is still the rule of this name:
     // one that took the name while the owner read or typed a passphrase is another
-    // text, which this repeal would leave in force.
+    // text, which this repeal would leave in force. The look and the signature are one
+    // transaction, so no other process stores a rule of this name between them.
     let key = node.device()?.signing_key();
-    if !governance::rule_as_shown(&node.store, key, id, name, &target)? {
-        return Err(refused(
-            "the rule changed while this was being confirmed: what you were shown is no \
-             longer the rule in force. Nothing was proposed and nothing was signed. Run \
-             the command again to see the rule as it is now.",
-        ));
-    }
-    let proposal = governance::propose(
-        &node.store,
-        key,
-        id,
-        governance::NewProposal {
-            scope: &scope,
-            title: &title,
-            summary: &summary,
-            action: ProposalAction::Repeal { target },
-        },
-        node.now(),
-    )?;
+    let proposal = governance::atomically(&node.store, key, |store| {
+        if !governance::rule_as_shown(store, key, id, name, &target)? {
+            return Err(refused(
+                "the rule changed while this was being confirmed: what you were shown is \
+                 no longer the rule in force. Nothing was proposed and nothing was signed. \
+                 Run the command again to see the rule as it is now.",
+            ));
+        }
+        governance::propose(
+            store,
+            key,
+            id,
+            governance::NewProposal {
+                scope: &scope,
+                title: &title,
+                summary: &summary,
+                action: ProposalAction::Repeal { target },
+            },
+            node.now(),
+        )
+    })?;
     let mut t = Text::new();
     t.line(format!(
         "Proposed repealing {name} in {} (proposal {}).",

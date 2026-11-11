@@ -2,13 +2,13 @@
 //! count (architecture section 10).
 
 use anyhow::{anyhow, Result};
-use ph_core::{Actor, CandidateStatus, EventId, Scope};
+use ph_core::{Actor, CandidateStatus, DeviceKey, EventId, Scope};
 use ph_governance::{carried_diff, ProposalView, RuleSet, Tally};
 use ph_protocol::text::{is_forbidden_char, Lines};
 use ph_protocol::{
     AdoptAction, Charter, ProposalAction, ProposalKind, RollEntry, SigningKey, VoteDecision,
 };
-use ph_store::CircleRow;
+use ph_store::{CircleRow, Store};
 use serde_json::{json, Value};
 
 use crate::cli::{DecisionArg, ProposalCommand};
@@ -360,9 +360,12 @@ const NO_NAMED_CHARTER: &str = "this node does not hold the charter that amendme
 /// It is a parameter so that this cannot be called before the key is unlocked: a
 /// passphrase prompt is one more place where the node changes, and this check comes
 /// after it and immediately before the signature ([`governance::as_drafted`] takes the
-/// key for the same reason).
+/// key for the same reason). `vote` calls it in the transaction that stores the ballot
+/// ([`governance::atomically`]), with that transaction's `store`. `me` is this node's
+/// device key.
 fn approval_as_shown(
-    node: &Node,
+    store: &Store,
+    me: &DeviceKey,
     unlocked: &SigningKey,
     bundles: &ph_skills::BundleStore,
     p: &ProposalView,
@@ -370,14 +373,14 @@ fn approval_as_shown(
     in_window: Option<(&RollEntry, u64)>,
 ) -> Result<()> {
     let _ = unlocked;
-    let now = governance::amendment_changes(&node.store, bundles, p, &node.device_key())?;
+    let now = governance::amendment_changes(store, bundles, p, me)?;
     let same = match (shown, &now) {
         (Some(shown), Some(now)) => shown.same_as(now),
         _ => false,
     };
     let window_still_fits = match in_window {
         Some((entry, seq)) => {
-            let (current, in_force, _) = governance::rule_set(&node.store, &p.circle_id())?;
+            let (current, in_force, _) = governance::rule_set(store, &p.circle_id())?;
             current.seq == seq
                 && matches!(
                     sole_admission(p, &current, &in_force),
@@ -467,63 +470,73 @@ fn create(
 
     // The key first: a key that does not unlock leaves the candidate and the library
     // as they were, and nothing says "proposed" about a rule that was never signed.
+    // Unlocking can ask for a passphrase, and nothing in the transaction below waits
+    // for anyone.
     let key = node.device()?.signing_key();
 
-    // Confirmed: save exactly the previewed text to the library.
-    let (_, bundle, _) = crate::library::create_local_skill(&node.home, &node.store, &cand, now)?;
-    if bundle.digest() != draft.digest() {
-        return Err(anyhow!(
-            "the rule's text changed while it was being confirmed: nothing was shared"
-        ));
-    }
-
-    // The human confirmed the exact text: walk the candidate to `Proposed`.
-    let mut status = cand.status;
-    for next in [
-        CandidateStatus::LocalReview,
-        CandidateStatus::LocalApproved,
-        CandidateStatus::ShareAuthorized,
-        CandidateStatus::Proposed,
-    ] {
-        if status.can_transition_to(next) {
-            status =
-                node.store
-                    .update_candidate_status(&cand.id, status, next, Actor::Human, now)?;
+    // Everything the owner's yes allows is one transaction: the library entry, the
+    // candidate's walk to `Proposed`, the proposal, and the candidate's link to it. An
+    // error in any of them takes back all of them, so no state says "proposed" unless
+    // a proposal was signed.
+    let (bundle, proposal, related_question) = governance::atomically(&node.store, key, |store| {
+        // Confirmed: save exactly the previewed text to the library. This is inside
+        // the transaction, so that the rows of the library stand or fall with the
+        // proposal. It also writes the bundle's file, which no rollback takes back: a
+        // later error here leaves a content-addressed file with the text the owner
+        // confirmed and no row that names it, and the next run stores the same file
+        // again without effect.
+        let (_, bundle, _) = crate::library::create_local_skill(&node.home, store, &cand, now)?;
+        if bundle.digest() != draft.digest() {
+            return Err(anyhow!(
+                "the rule's text changed while it was being confirmed: nothing was shared"
+            ));
         }
-    }
-    // A question the owner asked this circle about the same candidate, in the same
-    // scope, is named by the proposal so that voters can find the answers.
-    let related_question = match cand.question_event_id {
-        Some(q) => node
-            .store
-            .question(&q)?
-            .filter(|row| row.circle_id == circle.circle_id && row.scope == scope)
-            .map(|row| row.event_id),
-        None => None,
-    };
-    let proposal = governance::propose(
-        &node.store,
-        key,
-        &circle.circle_id,
-        NewProposal {
-            scope: &scope,
-            title: &title,
-            summary: "",
-            action: ProposalAction::Adopt(AdoptAction {
-                skill_name: bundle.name().to_owned(),
-                description: bundle.description().to_owned(),
-                bundle_digest: bundle.digest(),
-                bundle_size: bundle.size(),
-                related_question,
-                supersedes: None,
-            }),
-        },
-        now,
-    )?;
-    node.store
-        .set_candidate_share_target(&cand.id, &circle.circle_id, &scope, now)?;
-    node.store
-        .set_candidate_proposal_event(&cand.id, &proposal.event_id(), now)?;
+
+        // The human confirmed the exact text: walk the candidate to `Proposed`.
+        let mut status = cand.status;
+        for next in [
+            CandidateStatus::LocalReview,
+            CandidateStatus::LocalApproved,
+            CandidateStatus::ShareAuthorized,
+            CandidateStatus::Proposed,
+        ] {
+            if status.can_transition_to(next) {
+                status =
+                    store.update_candidate_status(&cand.id, status, next, Actor::Human, now)?;
+            }
+        }
+        // A question the owner asked this circle about the same candidate, in the
+        // same scope, is named by the proposal so that voters can find the answers.
+        let related_question = match cand.question_event_id {
+            Some(q) => store
+                .question(&q)?
+                .filter(|row| row.circle_id == circle.circle_id && row.scope == scope)
+                .map(|row| row.event_id),
+            None => None,
+        };
+        let proposal = governance::propose(
+            store,
+            key,
+            &circle.circle_id,
+            NewProposal {
+                scope: &scope,
+                title: &title,
+                summary: "",
+                action: ProposalAction::Adopt(AdoptAction {
+                    skill_name: bundle.name().to_owned(),
+                    description: bundle.description().to_owned(),
+                    bundle_digest: bundle.digest(),
+                    bundle_size: bundle.size(),
+                    related_question,
+                    supersedes: None,
+                }),
+            },
+            now,
+        )?;
+        store.set_candidate_share_target(&cand.id, &circle.circle_id, &scope, now)?;
+        store.set_candidate_proposal_event(&cand.id, &proposal.event_id(), now)?;
+        Ok((bundle, proposal, related_question))
+    })?;
 
     let mut t = Text::new();
     t.line(format!(
@@ -870,23 +883,26 @@ fn vote(
     // where the node changes. What follows is checked with the key in hand, and no
     // prompt lies between that check and the signature.
     let key = node.device()?.signing_key();
+    let cast = |store: &Store| {
+        governance::cast_vote(store, key, &p, decision, rationale.as_deref(), node.now())
+    };
     // An approval is for what was shown. A reject or a revise approves nothing and is
     // never refused here.
-    if decision == VoteDecision::Approve {
-        if let Some(shown) = &amendment {
+    match &amendment {
+        Some(shown) if decision == VoteDecision::Approve => {
+            // The look and the ballot are one transaction: a ballot or a charter that
+            // another process stores cannot come between them.
             let in_window = admission.filter(|_| circle_window);
-            approval_as_shown(&node, key, &bundles, &p, shown.as_ref(), in_window)?;
+            let me = node.device_key();
+            governance::atomically(&node.store, key, |store| {
+                approval_as_shown(store, &me, key, &bundles, &p, shown.as_ref(), in_window)?;
+                cast(store)
+            })?;
+        }
+        _ => {
+            cast(&node.store)?;
         }
     }
-
-    governance::cast_vote(
-        &node.store,
-        key,
-        &p,
-        decision,
-        rationale.as_deref(),
-        node.now(),
-    )?;
     let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
     let (_, tally) = governance::count(&node.store, &p)?;
     let mut t = Text::new();
