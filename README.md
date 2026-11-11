@@ -15,8 +15,9 @@ screen that shows the exact text. It cannot answer the window: inside its sessio
 keeping a rule, sharing one, voting, inviting and joining take your click. That stops
 an agent that is trying to help. It is not a sandbox ([Limits](#limits)).
 
-> **Status: v0.4.0, early and not audited.** For Claude Code on macOS. On Linux it
-> works from a terminal, without the windows. Windows is not supported. Read
+> **Status: v0.4.0, early and not audited.** For Claude Code on macOS, and it connects
+> Codex, opencode, Pi, Antigravity and DeepSeek Harness too. On Linux it works from a
+> terminal, without the windows. Windows is not supported. Read
 > [Limits](#limits) before you rely on it.
 
 PeerHarness is also a command-line tool (CLI): every step here is a command too, and
@@ -50,6 +51,11 @@ Then tell me to start a new Claude Code session, and what I can ask you there.
   in a database that is not encrypted.
 
 Then start a new Claude Code session and [try it](#try-it-in-claude-code).
+
+**Other coding agents.** `setup` also connects Codex, opencode, Pi, Google Antigravity
+and DeepSeek Harness when it finds them, each after a preview: your rules reach the
+skills each one reads, and it gets the same tools. You can say the same things to them.
+See [other coding agents](docs/terminal.md#other-coding-agents).
 
 More: [what setup adds and stores](docs/terminal.md#what-setup-adds-and-what-is-stored)
 and [how to take it out again](docs/terminal.md#take-it-out-again).
@@ -179,7 +185,7 @@ majority of everyone, not by the say of whoever can merge.
 ## Limits
 
 * **The agent guard is not a sandbox.** A session is recognized by an environment
-  variable, and only Claude Code's by default. A process running as you that hides it
+  variable that the agent sets, and Antigravity documents none. A process running as you that hides it
   can run the same commands with `--yes`. Your agent chooses when a window appears:
   reading it before you click is your part.
 * **A rule is text that your agent acts on**, and your agent can run commands. The

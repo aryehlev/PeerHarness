@@ -73,7 +73,7 @@
         {
           "@type": "Question",
           "name": "Which agents and systems does it work with?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only SKILL.md file, an Agent Skill, and PeerHarness never executes it." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Claude Code on macOS. It also connects Codex, opencode, Pi, Google Antigravity and DeepSeek Harness, which were set up from their documentation and not yet tried in a session. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only SKILL.md file, an Agent Skill, and PeerHarness never executes it." }
         },
         {
           "@type": "Question",
@@ -128,7 +128,7 @@
       <a class="btn btn-primary" href="#setup">Set it up</a>
       <a class="btn" href="https://github.com/aryehlev/PeerHarness">Read the source</a>
     </p>
-    <p class="status"><strong>Early and not audited.</strong> For Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. Read the <a href="#limits">limits</a> before you rely on it.</p>
+    <p class="status"><strong>Early and not audited.</strong> For Claude Code on macOS, and it connects Codex, opencode, Pi, Antigravity and DeepSeek Harness too. On Linux it works from a terminal, without the windows. Windows is not supported. Read the <a href="#limits">limits</a> before you rely on it.</p>
   </div>
 
   <figure class="ballot-fig">
@@ -340,7 +340,7 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
     </header>
 
     <ul class="plain limits">
-      <li><strong>The agent guard is not a sandbox.</strong> A session is recognized by an environment variable, and only Claude Code's by default. A process running as you that hides it can run the same commands with <code>--yes</code>. Your agent chooses when a window appears: reading it before you click is your part.</li>
+      <li><strong>The agent guard is not a sandbox.</strong> A session is recognized by an environment variable that the agent sets, and Antigravity documents none. A process running as you that hides it can run the same commands with <code>--yes</code>. Your agent chooses when a window appears: reading it before you click is your part.</li>
       <li><strong>A rule is text that your agent acts on</strong>, and your agent can run commands. The risk scanner and the redaction are heuristics. Read a rule as you would a script.</li>
       <li><strong>Joining installs rules you have not read.</strong> The join window shows the charter and how many rules it carries, not their text. You can opt out of any afterwards.</li>
       <li><strong>The founder can revoke a device without a vote</strong>, for a lost laptop. Its ballots stop counting, so a result that needed one is undone. The founder's key also signs every change of the roll: if it is lost, nobody can be admitted or removed.</li>
@@ -378,7 +378,7 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
       </div>
       <div>
         <h3>Which agents and systems does it work with?</h3>
-        <p>Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only <code>SKILL.md</code> file, an Agent Skill, and PeerHarness never executes it.</p>
+        <p>Claude Code on macOS. It also connects Codex, opencode, Pi, Google Antigravity and DeepSeek Harness, which were set up from their documentation and not yet tried in a session. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only <code>SKILL.md</code> file, an Agent Skill, and PeerHarness never executes it.</p>
       </div>
       <div>
         <h3>What does it cost, and how far along is it?</h3>

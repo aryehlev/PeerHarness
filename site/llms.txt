@@ -5,7 +5,7 @@
 What it is, in facts:
 
 - An open-source command-line tool, written in Rust, under MIT or Apache-2.0 at your option. Source: https://github.com/aryehlev/PeerHarness
-- For Claude Code on macOS. On Linux it works from a terminal, without the confirmation windows. Windows is not supported.
+- For Claude Code on macOS, and it connects Codex, opencode, Pi, Antigravity and DeepSeek Harness too. On Linux it works from a terminal, without the confirmation windows. Windows is not supported.
 - Early and not audited. Its limits are listed in full, and it has had no security audit.
 - It is used by talking to the agent: "From now on, use pnpm here, not npm.", "Keep it.", "Create a PeerHarness team called acme.", "Propose the pnpm rule to acme.", "Vote approve on it."
 - Agents suggest, people decide. The agent can note a rule and open a window on the person's screen that shows the exact text. It cannot answer the window: keeping a rule, sharing one, voting, inviting and joining take the person's click. That is not a sandbox.

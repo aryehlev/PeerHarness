@@ -3252,3 +3252,95 @@ repository shows is uploaded in the repository's settings ("Social preview"):
 
 **From now on.** When an answer on the page changes, its copy in the structured data
 changes with it, and `llms.txt` where it says the same.
+
+## ADR-050: Codex, opencode, Pi, Antigravity and DeepSeek Harness are connected beside Claude Code
+The owner asked for support of more coding-agent harnesses: Pi, opencode, Codex,
+Google Antigravity and DeepSeek Harness. Each was checked on 2026-11-12 against its
+own source (Codex `rust-v0.167.1`, opencode `v1.19.5` and `v2.2.7`, Pi
+`@earendil-works/pi-coding-agent` 1.5.2, DeepSeek Harness `dsh-v0.2.2-rc.2`) or, for
+Antigravity, which publishes none, its documentation at antigravity.google/docs.
+"DeepSeek harness" was taken to be DeepSeek's own `dsh`
+(github.com/deepseek-ai/deepseek-harness).
+
+**What an agent needs from PeerHarness**, and what each one offers:
+
+| agent | marks the commands it runs | reads the user's skills from | MCP servers in |
+|---|---|---|---|
+| Codex | `CODEX_CI`, `CODEX_TOOL_CALL_ID` (agent only), `CODEX_THREAD_ID` (also the user's `!`) | `~/.agents/skills`, a repository's `.agents/skills` | `$CODEX_HOME/config.toml`, `[mcp_servers.<name>]` |
+| opencode | `OPENCODE` (v2: its agent's shell; v1: everything it starts), `AI_AGENT` (v2) | `~/.claude/skills` and `~/.agents/skills` among others | `opencode.json(c)`, `mcp.<name>` (v1, read by v2) or `mcp.servers.<name>` (v2) |
+| Pi | `PI_CODING_AGENT`, `AI_AGENT=pi` (everything it starts) | `~/.pi/agent/skills`, `~/.agents/skills` | `~/.pi/agent/mcp.json`, `mcpServers.<name>` |
+| Antigravity | nothing documented; detectors look for `ANTIGRAVITY_AGENT` | `~/.gemini/config/skills`, a workspace's `.agents/skills` | `~/.gemini/config/mcp_config.json`, `mcpServers.<name>` |
+| DeepSeek Harness | `DSH_SHELL` (its model's shell; scrubbed from MCP servers) | `$DSH_AGENTS_HOME/skills` (`~/.agents/skills`) | Cordis patch files in YAML (`$DSH_HOME/cordis.patch.yml`) |
+
+**Decision.**
+
+* **Their sessions are recognized.** Every variable in the second column is in
+  `consent::AGENT_SESSION_ENV`, so a consent step started from any of them is
+  refused, or asked in a window, exactly as from Claude Code. Where a variable also
+  marks a command the user types inside the agent (Codex's `!`, everything under Pi or
+  opencode v1), that command is refused too: the guard errs towards the owner's own
+  terminal. Antigravity documents no mark. `ANTIGRAVITY_AGENT` is checked because the
+  tools that detect Antigravity check it, and the limit is said where the owner
+  connects it and in `docs/limits.md`. `AI_AGENT` counts for any agent that sets it.
+* **Claude Code's directory stays where rules are installed and decided.** Installing,
+  holding, removing, `rule_installs` and every invariant of ADR-023, ADR-030 and
+  ADR-042 are unchanged. A connected agent that does not read that directory gets
+  **copies** (`crate::copies`, `ph_skills::mirror`): its directory is made to hold
+  exactly the skills PeerHarness manages in Claude Code's, after every command (the
+  dispatcher runs the pass whether the command succeeded or not) and after every
+  settle in the daemon. A rule placed in a project (`circle place`) or installed
+  there is copied to that project's `.agents/skills`. A copy goes when its source
+  goes. A skill there that PeerHarness did not put there is never touched, and a copy
+  someone edited is neither replaced nor removed; both are named on standard error
+  after a command that changed what PeerHarness manages, and by `doctor`.
+  `~/.agents/skills` serves Codex, Pi and DeepSeek Harness with one copy, and opencode
+  needs none: it reads Claude Code's directory.
+* **The tools are registered by editing the agent's file**, never by running the
+  agent: no program is looked up on `PATH`, and no stand-in is needed in tests. The
+  edits follow the rules for Claude Code's settings (backup, atomic, idempotent,
+  `ph_observer::agent_config`). Only an entry that is exactly what PeerHarness would
+  write is changed or removed. A JSON file that does not parse (opencode's `.jsonc`
+  with comments) is not rewritten: the entry is shown for the owner to add. A TOML
+  file is never re-serialized: the entry is appended as one block between marker
+  comments, parsed again before it is written, and removing it takes out exactly that
+  block. Pi's entry carries `exposure: direct`, without which its model does not see
+  the tools. DeepSeek Harness's YAML patches are not edited: the entry is shown.
+* **Connecting is the owner's step.** `peerharness watch <agent> --install` (and
+  `--remove`, `--status`) shows every change and asks. It is refused inside a session
+  as a whole, like `setup`. `setup` runs it, after its own three steps, for each agent
+  named with `--agent`, or else for each one whose directory exists on the machine.
+  The agent is recorded under `[agents] connected`, and copies are made only for
+  connected agents. Connecting one allows nothing more than the owner allowed for
+  every agent: the tools run at the level of `config::Asked`.
+* **Where their files are.** Under the user's home directory, honouring each agent's
+  own variables that move them (`CODEX_HOME`, `OPENCODE_CONFIG_DIR`,
+  `XDG_CONFIG_HOME`, `PI_CODING_AGENT_DIR`, `DSH_HOME`, `DSH_AGENTS_HOME`).
+  `PEERHARNESS_AGENTS_HOME` stands in for the home directory and turns those
+  variables off. A debug build reads only `PEERHARNESS_AGENTS_HOME`: without it, it
+  finds no agent, so that `cargo test` never writes into a developer's own agents.
+
+**Rejected.**
+
+* *An install target per agent inside `apply_rules`* (several installers, a column for
+  the agent in `rule_installs`). Every invariant about held rules, edited copies and
+  what a vote may remove would need a second reading per directory. A copy that only
+  follows a directory where those invariants already hold changes none of them.
+* *Running `codex mcp add`, `pi mcp add`, `opencode mcp add`.* Each needs its program on
+  `PATH` and a stand-in in debug builds, and opencode's two versions disagree on
+  where `mcp add` writes. Editing the documented file is the same change, previewed.
+* *Hooks for the other agents.* Codex has hooks in Claude Code's shape, but runs one
+  only after its user trusted it in `/hooks`; opencode and Pi have plugins and
+  extensions in TypeScript; Antigravity's payloads carry the prompt and a transcript
+  path. The note the skill asks for works in all of them, so the observer stays
+  Claude Code's, and the notice at the end of a turn too.
+* *Copying into `$CODEX_HOME/skills` as well.* Codex lists a skill once per directory
+  it finds it in: two copies would show twice.
+
+**Limits** (also in `docs/limits.md`): Antigravity's sessions may carry no mark;
+Codex and Antigravity run their agent's shell in a sandbox by default, where
+`peerharness note` may be unable to write to PeerHarness's home (their MCP servers run
+outside it, so the `note` tool works); opencode, which reads both `~/.claude/skills`
+and `~/.agents/skills`, sees two identical copies of a rule when Codex, Pi or
+DeepSeek Harness is connected as well (v2 keeps one; v1 keeps the later and warns);
+Pi reads a project's skills only once its user trusted the project; and the windows
+are still macOS only.

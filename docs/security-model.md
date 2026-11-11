@@ -574,14 +574,27 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   was asked to "set PeerHarness up" can install the binary and must then ask its user
   to run setup themselves. For a node that is already there, setup names the keystore
   that holds its key and warns about a plaintext one (ADR-045).
+* **Other agents (ADR-050).** Connecting Codex, opencode, Pi, Antigravity or DeepSeek
+  Harness is the owner's step in their own terminal, refused inside a session. It
+  writes into two places that belong to that agent: copies of the skills PeerHarness
+  manages in Claude Code's directory, in the directory the agent reads skills from,
+  and one entry in its configuration that starts `peerharness mcp`. Nothing is decided
+  from a copy: it follows a directory where every rule of installation already held,
+  never replaces or removes a skill PeerHarness did not put there or one that was
+  edited, and is kept only for an agent the owner connected. A copy is text the agent
+  acts on, as the rule it copies is. The configuration entry is written only where it
+  is absent, changed or removed only when it is exactly what PeerHarness writes, with
+  a backup, and a file that does not parse is left alone.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,
   is not stopped by it, and what remains is that consent needs a terminal or an explicit
   `--yes`. The refusal for a missing terminal names `--yes` as something a person
   passes in a script they wrote, and tells a coding agent to stop and ask; that is
-  wording, and nothing keeps such an agent from passing the flag. Only `CLAUDECODE`
-  and `PEERHARNESS_AGENT_SESSION` are read. A debug build also obeys the stand-ins the
+  wording, and nothing keeps such an agent from passing the flag. Only the variables of
+  `consent::AGENT_SESSION_ENV` are read: `CLAUDECODE`, `PEERHARNESS_AGENT_SESSION`, and
+  those of the other agents PeerHarness connects (ADR-050). Google Antigravity
+  documents none, so its agent's commands may carry no mark at all. A debug build also obeys the stand-ins the
   tests use in place of the window, the notification and the `claude` command, so
   whoever sets its environment can name the program that answers a window; `doctor`
   and `status` say when a binary is one, and release builds do not read them. An agent

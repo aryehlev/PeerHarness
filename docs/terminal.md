@@ -130,19 +130,54 @@ stops and says so. `--yes` is for a script you wrote yourself. A coding agent th
 reads that message is told to stop and ask you.
 
 This guards against an agent that is trying to help. It is not a sandbox: a session
-is recognized by an environment variable (`CLAUDECODE`, which Claude Code sets, or
-`PEERHARNESS_AGENT_SESSION`), so a process running as you that hides it can run the
+is recognized by an environment variable (`CLAUDECODE`, which Claude Code sets, the
+ones the [other agents](#other-coding-agents) set, or `PEERHARNESS_AGENT_SESSION`), so a process running as you that hides it can run the
 same commands with `--yes`. The table under
 [Known limits](limits.md) says what is stopped and what is not.
 
 `peerharness mcp` gives an agent the same steps as tools. Without it the agent runs
-the commands it read in the skill. Other agents that speak MCP can use it too; only
-Claude Code was tried. The tool that joins a circle takes a member's peer id or
+the commands it read in the skill. `setup` registers it with the other agents it
+connects too ([Other coding agents](#other-coding-agents)); only Claude Code was tried
+with a real session. The tool that joins a circle takes a member's peer id or
 address and never a file: joining from a file is `peerharness circle join <file>` in
 your own terminal. Inside a session `circle join` itself reads no argument as a file
 when it is a peer id or an address, also when a file of that name exists. The tool
 that votes takes a reason of one line of at most 200 characters, the limit of
 `proposal vote`.
+
+### Other coding agents
+
+After its three steps, `setup` connects every other coding agent it finds on your
+machine (a directory of its own exists), each with a preview of its own. Name the ones
+you want instead with `--agent`, which you can repeat:
+
+```sh
+peerharness setup --agent codex --agent pi
+peerharness watch codex --install      # one agent: codex, opencode, pi, antigravity, deepseek
+peerharness watch codex --status
+peerharness watch codex --remove       # what PeerHarness put there goes, nothing else
+```
+
+| agent | your rules | the tools | its commands are recognized by |
+|---|---|---|---|
+| Codex | copied to `~/.agents/skills` | appended to `~/.codex/config.toml` | `CODEX_CI`, `CODEX_TOOL_CALL_ID`, `CODEX_THREAD_ID` |
+| opencode | read from Claude Code's `~/.claude/skills` | added to `~/.config/opencode/opencode.json` | `OPENCODE`, `AI_AGENT` |
+| Pi | copied to `~/.agents/skills` | added to `~/.pi/agent/mcp.json` | `PI_CODING_AGENT`, `AI_AGENT` |
+| Antigravity | copied to `~/.gemini/config/skills` | added to `~/.gemini/config/mcp_config.json` | `ANTIGRAVITY_AGENT`, which Google does not document |
+| DeepSeek Harness | copied to `~/.agents/skills` | shown for you to add to `~/.dsh/cordis.patch.yml` | `DSH_SHELL` |
+
+Rules are still installed in Claude Code's skills directory, and decided there. A
+connected agent that reads another directory gets copies of what PeerHarness manages
+in it, PeerHarness's own skill included, brought up to date after every command. A
+rule in a project goes to that project's `.agents/skills` too. A skill in those
+directories that PeerHarness did not put there is never touched, and a copy you edit
+is left as it is: a command that changes a rule says so. Each change to an agent's
+configuration file is backed up first, and an entry named `peerharness` that you wrote
+yourself is left alone. A file PeerHarness cannot read safely (opencode's
+`opencode.jsonc` with comments) is not changed: `setup` shows the entry for you to add.
+
+What your agent may start through the tools is what you allowed with `setup`, for every
+agent alike. The limits of each are in [Known limits](limits.md).
 
 ### What setup adds, and what is stored
 
@@ -157,6 +192,9 @@ that votes takes a reason of one line of at most 200 characters, the limit of
   correct it.
 * **The tools**: the line `claude mcp add --scope user peerharness -- … mcp`, which
   setup shows you before it runs it.
+* **For each other agent it connects**: copies of your rules where it reads skills,
+  and one entry in its configuration file, after a backup of the file
+  ([Other coding agents](#other-coding-agents)).
 
 The copies of your prompts stay on your machine and are never sent anywhere. Each
 expires after 14 days by default (`[retention] observation_days` in
@@ -753,8 +791,9 @@ peerharness circle leave --circle <team>              # or all of that team's ru
 # 2. The two hooks and the skill. This also turns the windows off.
 peerharness watch claude --remove
 
-# 3. The tools.
+# 3. The tools, and the other agents: their copies of your rules and their entry.
 claude mcp remove peerharness --scope user
+peerharness watch codex --remove                      # and so on, for each one connected
 
 # 4. The node: your key and your database. Without --confirm it only says what would go.
 peerharness reset
