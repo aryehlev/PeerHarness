@@ -3111,3 +3111,42 @@ next finding is appended there again.
 **From now on.** A new limit goes into `docs/limits.md`, a new check into
 `docs/checked.md` and a new command into `docs/terminal.md`. The README changes when
 what the product does, or how it is used, changes (`docs/release.md`, step 3).
+
+## ADR-047: The README is about what is said in Claude Code, and the commands stand at its end
+ADR-046 left three places in the README that sent its reader to a terminal: "Or run
+the two lines yourself" under the setup prompt, "What needs your terminal" after the
+walkthrough, and "See it run" with the demo's command. The owner asked for a README
+that is only about using PeerHarness in Claude Code: "no one wants to run commands,
+put that in small on the bottom".
+
+**Decision.** The README keeps, in this order: what PeerHarness does, with a
+screenshot of a session in which the agent notes a rule; its status; the prompt that
+sets it up; the five sentences that try it; adding a teammate; how a vote works; why
+not a file in git; the limits; and one short section, "From a terminal". That section
+holds the commands the README still shows outside the setup prompt: the daemon that
+stays up, `circle mode ask`, `rule opt-out`, `demo`, and installing without the
+prompt. It also lists what is done only in a terminal. The demo's output stays as the
+example under "How a vote works", without its command.
+
+One command stays where it was: `peerharness setup`, in the prompt and in the line
+under it. It is the step in which the owner allows what their agent may start, and it
+is refused inside a session (ADR-039), so no sentence to an agent can replace it.
+
+The screenshot is `docs/images/noted-rule.png`: a real session, cropped by one
+half-visible line. A release archive does not pack it, and the README shows its
+description there (`docs/release.md`).
+
+The paragraph on a file in git says two more things, which the owner asked for as
+"more dynamic and democratic": a rule starts as a correction in the middle of work,
+and it passes by a majority of everyone and not by the say of whoever can merge. It
+still opens with the case in which the file in git is enough.
+
+**Rejected.** Taking the commands out of the README altogether: a few steps are done
+only in a terminal (removing a member, leaving, repealing a rule, every decision on
+Linux), and a README that did not say so would promise more than an agent can start.
+Folding the section away (`<details>`): ADR-046 rejected that for the long lists, and
+a section of twenty lines needs no folding.
+
+**From now on.** A step that can be said to an agent is shown as the sentence, not as
+its command. A command comes into "From a terminal" only when no sentence does the
+same. Every other command goes to `docs/terminal.md`.

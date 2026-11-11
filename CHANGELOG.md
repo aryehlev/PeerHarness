@@ -18,6 +18,10 @@ database schema it writes.
   Release archives pack `limits.md` as well (ADR-046).
 * `docs/checked.md` records the first run of a 0.4.0 release binary: the install
   script with the aarch64 macOS one.
+* Documents only. The README is about what is said in Claude Code, and opens with a
+  screenshot of a session in which the agent notes a rule. The commands it still
+  shows stand in one section at its end, "From a terminal", with the steps that are
+  done only there (ADR-047).
 
 ## 0.4.0 (2026-11-11)
 
