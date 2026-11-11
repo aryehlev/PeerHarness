@@ -197,6 +197,51 @@ fn help_opens_with_the_sentence_the_readme_opens_with() {
     assert!(node.ok(&["observe", "--help"]).contains("demo"));
 }
 
+/// Help that says what is true: Windows is not supported, so `init` does not name it as
+/// a platform with a default keystore, and two options that are parsed and never read
+/// say that they have no effect.
+#[test]
+fn help_promises_nothing_the_program_does_not_do() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::bare(tmp.path(), "alice");
+    let flat = |args: &[&str]| -> String {
+        node.ok(args)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
+    let init = flat(&["init", "--help"]);
+    assert!(
+        init.contains("default: os on macOS, file on Linux"),
+        "{init}"
+    );
+    assert!(!init.contains("Windows"), "{init}");
+
+    let adopt = flat(&["proposal", "adopt", "--help"]);
+    assert!(
+        adopt.contains("--accept-risk Accepted and has no effect today."),
+        "{adopt}"
+    );
+    let release = flat(&["proposal", "release", "--help"]);
+    assert!(
+        release.contains("--yes Accepted and has no effect: this command asks nothing."),
+        "{release}"
+    );
+    // Both are still accepted: a script that passes them keeps working.
+    node.ok(&["init", "--keystore", "file"]);
+    node.ok(&["circle", "create", "team"]);
+    let proposal = node.pass_rule(RULE);
+    node.ok(&["proposal", "release", short(&proposal), "--yes"]);
+    node.ok(&[
+        "proposal",
+        "adopt",
+        short(&proposal),
+        "--yes",
+        "--accept-risk",
+    ]);
+}
+
 #[test]
 fn init_and_note_point_at_the_steps_the_guide_teaches_and_they_work() {
     let tmp = TempDir::new().unwrap();
