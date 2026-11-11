@@ -7,7 +7,9 @@
 //! * the first line of `--help`, the package description and the README say the same
 //!   sentence, and `observe` and `hook` are out of the list of commands but still run;
 //! * `init` and `note` point at `demo`, `note` and `keep`, and following them works;
-//! * an `init` that fails before it has a key leaves the home as it found it;
+//! * an `init` that fails before it has a key leaves the home as it found it, a second
+//!   `init` is refused while one runs in the same home, and a failing one never takes
+//!   apart what another made;
 //! * `circle invite` has no option that does nothing, and its help names the file it
 //!   writes;
 //! * a circle name that is not on this node is answered with where the names are, and
@@ -296,14 +298,21 @@ fn an_init_that_fails_leaves_the_home_as_it_found_it() {
         "mine"
     );
 
-    // --- A config file that was there is not this run's to remove.
+    // --- A config file that was there is not this run's to remove, and reads
+    // afterwards as it read before: the owner's comment and their settings are in it,
+    // although the failed run had rewritten the file on its way.
     let preset = Node::bare(tmp.path(), "carol");
     std::fs::create_dir_all(&preset.home).unwrap();
-    let config = "[node]\nkeystore = \"file\"\nkdf_profile = \"fast-insecure-test\"\n";
+    let config = "# my settings\n[node]\nkeystore = \"insecure-dev\"\n\
+                  kdf_profile = \"fast-insecure-test\"\nlisten = [\"/ip4/127.0.0.1/udp/4455/quic-v1\"]\n";
     std::fs::write(preset.home.join("config.toml"), config).unwrap();
     failing(&preset);
-    assert!(preset.home.join("config.toml").is_file());
+    assert_eq!(
+        std::fs::read_to_string(preset.home.join("config.toml")).unwrap(),
+        config
+    );
     assert!(!preset.home.join("peerharness.db").exists());
+    assert!(!preset.home.join("keys").exists());
 
     // --- Running it again with a passphrase makes the node, in each of the three.
     for node in [&fresh, &used, &preset] {
@@ -324,6 +333,130 @@ fn an_init_that_fails_leaves_the_home_as_it_found_it() {
     assert!(out.status.success(), "{}", said(&out));
     assert!(fresh.home.join("peerharness.db").is_file());
     assert!(fresh.home.join("keys").is_dir());
+}
+
+/// One `init` per home at a time. What a failed run takes away is "what this run
+/// created", and only a run that is alone in the home knows what that is. The lock is on
+/// the home directory itself; here the test holds it, as an `init` that waits at its
+/// passphrase prompt or at the keychain dialog does.
+#[cfg(unix)]
+#[test]
+fn a_second_init_is_refused_while_one_holds_the_home() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::bare(tmp.path(), "alice");
+    std::fs::create_dir_all(&node.home).unwrap();
+    std::fs::write(node.home.join("notes.txt"), "mine").unwrap();
+    let listing = |home: &Path| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(home)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+
+    let held = std::fs::File::open(&node.home).unwrap();
+    held.try_lock().expect("nobody else holds this home");
+    for args in [
+        vec!["init", "--keystore", "file"],
+        // The other keystore is no way around it: that is the run that used to lose
+        // its config file and database to the first one's failure.
+        vec![
+            "init",
+            "--keystore",
+            "insecure-dev",
+            "--insecure-dev-keystore",
+        ],
+    ] {
+        let out = node.out(&args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {}", said(&out));
+        assert!(
+            said(&out).contains("another `peerharness init` is running for this home"),
+            "{}",
+            said(&out)
+        );
+        // Refused before it created or removed anything.
+        assert_eq!(listing(&node.home), ["notes.txt"], "{args:?}");
+    }
+
+    // The first one is done: the same command makes the node.
+    drop(held);
+    let made = node.json(&["init", "--keystore", "file"]);
+    assert_eq!(made["created"], true);
+    node.ok(&["status"]);
+    assert!(listing(&node.home).contains(&"notes.txt".to_owned()));
+}
+
+/// Two `init`s for one home, started together, one of which cannot make its key. The
+/// one that fails removes only what it created while it was alone in the home, so the
+/// other either makes a whole node or is told that an `init` is running. It never
+/// reports success for a home that the failing one then took apart.
+#[cfg(unix)]
+#[test]
+fn a_failing_init_never_takes_apart_what_another_init_made() {
+    let tmp = TempDir::new().unwrap();
+    const LOCKED: &str = "another `peerharness init` is running for this home";
+    let mut made = 0;
+    for round in 0..20 {
+        let root = tmp.path().join(format!("round-{round}"));
+        let node = Node::bare(&root, "alice");
+        let spawn = |passphrase: &str| {
+            node.cmd(&["init", "--keystore", "file"])
+                .env("PEERHARNESS_PASSPHRASE", passphrase)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap()
+        };
+        // Which of the two is first changes from round to round.
+        let (failing, good) = if round % 2 == 0 {
+            let failing = spawn("");
+            (failing, spawn(PASSPHRASE))
+        } else {
+            let good = spawn(PASSPHRASE);
+            (spawn(""), good)
+        };
+        let good = good.wait_with_output().unwrap();
+        let failing = failing.wait_with_output().unwrap();
+
+        if good.status.success() {
+            made += 1;
+            assert!(
+                node.home.join("config.toml").is_file()
+                    && node.home.join("peerharness.db").is_file(),
+                "round {round}: `init` reported success and the home is not a node\n{}\n{}",
+                said(&good),
+                said(&failing)
+            );
+            let status = node.out(&["status"]);
+            assert!(status.status.success(), "round {round}: {}", said(&status));
+        } else {
+            assert_eq!(
+                good.status.code(),
+                Some(1),
+                "round {round}: {}",
+                said(&good)
+            );
+            assert!(
+                said(&good).contains(LOCKED),
+                "round {round}: {}",
+                said(&good)
+            );
+        }
+        // The one without a passphrase made no key: it failed for that, was refused, or
+        // came after the node existed and kept its identity.
+        let text = said(&failing);
+        assert!(
+            text.contains("cannot create the device key")
+                || text.contains(LOCKED)
+                || text.contains("Already initialized"),
+            "round {round}: {text}"
+        );
+        // Whatever happened, a later `init` makes or keeps a node there.
+        node.ok(&["init", "--keystore", "file"]);
+        node.ok(&["status"]);
+    }
+    assert!(made > 0, "no round ever made a node");
 }
 
 #[test]

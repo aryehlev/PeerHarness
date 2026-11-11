@@ -7,9 +7,18 @@
 //! has to reach a person, and there it would reach the agent.
 //!
 //! An `init` that fails before the node has a device key leaves the home as it found
-//! it ([`Made`]): it takes away the files and directories this run created and nothing
-//! else. Without that, a first run with no passphrase to read left a config file and a
-//! database behind, and every later command said the home had no identity.
+//! it ([`Made`]): it takes away the files and directories this run created, puts back a
+//! config file it rewrote, and touches nothing else. Without that, a first run with no
+//! passphrase to read left a config file and a database behind, and every later command
+//! said the home had no identity.
+//!
+//! "What this run created" is only known to a run that is alone in the home. `init`
+//! therefore holds an exclusive lock on the home directory for as long as it runs
+//! ([`HomeLock`]), and a second `init` for the same home is refused while it does. What
+//! was there is looked at under that lock. Without it, a run that waited at a prompt
+//! and then failed took away the config file and the database that another `init` had
+//! made in the meantime, with a circle in it. Where the lock cannot be had (a file
+//! system without locks, or not Unix), a failed run removes nothing at all.
 
 use anyhow::{Context, Result};
 use ph_identity::{DeviceIdentity, KeyStore, KeystoreBackend, OsKeyStore};
@@ -66,8 +75,11 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     }
 
     // What is not there yet is what this run makes, and takes away again if it fails.
-    let made = Made::before(home);
-    home.ensure()?;
+    // The home itself is looked at before it is created, everything in it once this
+    // run is the only `init` in it.
+    let root_was_missing = is_missing(home.root());
+    let lock = HomeLock::acquire(home)?;
+    let made = Made::before(home, root_was_missing);
     if let Some(m) = mode_of(home.root()) {
         if m & 0o077 != 0 {
             set_mode(home.root(), 0o700)?;
@@ -148,8 +160,10 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     let (store, ks, dev) = match keyed {
         Ok(keyed) => keyed,
         Err(e) => {
-            // The closure's database handle is closed by now.
-            if !key_in_keystore.get() {
+            // The closure's database handle is closed by now. Nothing is taken away
+            // unless this run was alone in the home, and nothing once the database
+            // holds an identity, whoever put it there.
+            if !key_in_keystore.get() && lock.held() && !has_identity(home) {
                 made.undo(home);
             }
             return Err(e);
@@ -167,37 +181,140 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     Ok(report(ctx, &id, true))
 }
 
+/// Whether nothing is at `path`: no file, no directory, no link. Only "not found"
+/// counts. A path that cannot be looked at (no permission, an I/O error) is taken as
+/// there, and so as not this run's to remove.
+fn is_missing(path: &std::path::Path) -> bool {
+    matches!(
+        std::fs::symlink_metadata(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// Whether the database of `home` holds a device identity now.
+fn has_identity(home: &Home) -> bool {
+    home.db_path().is_file()
+        && Store::open(home.db_path())
+            .ok()
+            .and_then(|store| store.identity().ok().flatten())
+            .is_some()
+}
+
+/// The exclusive lock `init` holds on the home directory while it runs. The operating
+/// system drops it with the process, however that ends. It is a lock on the directory
+/// itself, so there is no lock file to leave behind or to take away.
+struct HomeLock(Option<std::fs::File>);
+
+impl HomeLock {
+    /// Creates the home if it is missing and locks it. Refuses when another `init`
+    /// holds the lock. Where the file system has no locks the run goes on without one,
+    /// and [`Self::held`] says so.
+    #[cfg(unix)]
+    fn acquire(home: &Home) -> Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+
+        // An `init` that fails removes a home it created. If that happens between
+        // creating the directory here and locking it, the lock is on a directory that
+        // is gone: look at what the path names once the lock is held, and start again
+        // if it is another directory.
+        for _ in 0..16 {
+            home.ensure()?;
+            let dir = match std::fs::File::open(home.root()) {
+                Ok(dir) => dir,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(anyhow::Error::new(e)
+                        .context(format!("cannot open {}", home.root().display())))
+                }
+            };
+            match dir.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(anyhow::anyhow!(
+                        "another `peerharness init` is running for this home: finish or \
+                         stop it first"
+                    ))
+                }
+                Err(std::fs::TryLockError::Error(_)) => return Ok(Self(None)),
+            }
+            let same = match (dir.metadata(), std::fs::metadata(home.root())) {
+                (Ok(locked), Ok(named)) => {
+                    locked.dev() == named.dev() && locked.ino() == named.ino()
+                }
+                _ => false,
+            };
+            if same {
+                return Ok(Self(Some(dir)));
+            }
+        }
+        Err(anyhow::anyhow!(
+            "the home directory keeps being removed while it is set up: is another \
+             `peerharness init` running for it?"
+        ))
+    }
+
+    #[cfg(not(unix))]
+    fn acquire(home: &Home) -> Result<Self> {
+        home.ensure()?;
+        Ok(Self(None))
+    }
+
+    /// Whether this run holds the lock, and so is the only `init` in the home.
+    fn held(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
 /// What was missing from a home before `init` touched it, and so is this run's to take
 /// away if it fails before the node has a device key.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Made {
     root: bool,
     config: bool,
     database: bool,
     keys_dir: bool,
+    /// The bytes of a config file that was there, which this run rewrites before the
+    /// step that can fail: put back by [`Self::undo`].
+    config_was: Option<Vec<u8>>,
 }
 
 impl Made {
-    /// Looks at `home` before anything is created. A path that is there in any form (a
-    /// file, a directory, a link) is not this run's.
-    fn before(home: &Home) -> Self {
-        let missing = |p: std::path::PathBuf| std::fs::symlink_metadata(p).is_err();
+    /// Looks at `home` under the lock, before anything in it is created. A path that
+    /// is there in any form (a file, a directory, a link) is not this run's.
+    /// `root_was_missing` is what was seen before the home itself was created.
+    fn before(home: &Home, root_was_missing: bool) -> Self {
+        let config = is_missing(&home.config_path());
         Self {
-            root: missing(home.root().to_path_buf()),
-            config: missing(home.config_path()),
-            database: missing(home.db_path()),
-            keys_dir: missing(home.keys_dir()),
+            root: root_was_missing,
+            config,
+            database: is_missing(&home.db_path()),
+            keys_dir: is_missing(&home.keys_dir()),
+            config_was: (!config)
+                .then(|| {
+                    crate::home::read_bounded_file(
+                        &home.config_path(),
+                        crate::config::MAX_CONFIG_BYTES,
+                    )
+                    .ok()
+                })
+                .flatten(),
         }
     }
 
     /// Takes away what this run created: the config file, the database with the two
     /// files SQLite keeps next to it, and the keys directory and the home itself when
-    /// they are empty. A directory that holds anything else stays, so nothing that was
-    /// there before, and no key, is ever removed. Failures are ignored: the error that
-    /// brought us here is the one to report.
+    /// they are empty. A config file that was there gets back the bytes it had. A
+    /// directory that holds anything else stays, so nothing that was there before, and
+    /// no key, is ever removed. Failures are ignored: the error that brought us here is
+    /// the one to report.
     fn undo(self, home: &Home) {
         if self.config {
             let _ = std::fs::remove_file(home.config_path());
+        } else if let Some(was) = &self.config_was {
+            let now = std::fs::read(home.config_path()).ok();
+            if now.as_deref() != Some(was.as_slice()) {
+                let _ = crate::home::write_private_file(&home.config_path(), was);
+            }
         }
         if self.database {
             let db = home.db_path();
