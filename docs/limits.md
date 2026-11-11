@@ -28,9 +28,10 @@ The other limits:
 * **The agents besides Claude Code were connected from their documentation and
   source, not tried in a real session** (ADR-050). In particular:
   * Google Antigravity documents no variable that marks the commands its agent runs.
-    PeerHarness checks `ANTIGRAVITY_AGENT`, which other tools check, but a command
-    Antigravity runs may carry no mark and look like one you typed. Its tools are
-    marked in every case.
+    PeerHarness checks `ANTIGRAVITY_AGENT`, which its program (1.5.6) contains as
+    `ANTIGRAVITY_AGENT=1` and other tools check, but this was not seen in a session: a
+    command Antigravity runs may carry no mark and look like one you typed. Its tools
+    are marked in every case.
   * Codex and Antigravity run their agent's shell in a sandbox by default, which may
     keep `peerharness note` from writing to `~/.peerharness`. Their MCP servers run
     outside it, so the `note` tool works.

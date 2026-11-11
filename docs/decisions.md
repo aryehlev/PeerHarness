@@ -3280,8 +3280,10 @@ Antigravity, which publishes none, its documentation at antigravity.google/docs.
   marks a command the user types inside the agent (Codex's `!`, everything under Pi or
   opencode v1), that command is refused too: the guard errs towards the owner's own
   terminal. Antigravity documents no mark. `ANTIGRAVITY_AGENT` is checked because the
-  tools that detect Antigravity check it, and the limit is said where the owner
-  connects it and in `docs/limits.md`. `AI_AGENT` counts for any agent that sets it.
+  tools that detect Antigravity check it and its program (agy 1.5.6) contains the
+  literal `ANTIGRAVITY_AGENT=1` beside the variables of its shell tool; the MCP
+  servers it starts do not get it. The limit is said where the owner connects it and
+  in `docs/limits.md`. `AI_AGENT` counts for any agent that sets it.
 * **Claude Code's directory stays where rules are installed and decided.** Installing,
   holding, removing, `rule_installs` and every invariant of ADR-023, ADR-030 and
   ADR-042 are unchanged. A connected agent that does not read that directory gets
