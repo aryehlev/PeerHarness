@@ -29,7 +29,7 @@
       "@type": "SoftwareApplication",
       "@id": "https://aryehlev.github.io/PeerHarness/#software",
       "name": "PeerHarness",
-      "description": "Your team votes on how its AI coding agents behave. You correct your coding agent in Claude Code, and PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it. There is no server.",
+      "description": "Your team votes on how its AI coding agents behave. You correct your coding agent, and PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it. There is no server.",
       "url": "https://aryehlev.github.io/PeerHarness/",
       "image": "https://aryehlev.github.io/PeerHarness/og.png",
       "applicationCategory": "DeveloperApplication",
@@ -53,7 +53,7 @@
         {
           "@type": "Question",
           "name": "What is PeerHarness?",
-          "acceptedAnswer": { "@type": "Answer", "text": "PeerHarness is an open-source tool for teams that work in Claude Code. It turns a correction you give your coding agent into a one-sentence rule. You keep the rule for your own agent, or propose it to your team: once a majority approves, it is installed for every member's agent." }
+          "acceptedAnswer": { "@type": "Answer", "text": "PeerHarness is an open-source tool for teams that work with AI coding agents: Claude Code, Codex, opencode, Pi, Antigravity and DeepSeek Harness. It turns a correction you give your coding agent into a one-sentence rule. You keep the rule for your own agent, or propose it to your team: once a majority approves, it is installed for every member's agent." }
         },
         {
           "@type": "Question",
@@ -73,7 +73,7 @@
         {
           "@type": "Question",
           "name": "Which agents and systems does it work with?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only SKILL.md file, an Agent Skill, and PeerHarness never executes it." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Claude Code on macOS. It also connects Codex, opencode, Pi, Google Antigravity and DeepSeek Harness, which were set up from their documentation and not yet tried in a session. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only SKILL.md file, an Agent Skill, and PeerHarness never executes it." }
         },
         {
           "@type": "Question",
@@ -121,14 +121,14 @@
 
 <section class="hero wrap">
   <div class="hero-text">
-    <p class="label">For teams that work in Claude Code</p>
+    <p class="label">For teams that work with AI coding agents</p>
     <h1>Your team <span class="pen-under">votes<svg viewBox="0 0 100 12" preserveAspectRatio="none" aria-hidden="true"><path d="M2 8C27 3.5 63 2.5 98 6"/></svg></span> on how its AI coding agents behave.</h1>
     <p class="lede">You correct your coding agent. PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it.</p>
     <p class="cta">
       <a class="btn btn-primary" href="#setup">Set it up</a>
       <a class="btn" href="https://github.com/aryehlev/PeerHarness">Read the source</a>
     </p>
-    <p class="status"><strong>Early and not audited.</strong> For Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. Read the <a href="#limits">limits</a> before you rely on it.</p>
+    <p class="status"><strong>Early and not audited.</strong> For Claude Code on macOS, and it connects Codex, opencode, Pi, Antigravity and DeepSeek Harness too. On Linux it works from a terminal, without the windows. Windows is not supported. Read the <a href="#limits">limits</a> before you rely on it.</p>
   </div>
 
   <figure class="ballot-fig">
@@ -154,9 +154,9 @@
 <section id="try" class="sec">
   <div class="wrap">
     <header class="sec-head">
-      <p class="label">§ 1 · Try it in Claude Code</p>
+      <p class="label">§ 1 · Try it in your agent</p>
       <h2>Say it to your agent.</h2>
-      <p>Start a new Claude Code session and say these, one at a time. You need no teammate for it.</p>
+      <p>Start a new session of your agent and say these, one at a time. You need no teammate for it.</p>
     </header>
 
     <div class="try-grid">
@@ -297,7 +297,8 @@ If this conflicts with what the user asks for in the current session, follow the
   <div class="wrap">
     <header class="sec-head">
       <p class="label">§ 4 · Set it up</p>
-      <h2>Paste this into Claude Code.</h2>
+      <h2>Paste this into your coding agent.</h2>
+      <p>Claude Code, Codex, opencode, Pi, Antigravity or DeepSeek Harness.</p>
     </header>
 
     <div class="prompt">
@@ -310,7 +311,7 @@ If this conflicts with what the user asks for in the current session, follow the
    run it yourself: it would be refused. Ask me to run this in my own terminal:
    ~/.local/bin/peerharness setup
 
-Then tell me to start a new Claude Code session, and what I can ask you there.</pre>
+Then tell me to start a new session, and what I can ask you there.</pre>
     </div>
 
     <div class="notes">
@@ -320,14 +321,14 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
       </div>
       <div>
         <h3>You run <code>setup</code>, once</h3>
-        <p>It is where you allow what your agent may start for you, so your agent is refused it. It creates your key and database and connects PeerHarness to Claude Code: two hooks, one skill and its tools. It shows each change before it makes it and asks you to confirm.</p>
+        <p>It is where you allow what your agent may start for you, so your agent is refused it. It creates your key and database and connects PeerHarness to Claude Code (two hooks, one skill and its tools) and to the other agents it finds. It shows each change before it makes it and asks you to confirm.</p>
       </div>
       <div>
         <h3>What it stores</h3>
         <p>One hook keeps a redacted copy of each prompt you type, so that corrections can be noticed. The copies stay on your machine, for 14 days by default, in a database that is not encrypted.</p>
       </div>
     </div>
-    <p class="after">Then start a new Claude Code session and <a href="#try">try it</a>. More: <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md#what-setup-adds-and-what-is-stored">what setup adds and stores</a>, and <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md#take-it-out-again">how to take it out again</a>.</p>
+    <p class="after">Then start a new session of your agent and <a href="#try">try it</a>. More: <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md#what-setup-adds-and-what-is-stored">what setup adds and stores</a>, and <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/terminal.md#take-it-out-again">how to take it out again</a>.</p>
   </div>
 </section>
 
@@ -340,7 +341,7 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
     </header>
 
     <ul class="plain limits">
-      <li><strong>The agent guard is not a sandbox.</strong> A session is recognized by an environment variable, and only Claude Code's by default. A process running as you that hides it can run the same commands with <code>--yes</code>. Your agent chooses when a window appears: reading it before you click is your part.</li>
+      <li><strong>The agent guard is not a sandbox.</strong> A session is recognized by an environment variable that the agent sets, and Antigravity documents none. A process running as you that hides it can run the same commands with <code>--yes</code>. Your agent chooses when a window appears: reading it before you click is your part.</li>
       <li><strong>A rule is text that your agent acts on</strong>, and your agent can run commands. The risk scanner and the redaction are heuristics. Read a rule as you would a script.</li>
       <li><strong>Joining installs rules you have not read.</strong> The join window shows the charter and how many rules it carries, not their text. You can opt out of any afterwards.</li>
       <li><strong>The founder can revoke a device without a vote</strong>, for a lost laptop. Its ballots stop counting, so a result that needed one is undone. The founder's key also signs every change of the roll: if it is lost, nobody can be admitted or removed.</li>
@@ -362,7 +363,7 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
     <div class="qa">
       <div>
         <h3>What is PeerHarness?</h3>
-        <p>PeerHarness is an open-source tool for teams that work in Claude Code. It turns a correction you give your coding agent into a one-sentence rule. You keep the rule for your own agent, or propose it to your team: once a majority approves, it is installed for every member's agent.</p>
+        <p>PeerHarness is an open-source tool for teams that work with AI coding agents: Claude Code, Codex, opencode, Pi, Antigravity and DeepSeek Harness. It turns a correction you give your coding agent into a one-sentence rule. You keep the rule for your own agent, or propose it to your team: once a majority approves, it is installed for every member's agent.</p>
       </div>
       <div>
         <h3>How do I share a Claude Code rule with my team?</h3>
@@ -378,7 +379,7 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
       </div>
       <div>
         <h3>Which agents and systems does it work with?</h3>
-        <p>Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only <code>SKILL.md</code> file, an Agent Skill, and PeerHarness never executes it.</p>
+        <p>Claude Code on macOS. It also connects Codex, opencode, Pi, Google Antigravity and DeepSeek Harness, which were set up from their documentation and not yet tried in a session. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only <code>SKILL.md</code> file, an Agent Skill, and PeerHarness never executes it.</p>
       </div>
       <div>
         <h3>What does it cost, and how far along is it?</h3>

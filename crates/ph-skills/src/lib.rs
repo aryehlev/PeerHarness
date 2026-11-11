@@ -45,6 +45,7 @@ pub mod error;
 pub mod frontmatter;
 mod fsutil;
 pub mod install;
+pub mod mirror;
 pub mod render;
 pub mod scanner;
 pub mod store;
@@ -66,6 +67,7 @@ pub use install::{
     InstallOutcome, InstallState, Installer, SkillScope, UninstallOptions, UninstallOutcome,
     CLAUDE_SKILLS_DIR_ENV, MARKER_FILE_NAME,
 };
+pub use mirror::{mirror, remove_copies, Blocked, BlockedWhy, MirrorReport};
 pub use render::{normalize_body, render_skill_md};
 pub use scanner::{has_high_risk, max_severity, scan, RiskFinding, Severity};
 pub use store::{BundleStore, PutOutcome};

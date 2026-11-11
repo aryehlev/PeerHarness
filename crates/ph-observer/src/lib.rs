@@ -9,6 +9,8 @@
 //! * [`settings`]: idempotent install/remove/status of our hook entries in a Claude Code
 //!   `settings.json`, with backups and atomic writes. [`settings::HookCommand`] renders
 //!   the POSIX-shell-safe command line.
+//! * [`agent_config`]: the one entry PeerHarness writes in another coding agent's
+//!   configuration (its MCP server), with the same backups and atomic writes.
 //! * [`spool`]: the append-only JSON-lines fallback spool used when SQLite is busy.
 //! * [`notify`]: the pure throttle that keeps unsolicited notifications to at most two
 //!   a day, with a per-topic cooldown and quiet hours.
@@ -41,6 +43,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod agent_config;
 mod fsutil;
 pub mod hook;
 mod json_doc;

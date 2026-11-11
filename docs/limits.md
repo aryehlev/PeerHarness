@@ -6,8 +6,9 @@ of them are in [security-model.md](security-model.md). How each part was checked
 and what was never tried, is in [checked.md](checked.md).
 
 **The agent guard is not a wall.** Consent steps recognize an agent's session by an
-environment variable: the one Claude Code sets, or `PEERHARNESS_AGENT_SESSION` for
-another agent's wrapper. An agent whose shell sets neither is refused only where a
+environment variable: the one Claude Code sets, the ones Codex, opencode, Pi and
+DeepSeek Harness set ([terminal.md](terminal.md#other-coding-agents)), or
+`PEERHARNESS_AGENT_SESSION` for another agent's wrapper. An agent whose shell sets neither is refused only where a
 step finds no terminal, with a message that tells it to stop and ask you, and nothing
 keeps it from passing `--yes`.
 
@@ -23,6 +24,24 @@ when you ask, without a window. The longer account is section 4.17 of
 [docs/security-model.md](security-model.md#417-llm-generated-decisions-and-the-agent-acting-for-its-user).
 
 The other limits:
+
+* **The agents besides Claude Code were connected from their documentation and
+  source, not tried in a real session** (ADR-050). In particular:
+  * Google Antigravity documents no variable that marks the commands its agent runs.
+    PeerHarness checks `ANTIGRAVITY_AGENT`, which its program (1.5.6) contains as
+    `ANTIGRAVITY_AGENT=1` and other tools check, but this was not seen in a session: a
+    command Antigravity runs may carry no mark and look like one you typed. Its tools
+    are marked in every case.
+  * Codex and Antigravity run their agent's shell in a sandbox by default, which may
+    keep `peerharness note` from writing to `~/.peerharness`. Their MCP servers run
+    outside it, so the `note` tool works.
+  * opencode reads both `~/.claude/skills` and `~/.agents/skills`. With Codex, Pi or
+    DeepSeek Harness connected too, it finds two identical copies of each rule; its
+    second major version keeps one, its first keeps the later and warns.
+  * Pi reads a project's skills only after its user trusted the project.
+  * DeepSeek Harness's tools entry is shown for you to add: PeerHarness does not edit
+    its YAML patches.
+  * The hooks, and the notice at the end of a turn, are Claude Code's alone.
 
 * **The founder's key is needed to change the roll.** It notarizes charter changes. If
   it is lost the circle keeps working (members still sync, propose, vote and repeal),

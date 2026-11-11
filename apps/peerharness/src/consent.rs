@@ -37,10 +37,39 @@ pub fn interactive() -> bool {
     std::io::stdin().is_terminal()
 }
 
-/// Environment variables that mark a shell started by a coding agent. `CLAUDECODE` is set
-/// by Claude Code in every command it runs; `PEERHARNESS_AGENT_SESSION` lets any other
-/// agent wrapper (and the tests) say the same thing.
-pub const AGENT_SESSION_ENV: [&str; 2] = ["CLAUDECODE", "PEERHARNESS_AGENT_SESSION"];
+/// The variable PeerHarness itself sets to mark an agent's session: the MCP server sets
+/// it for every tool (`peerharness mcp`), and any agent wrapper (and the tests) may set it
+/// too.
+pub const PEERHARNESS_SESSION_ENV: &str = "PEERHARNESS_AGENT_SESSION";
+
+/// Environment variables that mark a command run by a coding agent (ADR-050). Each was
+/// read in the agent's own source or documentation (checked 2026-11-12), and a few also
+/// mark the commands its user types inside the agent, which is refused as well: that
+/// errs on the side of the owner's own terminal.
+///
+/// * `CLAUDECODE`: Claude Code, in every command it runs.
+/// * `CODEX_CI`, `CODEX_TOOL_CALL_ID`: Codex, in every command its agent runs;
+///   `CODEX_THREAD_ID` also in the commands its user types with `!`.
+/// * `OPENCODE`: opencode, in its agent's shell (and in everything it starts, in its
+///   first major version).
+/// * `PI_CODING_AGENT`: Pi, in everything it starts.
+/// * `AI_AGENT`: the name of the agent, set by Pi and opencode, and by more agents as they
+///   adopt it.
+/// * `ANTIGRAVITY_AGENT`: what tools that detect Google Antigravity look for. Google does
+///   not document it, so a command Antigravity runs may carry no mark at all.
+/// * `DSH_SHELL`: DeepSeek Harness, in every shell command of its model.
+pub const AGENT_SESSION_ENV: [&str; 10] = [
+    "CLAUDECODE",
+    PEERHARNESS_SESSION_ENV,
+    "CODEX_CI",
+    "CODEX_TOOL_CALL_ID",
+    "CODEX_THREAD_ID",
+    "OPENCODE",
+    "PI_CODING_AGENT",
+    "AI_AGENT",
+    "ANTIGRAVITY_AGENT",
+    "DSH_SHELL",
+];
 
 /// Whether this process appears to run inside a coding agent's session.
 pub fn in_agent_session() -> bool {

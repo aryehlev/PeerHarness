@@ -32,10 +32,10 @@ apps/peerharness depends on everything and is the only place crates are wired to
 | `ph-identity` | keystores, device identity, circle authority (credentials, revocations, charter issuance), invites, `MembershipRegistry` | store private keys anywhere but the keystore; decide whether a charter change was voted |
 | `ph-store` | SQLite schema, migrations, typed repositories | make authorization decisions |
 | `ph-network` | libp2p QUIC transport, framing, rate limits; opt-in LAN discovery; opt-in internet mode (lookup by peer id, relay reservations, hole punching) | know about circles or authorize anything; dial a peer the application named unless told to |
-| `ph-observer` | hook parsing, settings install/remove, spool, notification throttle | open paths from hook payloads |
+| `ph-observer` | hook parsing, settings install/remove, the tools entry in another agent's configuration (`agent_config`), spool, notification throttle | open paths from hook payloads |
 | `ph-learning` | detectors, free-text notes, drafts, advisory providers | let provider or agent output drive any decision |
 | `ph-governance` | incoming-event authorization, the roll as membership (`RollOracle`), read rules, tally, result verification, rules in force, charter succession, conflicts, anti-spam, adoption gate | do storage or networking; read a clock when counting |
-| `ph-skills` | `SKILL.md` parsing and validation, the instruction-only rule, scanner, bundles, bundle store, installer | execute skill content |
+| `ph-skills` | `SKILL.md` parsing and validation, the instruction-only rule, scanner, bundles, bundle store, installer, copies for other agents (`mirror`) | execute skill content |
 
 Only `apps/peerharness` may depend on `ph-store` or `ph-network`. Library crates talk
 through types and traits from `ph-core` and `ph-protocol`. Integration tests that run
@@ -77,6 +77,13 @@ stop, leave the feature disabled, and document the blocker.
 * A noted rule is never installed without its owner's yes. A note comes from an agent,
   and an agent repeats what it read. Do not add a setting, a mode or a default that
   keeps a rule by itself, and do not let `note` or a hook install anything.
+* An agent's session is recognized by every variable in `consent::AGENT_SESSION_ENV`
+  (ADR-050): Claude Code's, Codex's, opencode's, Pi's, Antigravity's, DeepSeek
+  Harness's, `AI_AGENT` and `PEERHARNESS_AGENT_SESSION`. Do not take one out unless the
+  agent's own source shows it is gone, and add the mark of an agent before PeerHarness
+  connects to it. Connecting or disconnecting an agent (`watch <agent>`) is refused
+  inside a session, like `setup`, and allows its tools nothing the owner did not allow
+  for every agent.
 * Inside a session a note is always an agent's note, whatever flags were passed
   (ADR-042): its label and the cap on waiting notes follow
   `consent::in_agent_session()`, never `--from-agent` alone.
@@ -361,7 +368,16 @@ stop, leave the feature disabled, and document the blocker.
   high-risk finding (architecture 10.9). It is atomic, never overwrites an unmanaged
   directory without `--force-overwrite-unmanaged`, and uninstall/rollback touch only
   managed files.
-* Changes to Claude settings are idempotent, backed up and atomic.
+* Changes to Claude settings are idempotent, backed up and atomic. So is the tools entry
+  in another agent's configuration (`ph_observer::agent_config`), which changes or
+  removes only an entry that is exactly what PeerHarness writes, never rewrites a file
+  it cannot parse, and never re-serializes a TOML file.
+* Rules are installed and decided in Claude Code's skills directory only (ADR-050).
+  Another agent's directory holds copies (`ph_skills::mirror`, `crate::copies`) of the
+  managed, unmodified skills there, and only for an agent the owner connected. A copy
+  never replaces or removes a skill PeerHarness did not put there or one that was
+  edited. Do not let a vote, a hold or an opt-out be decided from a copy, and do not
+  install into another agent's directory by any other path.
 * `reset` deletes only what PeerHarness itself put into its home (`Home::delete_own`,
   `home::is_own_entry`, ADR-051). Never remove a home with everything in it: a home is
   whatever folder its owner named. A file or folder PeerHarness starts to keep in its
@@ -402,9 +418,14 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
   `crates/ph-network/tests/common/hub.rs` (the app reaches it through
   `PEERHARNESS_INTERNET_BOOTSTRAP` and `PEERHARNESS_INTERNET_PRIVATE`). A test that
   needs the public network is `#[ignore]`d and uses throwaway keys.
-* Tests that play the person remove `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` from
-  the child process (the suite itself may be run by a coding agent). Tests of the
+* Tests that play the person remove every variable of `consent::AGENT_SESSION_ENV`
+  from the child process (the suite itself may be run by a coding agent). Tests of the
   agent-session guard set one of them.
+* No test touches a developer's other agents. A debug build finds the files of Codex,
+  opencode, Pi, Antigravity and DeepSeek Harness only under `PEERHARNESS_AGENTS_HOME`,
+  and never in the real home directory or through their own variables; a test that
+  connects one sets it, and `HOME`, to temporary directories (see
+  `apps/peerharness/tests/other_agents.rs`). Do not make a debug build look elsewhere.
 * No test opens a real window or shows a real notification. A test that turns
   confirmation windows on sets `PEERHARNESS_TEST_WINDOW_BIN` on every command it runs
   (see `apps/peerharness/tests/agent_windows.rs`), and a test that starts `daemon

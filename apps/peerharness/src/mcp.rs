@@ -39,7 +39,7 @@ use serde_json::{json, Map, Value};
 
 use crate::commands::Ctx;
 use crate::config::{Asked, Config};
-use crate::consent::AGENT_SESSION_ENV;
+use crate::consent::PEERHARNESS_SESSION_ENV;
 use crate::daemon_info::DaemonInfo;
 use crate::home::Home;
 
@@ -460,7 +460,7 @@ impl Server {
             .args(args)
             // The one line that keeps consent where it is: whatever this server's own
             // environment says, what it runs is an agent acting.
-            .env(AGENT_SESSION_ENV[1], "1")
+            .env(PEERHARNESS_SESSION_ENV, "1")
             .stdin(Stdio::null());
         command
     }

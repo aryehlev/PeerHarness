@@ -370,6 +370,16 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
             Err(e) => tracing::warn!(error = %e, "could not settle a circle after a sync"),
         }
     }
+    // The other connected agents' copies follow (ADR-050). The settings are read again:
+    // the owner may have connected an agent since this daemon started.
+    if let Ok(config) = crate::config::Config::load(&node.home) {
+        let synced = crate::copies::sync(&config, Some(&node.store));
+        let written: usize = synced.iter().map(|s| s.report.written.len()).sum();
+        let removed: usize = synced.iter().map(|s| s.report.removed.len()).sum();
+        if written + removed > 0 {
+            tracing::info!(written, removed, "copies for other agents updated");
+        }
+    }
     Ok(changes)
 }
 

@@ -1,5 +1,6 @@
 //! One module per command group.
 
+pub mod agent;
 pub mod circle;
 pub mod demo;
 pub mod doctor;
@@ -42,7 +43,26 @@ impl Ctx {
     }
 }
 
+/// Runs `command`, then brings the copies of the managed skills for the other connected
+/// agents in line (`crate::copies`), whether or not the command succeeded: a command
+/// that failed half way may have installed or removed a skill already.
 pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
+    // `mcp` serves until its client goes and its tools run this binary, which follows
+    // on its own; `hook` must stay fast and silent; `reset` deletes the node; `demo`
+    // works in homes of its own.
+    let follows = !matches!(
+        command,
+        Command::Mcp | Command::Hook(_) | Command::Reset(_) | Command::Demo
+    );
+    let before = follows.then(|| crate::copies::before(ctx));
+    let result = run(ctx, command);
+    if let Some(before) = before {
+        crate::copies::follow(ctx, before);
+    }
+    result
+}
+
+fn run(ctx: &Ctx, command: Command) -> Result<Report> {
     use crate::cli::{ObserveCommand, WatchAgent};
     match command {
         Command::Init(a) => init::run(ctx, a),
@@ -62,6 +82,11 @@ pub fn dispatch(ctx: &Ctx, command: Command) -> Result<Report> {
         }
         Command::Watch { agent } => match agent {
             WatchAgent::Claude(a) => watch::claude(ctx, a),
+            WatchAgent::Codex(a) => agent::run(ctx, crate::agents::Agent::Codex, &a),
+            WatchAgent::Opencode(a) => agent::run(ctx, crate::agents::Agent::Opencode, &a),
+            WatchAgent::Pi(a) => agent::run(ctx, crate::agents::Agent::Pi, &a),
+            WatchAgent::Antigravity(a) => agent::run(ctx, crate::agents::Agent::Antigravity, &a),
+            WatchAgent::Deepseek(a) => agent::run(ctx, crate::agents::Agent::Deepseek, &a),
         },
         // Serves until its client closes standard input, and prints no report: standard
         // output belongs to the protocol.
