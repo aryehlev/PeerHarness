@@ -599,6 +599,7 @@ fn stop(child: &mut Child) {
     #[cfg(unix)]
     let asked = Command::new("/bin/kill")
         .args(["-TERM", &child.id().to_string()])
+        .env_remove(ph_identity::PASSPHRASE_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -2163,6 +2163,16 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
              to remove the member, `peerharness circle remove {m}`."
         ));
     }
+    if owner.is_none() {
+        // A key is long, and a revocation is for ever: say when it names nobody the
+        // founder can see on the roll (ADR-051). It is not refused, because a device
+        // that was voted off, or one about to be admitted, can be what is meant.
+        preview.push_str(&format!(
+            "\n  No member on the roll of charter {} has that device. If you meant a \
+             member's device, check the key before you continue.",
+            charter.seq
+        ));
+    }
     if !reason.is_empty() {
         preview.push_str(&format!(
             "\nEvery member can read this reason, exactly as sent: {}",

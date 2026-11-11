@@ -1226,6 +1226,11 @@ The golden vectors tell a similar story end to end, including a charter change:
 
 ## 12. Agent providers (ph-learning, advisory only)
 
+No command of the binary calls a provider in this version (ADR-051 corrected the
+documents that read as if one did). The code and its tests are in `ph-learning`, the
+config key `learning.provider` is checked when the config is read, and `doctor`
+reports it. This section is the contract for a command that uses one.
+
 * `trait AgentProvider { fn name(); fn is_remote(); fn complete(&self, req: &AdvisoryRequest) -> Result<AdvisoryResponse> }`.
 * `ClaudeCodeCli`: spawns the user's own unmodified `claude` binary (path from
   `PEERHARNESS_CLAUDE_BIN` or `claude` on PATH) as

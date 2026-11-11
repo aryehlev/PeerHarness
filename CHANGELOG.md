@@ -155,6 +155,12 @@ database schema it writes.
   * **`proposal show` printed a rule nobody had voted on into the agent's session.**
     The text of a proposed rule now reaches a session only when that rule is installed
     on the machine. Its owner reads it in their terminal or in the window of a ballot.
+  * `setup` no longer hands `PEERHARNESS_PASSPHRASE` to the `claude` command it runs,
+    and the windows and notifications do not hand it to `osascript`.
+  * `circle revoke` says in its preview when no member on the roll has the device, so
+    a mistyped key is noticed before it is revoked for ever.
+  * The security model listed the programs PeerHarness starts wrongly, and read as if
+    an advisory provider could be called. No command calls one. `doctor` says so.
 
 ## 0.4.0 (2026-11-11)
 

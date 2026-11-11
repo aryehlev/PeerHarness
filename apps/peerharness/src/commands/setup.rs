@@ -387,9 +387,12 @@ fn register(ctx: &Ctx, yes: bool) -> Result<Tools> {
     let Some(claude) = claude_program() else {
         return Ok(Tools::NoClaude(line));
     };
+    // `claude` is another program: the passphrase of the key file is not in its
+    // environment (ADR-051), as it is not in an advisory provider's.
     let quiet = |args: &[&str]| {
         Command::new(&claude)
             .args(args)
+            .env_remove(ph_identity::PASSPHRASE_ENV)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -414,6 +417,7 @@ fn register(ctx: &Ctx, yes: bool) -> Result<Tools> {
     )?;
     let out = Command::new(&claude)
         .args(add_arguments(&server))
+        .env_remove(ph_identity::PASSPHRASE_ENV)
         .stdin(Stdio::null())
         .output();
     Ok(match out {

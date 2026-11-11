@@ -644,6 +644,40 @@ fn the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted() {
         2
     );
 
+    // A key that is on no roll can be revoked, and the preview says that nobody on the
+    // roll has it: a mistyped key cannot be taken back (ADR-051). Without an answer
+    // nothing is signed.
+    let stranger = Node::new(root, "stranger");
+    let out = alice
+        .cmd(&[
+            "circle",
+            "revoke",
+            &stranger.device_key(),
+            "--circle",
+            "team",
+        ])
+        .output()
+        .unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(
+        printed.contains("No member on the roll of charter 3 has that device."),
+        "{printed}"
+    );
+    // For a member's device the preview names the member and has no such line.
+    let out = alice
+        .cmd(&["circle", "revoke", "carol", "--circle", "team"])
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(printed.contains("(carol)"), "{printed}");
+    assert!(!printed.contains("No member on the roll"), "{printed}");
+
     let revoked = alice.run(&[
         "circle",
         "revoke",

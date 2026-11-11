@@ -247,6 +247,9 @@ stop, leave the feature disabled, and document the blocker.
   (ADR-051). The weak key-file parameters of the tests (`fast-insecure-test`) are
   held to the same: warned about wherever they are in force, at `init` and after,
   whether a flag or a config file turned them on.
+* `PEERHARNESS_PASSPHRASE` is taken out of the environment of every program
+  PeerHarness starts that is not PeerHarness itself (ADR-051): `claude` in `setup`,
+  `osascript`, `kill`, an advisory provider. A new child process gets the same line.
 * The circle root key is separate from every device key and never leaves its keystore.
 * The libp2p identity is the device key; authorization uses the transport-authenticated
   device key, never a claimed id.

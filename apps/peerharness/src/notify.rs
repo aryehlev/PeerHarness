@@ -200,8 +200,11 @@ impl Desktop {
     pub fn show(&self, text: &str) -> bool {
         let mut command = Command::new(&self.program);
         let input = if self.script {
-            // `-` reads the script from standard input.
-            command.arg("-");
+            // `-` reads the script from standard input. The program is the system's
+            // `osascript`, not PeerHarness: it does not get the passphrase of the key
+            // file (ADR-051). The tests' stand-in keeps the environment, because some
+            // of them run PeerHarness from it.
+            command.arg("-").env_remove(ph_identity::PASSPHRASE_ENV);
             applescript(text)
         } else {
             text.to_owned()

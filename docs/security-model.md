@@ -57,7 +57,9 @@ operating system's disk encryption.
 5. **Received content to human and agent.** Received questions, rationales and skills are
    untrusted text shown to a human and, once installed, read by an AI agent.
 6. **PeerHarness to an advisory provider.** Optional `claude -p`, `codex exec` or an
-   Ollama-compatible endpoint receive text PeerHarness sends them.
+   Ollama-compatible endpoint receive text PeerHarness sends them. In this version the
+   boundary is not crossed: the providers are code in `ph-learning` with its tests, and
+   no command of the binary calls one (ADR-051).
 7. **PeerHarness to the file system.** Skill installation and hook installation write
    into agent directories and settings files.
 8. **PeerHarness to the keystore.** The OS keychain or the encrypted key files.
@@ -371,14 +373,29 @@ Each entry gives the threat, the mitigation, and the risk that remains.
 * **Mitigation.** v0 distributes only `SKILL.md`; no scripts, assets or executables are
   accepted from peers, and nothing in PeerHarness executes skill content. A bundle that
   pre-approves tools (`allowed-tools`) or carries shell-injection syntax is refused
-  (4.10). The only
-  programs PeerHarness spawns are the optional advisory providers (`claude`, `codex`),
-  chosen by the local user, run with tools disabled, in an empty temporary directory,
-  with the keystore passphrase removed from their environment.
+  (4.10). The programs PeerHarness starts are these, and none of them comes from
+  received content (the list was wrong until ADR-051: it named the advisory providers
+  alone):
+  * itself: `peerharness mcp` runs every tool as a child process of the same binary
+    (ADR-038);
+  * `/usr/bin/osascript` on macOS, for a confirmation window (ADR-033) and for a
+    notification of `daemon --notify` (ADR-036). The path is fixed and not looked up on
+    `PATH`, and the text to show goes into the script as a string literal;
+  * `/bin/kill`, to end the daemon that a tool of `peerharness mcp` started;
+  * `claude`, the first one on `PATH`: `peerharness setup` asks it whether the tools
+    are registered (`claude mcp get`) and, after showing the line and asking the
+    person, registers them (`claude mcp add`, ADR-039);
+  * the advisory providers of `ph-learning` (`claude`, `codex`), run with tools
+    disabled in an empty temporary directory. No command of the binary calls a
+    provider in this version (section 5).
+
+  The passphrase of the key file (`PEERHARNESS_PASSPHRASE`) is taken out of the
+  environment of each of them except PeerHarness itself. For `claude` in `setup`, for
+  `osascript` and for `kill` that is so since ADR-051.
 * **Residual risk.** The coding agent may run commands that an installed skill tells it
-  to (4.10). The provider binary is whatever `PEERHARNESS_CLAUDE_BIN`,
-  `PEERHARNESS_CODEX_BIN`, the config or `PATH` points to; an attacker who controls those
-  already controls the user's environment.
+  to (4.10). `claude` is whatever `PATH` points to, and a provider binary whatever
+  `PEERHARNESS_CLAUDE_BIN`, `PEERHARNESS_CODEX_BIN`, the config or `PATH` points to; an
+  attacker who controls those already controls the user's environment.
 
 ### 4.13 Transcript and secret exfiltration
 
@@ -1235,7 +1252,11 @@ intended.
   every member who may read their scope sees who asked, who answered what, and who put
   an opt-out on record and why. A recorded opt-out never expires (4.25). An opt-out
   that is not announced stays on your machine.
-* **The advisory providers are remote inference.** `claude -p` (Claude Code) and
+* **The advisory providers are remote inference.** No command of the binary calls a
+  provider in this version: `learning.provider` in `config.toml` is checked and
+  `doctor` reports it, and nothing is sent anywhere because of it. What follows is how
+  the code in `ph-learning` works, for the day a command uses it. `claude -p` (Claude
+  Code) and
   `codex exec` (Codex CLI) send the previewed text to their vendor's service under the
   user's own account; that vendor's data handling then applies. They are off by default
   and require both a config opt-in and a per-invocation exact preview with confirmation.

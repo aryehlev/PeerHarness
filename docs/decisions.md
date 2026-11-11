@@ -4152,3 +4152,72 @@ session and in the terminal, and an installed one. The unit test
 `a_carried_rule_that_is_not_in_force_is_named_and_shown`
 (`apps/peerharness/src/amendment.rs`) covers the amendment. The audit's script was
 run again: the session gets the line in place of the text.
+
+### The passphrase of the key file is not handed to another program
+
+**Found.** `peerharness setup` registers its tools by running Claude Code's own
+`claude` command, twice. A person who had `PEERHARNESS_PASSPHRASE` set for the
+command, which is the documented way to run without a prompt, handed the passphrase
+of their key file to that program in its environment. The same held for
+`/usr/bin/osascript`, which shows the windows and the notifications, and for
+`/bin/kill`. The advisory providers of `ph-learning` already took it out.
+
+**Decision.** The variable is removed from the environment of every program
+PeerHarness starts that is not PeerHarness itself (`setup::register`,
+`window::Window::ask`, `notify`, `mcp::stop`). The child that `peerharness mcp`
+starts for a tool is the same binary and keeps it: it may have to unlock the key.
+
+**Not changed.** The stand-in programs of the tests (the window, the notifier) keep
+the environment, because some tests run PeerHarness from them. They exist in debug
+builds only.
+
+**Tests.** `the_passphrase_is_not_handed_to_claude_code`
+(`apps/peerharness/tests/setup.rs`): a stand-in `claude` records the variable on both
+runs and sees none. The removal for `osascript` and `kill` has no test: the real
+`osascript` is not run by a test that shows anything.
+
+### A revocation says when its key is on no roll
+
+**Found.** `circle revoke` takes a device key, a peer id or a member's name. For a
+key it signed a REVOCATION whoever the key belonged to, and a revocation is for ever.
+The preview named the member when the device was on the roll in force, and said
+nothing when it was not: a key with one wrong character was revoked as readily as a
+member's.
+
+**Decision.** When no member on the roll of the charter in force has the device, the
+preview says so and tells the founder to check the key. It is not refused. A device
+that the members voted off is on no roll and is a reason to revoke, and so is a
+device whose admission is still being voted on.
+
+**Tests.** `the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted`
+(`apps/peerharness/tests/circle_life.rs`) reads the preview for a stranger's key and
+for a member's.
+
+### What the documents said that the code does not do
+
+**Found.** Section 4.12 of the security model said that the only programs PeerHarness
+starts are the advisory providers. It starts four others: itself for every tool of
+`peerharness mcp`, `osascript` for windows and notifications, `kill` for the daemon a
+tool started, and `claude` in `setup`. And no command of the binary calls an advisory
+provider at all: the code and its tests are in `ph-learning`, the config key is
+checked, and `doctor` reported a provider as "enabled". The trust boundaries and the
+privacy section read as if text could leave through one today.
+
+**Decision.** The documents are corrected (security model, boundary 6, section 4.12
+and section 5; architecture, section 12), and `doctor` says that the setting is in
+the config file and that no command of this version calls a provider. No code was
+taken out: the invariant about providers in `AGENTS.md` is for the command that will
+use one.
+
+### Seen in passing and not changed
+
+* **Several RESULT events for one proposal.** When members vote at the same moment,
+  each node that sees the proposal pass signs a RESULT, and the audit saw four for
+  one proposal after a sync. A RESULT carries no authority and every node verifies
+  the count itself, so this is noise and not a fault. Nothing was changed.
+* **An import that defers is tried again in whole passes.** `import_lines` goes
+  through every line that could not be placed until a pass places nothing more. A
+  file whose records stand in the reverse of their order of dependence costs one
+  pass per record, each with its signature checks. The size of a file is bounded, and
+  the files PeerHarness writes are in order. Sorting the lines by what they depend on
+  first would fix it and was not done.
