@@ -65,6 +65,13 @@ database schema it writes.
     could end with a proposal that waits and the command that approves it. Every
     further line of such text now stands behind a mark, and who a question is from
     stands before its text.
+  * **A rule could stay installed after an opt-out or a repeal.** When the database
+    was busy at the wrong moment, a rule was installed without the record that a
+    vote installed it, and nothing removed it afterwards. The copy and the record
+    are now written together.
+  * **Opting out in one team could remove a rule another team still had in force.**
+    With the same rule in two teams, the copy now stays while you follow the other
+    team, and the command says how to take it out there too.
 
 ## 0.4.0 (2026-11-11)
 

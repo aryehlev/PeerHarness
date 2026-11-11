@@ -3495,3 +3495,52 @@ can need them. The JSON output carries the text as it is, as one string.
 (`apps/peerharness/tests/circle_life.rs`). By hand: the three reproductions of the
 audit with the new build.
 
+### A voted copy and its record are written together
+
+**Found.** `apply_rules` wrote a rule's copy into the agent's directory and then
+recorded in `rule_installs` that a vote had put it there. When the store was busy
+between the two for longer than a connection waits (five seconds: a long import in
+another terminal is enough), the command failed after the copy was written and before
+the record was. A managed copy with a rule's text and no record is, by ADR-042, the
+owner's own: every later settle found the rule "in place" and recorded nothing. From
+then on `rule opt-out` said it had opted out and removed nothing, and a repeal by the
+circle left the copy in the agent for good.
+
+**Decision.** The copy and its record are one write transaction of the store, and
+the write lock is taken before anything is written to the agent's directory. Where
+the store is busy, the settle fails before it installs, and the next one installs.
+Should the record still fail after the copy is written, the copy is taken out again.
+
+**Not changed.** A node that 0.4.0 left with such a copy cannot tell it from a copy
+its owner kept: `peerharness skills uninstall <name>` takes it out.
+
+**Tests.** `a_copy_is_never_installed_without_the_record_that_a_vote_installed_it`
+(`apps/peerharness/src/governance.rs`). By hand: the reproduction of the audit, an
+adoption while another connection holds the write lock for nine seconds.
+
+### A copy that another circle's rule needs is not removed
+
+**Found.** One node can be in two circles that have the same rule in force, with
+the same name and text. The vote of the circle that was settled first installs the
+copy and holds its record. The other finds its rule in place and records nothing.
+When the owner opted out in the first circle (or it repealed the rule, or was left),
+the copy was removed. The second circle's rule was in force, its owner had not opted
+out of it, and it was gone from the agent until that circle was settled again.
+
+**Decision.** Before `apply_rules` removes a copy for one circle, it looks for
+another circle of the node that would install exactly this copy now
+(`governance::relied_on_by`): the same name and text in force there, binding the
+owner, not opted out of, placed in the same directory, with the owner in `follow`
+mode and nothing about the text or the local policy holding it back. If there is one,
+the copy stays, the record passes to that circle in one write, and the command says
+so and names the opt-out for that circle (`Applied::kept_for`, among
+`left_in_place_lines`). Inside a session the line names no command.
+
+**Rejected.** Keeping the copy for a circle whose owner is in `ask` mode. A rule is
+installed there on the owner's yes, and the copy another circle's vote put there was
+never that. The copy goes, and that circle's rule waits for its owner.
+
+**Tests.** `a_copy_that_another_circles_rule_needs_stays_when_one_circle_lets_it_go`
+and `a_copy_is_not_kept_for_a_circle_whose_owner_is_asked`
+(`apps/peerharness/src/governance.rs`). By hand: the reproduction of the audit.
+

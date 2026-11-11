@@ -327,6 +327,13 @@ stop, leave the feature disabled, and document the blocker.
   voted copy that its owner edited is never deleted. It is left, its row is cleared,
   and the run that finds it names it (`Applied::left_in_place_lines`): every command
   that settles a circle prints those lines.
+* A voted copy and its row in `rule_installs` are written in one transaction of the
+  store, with the write lock taken before the copy is written (ADR-050): never
+  install first and record after. A copy that another circle of the node would
+  install now (`governance::relied_on_by`: same name, text and place, the owner
+  follows that circle and has not opted out there) is not removed when one circle
+  lets it go: its row passes to that circle. Do not keep a copy for a circle whose
+  owner is in `ask` mode.
 * Rights no vote overrides (10.10): no vote widens read access; a bundle that fails its
   digest or validity check is never installed; a high-risk finding always asks the
   owner; an opt-out always wins. `LocalPolicy` can hold a rule back on one node and can
