@@ -409,7 +409,7 @@ check records, on the version named. *Not tried* means no run is recorded.
 The whole suite was run on 2026-11-10, on Linux, at commit `e6fae27` (0.4.0), in a
 pre-launch check made with AI coding agents: 843 tests passed, none failed, and 10
 were skipped because they need multicast, the public network or the real OS keychain.
-After the fixes the suite was run again on Linux on 2026-11-11: TEST-COUNT-PLACEHOLDER. No run on macOS is recorded for the fixes.
+After the fixes the suite was run again on Linux on 2026-11-11: 973 tests passed, none failed and 10 were skipped. No run on macOS is recorded for the fixes.
 What that check was, what was fixed after it and what CI runs is in
 [docs/checked.md](docs/checked.md#the-pre-launch-check-and-the-runs-of-the-suite).
 
