@@ -763,23 +763,40 @@ name and proposal id, each rule that `next.carried` leaves out and each proposal
 lists that is not in force on this node, the latter with the rule's exact text, every
 line behind a mark. A proposal that the charter in force carries and this node does
 not hold (`RuleSet::missing_carried`) is listed as dropped too when `next.carried`
-leaves it out, by its id and without a name. A listed proposal that has the name of a
+leaves it out, by its id and without a name. When `next.carried` lists it, it is
+described as kept (`Added::kept_unheld`), with the words that this node cannot say
+whether that changes anything. A listed proposal that has the name of a
 rule in force is described by its outcome under 10.7 (`amendment::SameName`): it
 takes that rule's place, or it is the earlier of the two and nothing changes. The
 title follows, quoted, as the proposer's own words. `approve` is refused while the
 node cannot show what the amendment would put in force or take out of force
 (`amendment::Changes::unread`): a carried rule's text is not in the bundle store, a
 carried id is not an `adopt` proposal of this circle on this node, the amendment
-leaves out a carried proposal this node does not hold, or the named charter is not
-held. `reject` and `revise` are not refused. For a proposal that names a charter
+leaves out or keeps a carried proposal this node does not hold, or the named charter
+is not held. `reject` and `revise` are not refused. For a proposal that names a charter
 other than the current one the rules are not compared. The node that drafts is held
 to the same: `circle invite`, `remove`, `amend` and `device` are refused while
 `missing_carried` is not empty, because `carried` is filled from the rules in force
-on that node and would leave the missing ones out. `circle leave` is not refused. It
-adds the missing ids to `carried`, so that it changes the roll and nothing else. This
-is display and refusals in the application. `check_successor` and `Passed::carried`
-are unchanged: an amendment that passes still makes the rule set exactly its
-`carried` list.
+on that node and would leave the missing ones out. `circle leave` is not refused. On
+such a node it changes the owner's machine and puts no request to the circle: a list
+with the missing ids would bring back a rule that was repealed since, and a list
+without them would drop one that is in force (10.9, "Leaving").
+
+**What is signed is what was shown.** A sync or an import can change a node while its
+owner reads a preview. A command that drafts an amendment therefore calls
+`governance::as_drafted` after the owner's answer and before the key is used. It
+reads the rule set again and refuses when the digest of the current charter,
+`RuleSet::carried_ids` or `RuleSet::missing_carried` differ from what the draft was
+built from. `governance::propose_under` then signs the proposal under the digest of
+the charter that was shown and refuses when the current charter is another one;
+`governance::propose` is for `adopt` and `repeal` proposals. `proposal vote` on an
+amendment does the same for an approval: it reads `amendment_changes` again after
+the answer and signs only when the two readings say the same
+(`amendment::Changes::same_as`), and for a ballot asked in a window only when
+`proposal::sole_admission` still gives the same entry under the same charter. All of
+this is display and refusals in the application. `check_successor` and
+`Passed::carried` are unchanged: an amendment that passes still makes the rule set
+exactly its `carried` list.
 
 When the amendment has passed, the holder of the circle root key issues the next
 charter (`CircleAuthority::issue_next_charter`) and publishes it in a `CHARTER` event.
@@ -887,9 +904,18 @@ what one rule in force means on this machine, in this order:
   and the reason, so every command prints the line that confirms it (`Waiting::line`).
 * **Leaving.** `circle leave` takes effect on the owner's machine at once
   (`circles.left_at`: nothing of that circle stays installed or is installed again) and
-  puts the owner's removal from the roll to the vote. The roll changes only by that
-  vote. A node that is voted off learns of it from a peer (section 7, the removal
-  notice) or from a file.
+  then puts the owner's removal from the roll to the vote. The roll changes only by
+  that vote. The order is fixed: after the confirmation the circle is marked as left
+  and `governance::apply_on` removes its rules, which is step 3 of `settle` alone and
+  uses no key. Only then is the rule set read again and the removal drafted, signed
+  through `propose_under` and approved (`circle::request_removal`). No request is made
+  while `missing_carried` is not empty, when the device key does not unlock, when the
+  proposal is refused or when the member is off the roll: the report says so
+  (`requested`, `reason`). A second `circle leave` on a machine that left
+  (`circle::leave_again`) makes the request when none that removes the member from the
+  current charter is on record, after a preview and a confirmation of its own. A node
+  that is voted off learns of it from a peer (section 7, the removal notice) or from a
+  file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step). `rule
   list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force. `rule
@@ -901,7 +927,12 @@ what one rule in force means on this machine, in this order:
   on as the id of the proposal that was shown (`Owner::confirmed`), and `apply_rules`
   counts it for that proposal only: a rule that took the name while the owner read does
   not count as confirmed in step 3 of `adoption_step`. `rule opt-in` also looks again
-  before it clears the opt-out, and refuses when the rule changed. `circle invite`,
+  before it clears the opt-out, and refuses when the rule changed. `proposal adopt`
+  looks again after the confirmation and once more after the rules were applied, and
+  refuses when the rule of that name is no longer the proposal it showed. `skills
+  uninstall` refuses, in the user's skills directory, a skill installed with the text
+  of a rule in force that its owner has not opted out of, except where that skill is
+  itself what holds the rule there (`Held::OwnSkill`). `circle invite`,
   `remove`, `leave`, `amend` (the thresholds, binding or advisory) and `device add` /
   `remove` propose amendments. `circle revoke` is the emergency of 10.8. Not written
   yet: asking once before switching to `follow` when an amendment turns `binding` from
@@ -1159,6 +1190,10 @@ written down directly.
   fingerprint from the amendment and tell the owner to check it with the invitee; the
   join window is the terminal's preview, with the root fingerprint and the whole
   charter. Inside a session `circle invite` writes no events file and refuses `--out`.
+  `circle join <peer id or address>` fetches the charter before it can show it, so
+  inside a session it first asks `consent::circle_step_can_be_asked`: where the step
+  is not allowed, or the machine can show no window, the consent step's refusal is
+  given before the transport starts and before any lookup or dial (ADR-045).
   Every other `circle` step, and a ballot on any other amendment, refuse as before.
   The reporting skill then has a third part: `status`, `circle create`, `circle
   invite`, `circle join`, `sync --internet` and the daemon, with keys, peer ids and
@@ -1186,7 +1221,9 @@ written down directly.
   --from-agent` answers with the candidate's id and asks the agent to tell its user
   that there is a rule to keep or to propose.
 * **One command for the owner's part** (ADR-039). `peerharness setup`
-  (`apps/peerharness/src/commands/setup.rs`) runs `init` when there is no node, `watch
+  (`apps/peerharness/src/commands/setup.rs`) runs `init` when there is no node (no
+  device identity in the database, which includes a home that an interrupted `init`
+  left), `watch
   claude --install` with the windows where one can be shown, and Claude Code's `claude
   mcp add` for this binary, each with its preview and confirmation. It is refused
   inside a session before it does anything. The flag of `watch claude` is `--dialogs`

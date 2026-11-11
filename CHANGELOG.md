@@ -20,8 +20,8 @@ database schema it writes.
 
 A check of 0.4.0 before any tag found defects, and the changes below fix some of them
 (ADR-041 to ADR-045 in [docs/decisions.md](docs/decisions.md)). A review of those fixes
-found more, and what was changed for them is in the same lists. Several change what a
-command prints, asks or accepts.
+found more, and so did a second review. What was changed for them is in the same
+lists. Several change what a command prints, asks or accepts.
 
 **What a voter is shown**
 
@@ -35,16 +35,21 @@ command prints, asks or accepts.
 * `proposal vote <id> approve` on an amendment is refused, with `--yes` too, while the
   node cannot show what the amendment would put in force or take out of force: the
   text of a rule it carries is not there, it lists a proposal the node does not hold,
-  or it leaves out a rule that the charter in force carries and the node does not
-  hold. Such a rule is listed in the ballot by its proposal id, with the words that
-  this node cannot say which rule that is, and in `proposal show --json` its
-  `skill_name` is null. No such ballot is put in a window. `reject` and `revise` are
-  not refused.
+  or it leaves out or keeps a rule that the charter in force carries and the node
+  does not hold. Such a rule is listed in the ballot by its proposal id. Left out, it
+  "goes out of force", with the words that this node cannot say which rule that is,
+  and in `proposal show --json` its `skill_name` is null. Kept, it "is kept", with the
+  words that this node cannot say whether that changes anything, since a rule
+  repealed since would come back into force; in the JSON each entry of
+  `rules_in_force.added` has `carried_by_charter_in_force`. The refusal names the
+  events file of a member who holds the rule. No such ballot is put in a window.
+  `reject` and `revise` are not refused.
 * `circle invite`, `circle remove`, `circle amend` and `circle device add` and `remove`
   are refused on a node that lacks a rule the charter in force carries, before any
   preview: an amendment drafted there would leave the rule out. The message says to
-  import the events file of a member who holds it. `circle leave` is not refused and
-  lists such a rule by its id.
+  import the events file of a member who holds it. `circle leave` is not refused
+  there: it changes your machine and makes no request to change the roll from that
+  node (below).
 * When an amendment lists a second proposal under the name of a rule in force, the
   ballot says which of the two would be in force afterwards: the rule "gets another
   text without a vote of its own", or the rule in force "is the later one and stays as
@@ -54,12 +59,48 @@ command prints, asks or accepts.
   proposed from a terminal only: inside a session it is refused, windows or not.
 * `proposal vote --rationale` takes one line of at most 200 characters without control
   characters, invisible characters, blanks that are not spaces or characters the
-  preview would rewrite; anything else is a usage error. `proposal show` prints what
+  preview would rewrite; anything else is a usage error, which says what is checked:
+  after redaction, and that the zero-width joiner of some emoji and scripts is such a
+  character. `proposal show` prints what
   other members wrote (a rationale, a summary, the reason of an opt-out, the text of a
   rule) on lines of their own behind `| `, and names the proposer by member and
   device.
 * `keep` shows what the scanner found in a rule, in the terminal and in its window.
   Without a finding its preview is unchanged.
+
+**What a change to the charter signs**
+
+* A request to change the charter is signed under the charter you were shown, or not
+  at all. `circle invite`, `circle remove`, `circle amend` and `circle device add` and
+  `remove` check after your answer, in a terminal or in a window, that the charter and
+  the rules in force on your node are still what the preview was built from. If a
+  sync or an import changed them while you read, the command is refused (exit 3):
+  "the circle's charter changed on this node while this was being confirmed. Nothing
+  was proposed and nothing was signed. Run the command again to see what it would do
+  now." Before, the draft of one charter was signed as an amendment of the next, and
+  undid what that one had changed.
+* `proposal vote <id> approve` on an amendment reads what the amendment changes again
+  after your answer. If that is no longer what you were shown, nothing is signed (exit
+  3): "what this amendment would change is no longer what you were shown: the charter
+  or the rules in force changed on this node while you read. Nothing was signed. Run
+  the command again." `reject` and `revise` are not refused.
+* `circle leave` changes your machine before it uses a key: the circle is marked as
+  left and the rules it installed are removed, also when the device key does not
+  unlock. The request to take you off the roll comes after, drafted from the charter
+  that is current then, and the report names that charter. No request is made from a
+  node that lacks a rule the charter in force carries, when the key does not unlock or
+  when the proposal is refused: the command says so, with the reason, and exits 0.
+  The preview says beforehand when no request will be made. Before, such a request
+  listed the rules its node lacked by id, which brought a rule back into force that
+  had been repealed since.
+* A second `circle leave` on a machine that already left is no longer a usage error.
+  It makes the request when the first run could not, after its own preview and
+  confirmation, and is refused inside a session. If you are off the roll, or a
+  proposal that takes you off the roll of the current charter is on record, it says
+  so and signs nothing.
+* `circle leave --json` has `circle`, `requested` and `reason` (`null`,
+  `missing_carried_rules`, `device_key_locked`, `proposal_refused`, `off_the_roll` or
+  `request_on_record`).
 
 **What a vote may do to your own skills**
 
@@ -77,16 +118,20 @@ command prints, asks or accepts.
   --json` have a `held` list.
 * The way out of a hold: `skills uninstall` takes out the skill that holds a rule, an
   edited copy with `--allow-modified`. It still refuses a rule that a vote installed
-  and that you follow. For a rule that is held when you opt back in, the second step
-  is `rule opt-in` again. Inside a coding agent's session the hint does not name
-  these commands: it says that the choice is the owner's and to take nothing out.
+  and that you follow, also when that rule is held in a project by another skill.
+  Where the rule's scope is placed in a project (`circle place`), the hint names
+  `skills uninstall <name> --scope project` and the directory to run it in. For a
+  rule that is held when you opt back in, the second step is `rule opt-in` again.
+  Inside a coding agent's session the hint does not name these commands: it says
+  that the choice is the owner's and to take nothing out.
 * Your yes to `rule opt-in` and to `proposal adopt` counts for the rule you were shown
   and for no other rule of that name. If a newer proposal took the name while you
   read, `rule opt-in` changes nothing and leaves your opt-out in place, and `proposal
-  adopt` says that the rule changed while it was being confirmed
-  (`changed_while_confirming` in its JSON).
-* A rule that is held or waits is reported once per exchange, and a daemon that
-  exchanged nothing prints nothing about a hold. `sync --json` lists a held rule once.
+  adopt` installs nothing on that yes. Both are refused then (exit 3) and say that
+  the rule changed while it was being confirmed.
+* A rule that is held or waits is reported once per exchange. A daemon with
+  `--sync-every` prints a hold once, with the first report that has it, and not on
+  later ticks. `sync --json` lists a held rule once.
 
 **What runs inside a session**
 
@@ -102,13 +147,19 @@ command prints, asks or accepts.
   without `--from-agent`, and counts against the 20 notes that may wait.
 * The `join_circle` tool of `peerharness mcp` takes a peer id or an address, never a
   path to a file.
+* `circle join <peer id or address>` inside a session is refused before it goes to
+  the network when the join could not be put in a window: where the windows for the
+  steps about a circle are not allowed, or the machine can show none. Before, the
+  node looked the peer up and dialed it first.
 * A step that needs a confirmation and finds no terminal no longer says "re-run with
   --yes". It says that the decision is the owner's and that a coding agent stops and
   asks.
 * The preview that turns confirmation windows on no longer says without condition that
   your agent cannot answer a window. It says that this holds inside the agent's
   session, and that it guards against an agent that is trying to help, not against a
-  process that hides that it is one.
+  process that hides that it is one. Its two sentences about the reporting skill
+  ("cannot approve, share, install or join anything", "can only add a note to your
+  inbox") begin with "Inside its session" as well.
 * The `vote` tool of `peerharness mcp` takes a reason of one line of at most 200
   characters, the limit of `proposal vote`.
 
@@ -124,6 +175,9 @@ command prints, asks or accepts.
   back a configuration file that was there. One `init` runs for a home at a time: a
   second one is refused while the first is running. `init --help` gives the keystore
   default for macOS and Linux.
+* `setup` completes a home that an interrupted `init` left (Ctrl-C at the passphrase
+  prompt: a configuration file and a database without an identity). Before, it took
+  the two files for a node and failed with "this home has no device identity yet".
 * `setup` without confirmation windows (on Linux, or with `--no-dialogs`) ends with
   what works from the terminal, and no longer suggests prompts for the agent. For a
   node that is already there it names the keystore and warns about a plaintext one.
@@ -150,7 +204,8 @@ command prints, asks or accepts.
 * `doctor` and `status` say when the binary is a debug build, which obeys the
   stand-ins the tests use. `status --json` has `debug_build`.
 * `demo/two-peers.sh` runs the binary named by `PEERHARNESS_BIN` and builds nothing
-  then.
+  then. Its step that reads the rule prints the text with a binary of 0.4.0, where
+  `proposal show` marks each line of it, as with v0.3.0.
 
 **Parsing**
 

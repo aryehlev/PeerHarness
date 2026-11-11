@@ -54,6 +54,13 @@ For each target, `peerharness-<tag>-<target>.tar.gz` containing:
 
 Plus one `SHA256SUMS` file covering every archive, and auto-generated release notes.
 
+The three documents sit next to the README in the archive, not in a `docs/` folder,
+and no other document is packed. So the README's links to `docs/…` do not resolve
+inside the archive, and neither do the links of the three documents to
+`../README.md`, `../SECURITY.md` and `decisions.md`. Every link works in the
+repository at the release's tag: read the documents there when you need to follow
+one.
+
 ## What is not provided
 
 * **No code signing.** Binaries are not signed with any key or certificate.
@@ -131,11 +138,13 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    `cargo build` so `Cargo.lock` is updated, and commit both.
 3. Update `README.md` in the same pull request, every time. Its status line names the
    version being released. While that version is not released, the status block also
-   says which version the install line installs and what is missing from it: take
-   that note out in this pull request. Read "What works today", `docs/checked.md` and
-   "Known limits" again against what this release contains, and check each command
-   the README shows against the binary. The README is packed into every archive, so
-   what is tagged is what people read, and `docs/checked.md` is packed next to it.
+   says which version the install line installs and what that version does
+   differently, and `docs/terminal.md` has a short note of the same before its first
+   use of `keep`. Both notes come out in this pull request. Read "What works today",
+   `docs/checked.md` and "Known limits" again against what this release contains, and
+   check each command the README shows against the binary. The README is packed into
+   every archive, so what is tagged is what people read, and `docs/checked.md` is
+   packed next to it.
 4. Note in the release notes draft: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`. Move the "Unreleased" entries of
    `CHANGELOG.md` under the new version in the same pull request.

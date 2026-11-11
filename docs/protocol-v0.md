@@ -2043,15 +2043,24 @@ added to or taken from a member who stays, the thresholds old and new, and by sk
 name the rules the `carried` list drops and adds, an added rule with its exact text.
 It refuses to sign an approval of an amendment that would bring into force a rule
 whose text the node does not hold, that lists an id the node does not hold as an
-`adopt` proposal, or that leaves out a proposal the current charter carries and the
-node does not hold. A node can lack such a proposal after a join from an incomplete
-file, or because the proposal's scope is one it is not sent (section 13.3). On a node
-in
-that state the reference client drafts no amendment either, since its `carried` list
-would leave the proposal out; the one exception is the request to leave, which copies
-the missing ids from the current charter's `carried` list. None of this changes what
-a node accepts: the steps below are the whole rule, and a `carried` list that is not
-exact still becomes the rule set when the amendment passes.
+`adopt` proposal, or that leaves out or keeps a proposal the current charter carries
+and the node does not hold. Keeping one is what an exact list does, and it is also how
+a rule that was repealed under the current charter comes back, and such a node cannot
+tell which. A node can lack such a proposal after a join from an incomplete file, or
+because the proposal's scope is one it is not sent (section 13.3). On a node in that
+state the reference client drafts no amendment either, the request to leave included:
+a `carried` list drafted there would leave the proposal out, or would list it and
+bring back a rule that is no longer in force. Its owner still stops following the
+circle on their own machine at once (section 14.6).
+
+The reference client also signs an `amend` proposal only under the charter its owner
+was shown: if the node's current charter, or its rules in force, changed between the
+preview and the answer, it signs nothing. It reads what an amendment changes again
+before it signs an approval, and signs nothing when that differs from what was shown.
+
+None of this changes what a node accepts: the steps below are the whole rule, and a
+`carried` list that is not exact still becomes the rule set when the amendment
+passes.
 
 Once the amendment has reached its threshold, the holder of the circle root key signs
 the next charter and publishes it in a CHARTER event (section 8.6).

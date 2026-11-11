@@ -101,9 +101,27 @@ stop, leave the feature disabled, and document the blocker.
   from the rules in force on the node, so they refuse while
   `RuleSet::missing_carried` is not empty (`circle::holds_every_carried_rule`), and
   no ballot on an amendment is put in a window on such a node
-  (`proposal::sole_admission`). `circle leave` is the one exception, because leaving
-  never waits: it copies the missing ids into `carried`. Never let a draft leave a
-  carried rule out because the node cannot name it.
+  (`proposal::sole_admission`). `circle leave` is never refused for it, because
+  leaving never waits: it changes the owner's machine at once, before any key is used
+  (`governance::apply_on`), and on a node that lacks a carried rule it puts no request
+  to the circle (`circle::request_removal`). Never copy an id the node does not hold
+  into `carried`: a rule that was repealed since would come back into force. And never
+  let a draft leave a carried rule out because the node cannot name it.
+* A request to change the charter and an approval of an amendment are signed only if
+  the charter and the rules in force are still what the preview was built from
+  (ADR-041). A sync or an import can change the node while its owner reads. A command
+  that drafts an amendment calls `governance::as_drafted` after the owner's answer and
+  before the key is used, and signs through `governance::propose_under`, which names
+  the charter that was shown; `governance::propose` is for `adopt` and `repeal`
+  proposals only. `proposal vote` reads `governance::amendment_changes` again after
+  the answer and signs an approval only when it says what was shown
+  (`amendment::Changes::same_as`), and for a ballot asked in a window only while
+  `proposal::sole_admission` still gives the same entry under the same charter. Do
+  not move either check before the prompt or the window, and do not sign a draft under
+  a charter other than the one it was built from. The first run of `circle leave`
+  drafts its request after the owner's answer and after the machine changed, from
+  what the node holds then, with no prompt between that read and the signature; a
+  second run asks about the request alone and is checked like every other draft.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
   windows turned on before ADR-037 were allowed for three steps, and keeping a rule has
