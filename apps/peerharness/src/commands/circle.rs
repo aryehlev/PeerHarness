@@ -763,9 +763,8 @@ enum NoRequest {
     /// not carried out on another state.
     Changed,
     /// The proposal was refused when it was to be stored: this node would not accept
-    /// the event. (The sentence for it also names a charter that changed in the instant
-    /// after the check. Since the check and the signature are one transaction, that no
-    /// longer happens.)
+    /// the event. (A charter that changes in the instant after the check is no cause
+    /// of it: the check and the signature are one transaction.)
     Refused,
     /// The member is no longer on the roll of the charter in force.
     OffTheRoll,
@@ -813,9 +812,8 @@ impl NoRequest {
                  would be now and, once you confirm, makes it."
             ),
             NoRequest::Refused => format!(
-                "the circle's charter changed on this node at that moment, or this node \
-                 would not accept the request. You stay on the roll. Run {again} again to \
-                 make the request."
+                "this node would not accept the request. You stay on the roll. Run {again} \
+                 again to make the request."
             ),
             NoRequest::OffTheRoll => {
                 "you are not on the roll of the charter in force, so there is nothing to \
@@ -1166,13 +1164,23 @@ fn follow_again_preview(store: &Store, me: &DeviceKey, circle: &CircleRow) -> Re
         other => (None, other),
     };
     let request = on_record.request.map(|(proposal, _)| proposal).or(own);
+    let of_another = of_another.map(|other| other_removal_line(&other, draft.is_some()));
     let about_the_request = match (request, of_another) {
-        (Some(proposal), _) => format!(
-            "A request to take you off the roll is on record (proposal {}) and stays \
-             there; the members may still approve it.",
-            short_id(&proposal.event_id())
-        ),
-        (None, Some(other)) => other_removal_line(&other, draft.is_some()),
+        (Some(proposal), also) => {
+            let mut said = format!(
+                "A request to take you off the roll is on record (proposal {}) and stays \
+                 there; the members may still approve it.",
+                short_id(&proposal.event_id())
+            );
+            // Another member's proposal that takes the owner off the roll as well, and
+            // changes more: named beside the request, as `circle leave` names it.
+            if let Some(also) = also {
+                said.push('\n');
+                said.push_str(&also);
+            }
+            said
+        }
+        (None, Some(other)) => other,
         (None, None) => "No request to take you off the roll is on record.".to_owned(),
     };
     Ok(format!(
@@ -1182,9 +1190,11 @@ fn follow_again_preview(store: &Store, me: &DeviceKey, circle: &CircleRow) -> Re
     ))
 }
 
-/// `circle leave --undo`: the owner follows the circle again on this machine. Nothing
-/// is signed and nothing on record changes; the preview says what is on record
-/// ([`follow_again_preview`]).
+/// `circle leave --undo`: the owner follows the circle again on this machine. It makes
+/// no request and withdraws none; the preview says what is on record
+/// ([`follow_again_preview`]). Settling the circle afterwards signs what this node
+/// would sign at any settle (the result of a vote that passed, or on the founder's
+/// node the charter that follows from one).
 fn follow_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<Report> {
     let id = circle.circle_id;
     let name = safe(&circle.name);
@@ -2964,8 +2974,22 @@ mod tests {
         // So is the exact removal, whoever proposed it, on a node without bob's own.
         let (store, circle, now) = node();
         let (current, _) = read(&store, &circle);
-        let exact = amendment(&store, 1, &current, "Remove bob", draft, now);
+        let exact = amendment(&store, 1, &current, "Remove bob", draft.clone(), now);
         assert_eq!(preview(&store), format!("{machine}{}", request(&exact)));
+
+        // With another member's wider proposal on record beside the request, both are
+        // named: the members can approve either.
+        let mut wider = draft;
+        wider.roll.retain(|e| e.member != "carol");
+        let by_carol = amendment(&store, 3, &current, "Remove bob and carol", wider, now);
+        assert_eq!(
+            preview(&store),
+            format!(
+                "{machine}{}\n{}",
+                request(&exact),
+                other_removal_line(&by_carol, true)
+            )
+        );
 
         // A node that lacks a rule the charter carries drafts no removal to compare
         // with. Another member's removal is named there too, for what this node can
