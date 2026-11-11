@@ -390,7 +390,8 @@ audit, and the finding ids it cites there are the report's own.
 Findings of that check were then fixed, a review of the fixes found more, and those
 were fixed too, with tests added each time
 ([ADR-041 to ADR-045](docs/decisions.md)). The coding agents that made the fixes ran
-the suite on Linux: TEST-COUNT-PLACEHOLDER. No run on macOS is recorded for them.
+the suite on Linux: 932 tests passed, none failed and the same 10 were skipped. No
+run on macOS is recorded for them.
 
 ## Known limits
 

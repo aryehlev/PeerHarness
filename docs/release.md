@@ -50,7 +50,7 @@ For each target, `peerharness-<tag>-<target>.tar.gz` containing:
 
 * `peerharness-<tag>-<target>/peerharness` (the binary),
 * `LICENSE-MIT`, `LICENSE-APACHE`,
-* `README.md`, `security-model.md` and `release.md` when present.
+* `README.md`, `security-model.md`, `release.md` and `checked.md` when present.
 
 Plus one `SHA256SUMS` file covering every archive, and auto-generated release notes.
 
@@ -135,8 +135,7 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    that note out in this pull request. Read "What works today", `docs/checked.md` and
    "Known limits" again against what this release contains, and check each command
    the README shows against the binary. The README is packed into every archive, so
-   what is tagged is what people read. `docs/checked.md` is not packed: the archive's
-   README links to it.
+   what is tagged is what people read, and `docs/checked.md` is packed next to it.
 4. Note in the release notes draft: user-visible changes, protocol version, database
    migrations, and any change to `RELEASE_TOOLCHAIN`. Move the "Unreleased" entries of
    `CHANGELOG.md` under the new version in the same pull request.

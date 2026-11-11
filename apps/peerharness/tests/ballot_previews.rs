@@ -2,8 +2,9 @@
 //! a confirmation window, through the real binary.
 //!
 //! * A rule the scanner calls high-risk is never decided in a window. `proposal create`
-//!   shows the scanner's findings as `vote` and `adopt` do, and with a high-risk finding
-//!   it asks only in the terminal.
+//!   shows the scanner's findings, as a ballot in a window and `adopt` do (a ballot in
+//!   a terminal shows the title, and `proposal show` the text and the findings), and
+//!   with a high-risk finding it asks only in the terminal.
 //! * A rationale is one line. Whoever starts the step chooses it, a coding agent
 //!   included, so it must not be able to lay out the preview: a rationale with a line
 //!   break, a control character or padding that is not made of spaces is refused, in a
