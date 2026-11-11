@@ -1905,7 +1905,9 @@ Not done.
   settle of the circle whose copy stayed names it. Each result that is added up
   this way is one circle's settle. A settle of several circles together is made
   only by the request handler after a peer's push, and its result goes to the
-  daemon's queue and is printed by itself.
+  daemon's queue and is printed by itself. The two orders were read in the code.
+  The unit test adds up results by hand, and two circles with a rule of one name
+  were not run through the binary.
 * **One sentence names a cause that no longer happens.** A first `circle leave`
   whose request this node refuses reports `proposal_refused` with "the circle's
   charter changed on this node at that moment, or this node would not accept the
