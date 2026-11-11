@@ -1135,19 +1135,25 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
   the command line. The guard of the first review inherited it, and ADR-042 had
   closed the same kind of gap for installs only.
 
-  `governance::as_drafted` now runs after the owner's answer and before the device
-  key is used. It reads the rule set again and refuses when the digest of the current
-  charter, the ids of the rules in force (`RuleSet::carried_ids`) or the carried rules
-  the node lacks (`RuleSet::missing_carried`) are no longer what the draft and its
-  preview were built from. The last two cover what the digest does not: a rule that
-  passed, was repealed or arrived while the owner read. `governance::propose_under`
-  then signs the proposal under the digest of the charter that was shown, and refuses
-  when the current charter is another one. The refusal (exit 3) is "the circle's
-  charter changed on this node while this was being confirmed. Nothing was proposed
-  and nothing was signed. Run the command again to see what it would do now." A
-  charter that arrives in the instant between that check and the signature leaves a
-  proposal that names the earlier charter, which can no longer pass.
-  `governance::propose` is now for `adopt` and `repeal` proposals only.
+  `governance::as_drafted` runs after the owner's answer. It reads the rule set again
+  and refuses when the digest of the current charter, the ids of the rules in force
+  (`RuleSet::carried_ids`) or the carried rules the node lacks
+  (`RuleSet::missing_carried`) are no longer what the draft and its preview were
+  built from. The last two cover what the digest does not: a rule that passed, was
+  repealed or arrived while the owner read. `governance::propose_under` then signs
+  the proposal under the digest of the charter that was shown, and refuses when the
+  current charter is another one. A charter that arrives in the instant between the
+  check in `propose_under` and its signature leaves a proposal that names the earlier
+  charter, which can no longer pass. `governance::propose` is for `adopt` and `repeal`
+  proposals only.
+
+  Three things in this paragraph were changed after a third review, below. At this
+  point `as_drafted` ran before the device key was unlocked, so a passphrase prompt
+  could lie between that check and the signature: it runs after the key is unlocked
+  now. The refusal (exit 3) said "the circle's charter changed on this node while
+  this was being confirmed", also when only the rules in force had changed: it names
+  both now. And nothing kept an amendment out of `governance::propose`, which
+  `peerharness demo` still used for one: it is an error there now.
 * **An approval of an amendment is checked again after the yes.** What an amendment
   changes is read against the charter and the rules in force on the voter's node, and
   both can change while a preview or a window is open. A rule that passed meanwhile
@@ -1161,7 +1167,8 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
   amendment would change is no longer what you were shown: the charter or the rules in
   force changed on this node while you read. Nothing was signed. Run the command
   again." `reject` and `revise` approve nothing and are not refused. No window text
-  changed.
+  changed. (This reading, too, came before the key was unlocked. It comes after it
+  since the third review, below.)
 * **`circle leave` makes no request from a node that lacks a carried rule.** The
   first review let its request list the carried ids the node lacks, so that it would
   change the roll and nothing else. It does not, because a node cannot know what
@@ -1178,8 +1185,10 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
   Leaving out only the ids that a repeal held on the node targets is not safe either:
   a repeal whose target is missing is stored without the check of its reference.
 
-  So the copying was taken back, and `circle leave` now does this for a member on the
-  roll:
+  So the copying was taken back. After this change `circle leave` did the following
+  for a member on the roll. Steps 1 and 2 stand. Step 3 is given as it was then: a
+  third review found two faults in it, and what replaced it is under "After a third
+  review" below.
 
   1. It shows the preview and asks. On a node that lacks a carried rule the preview
      says that no request to take the owner off the roll is made from this node, why,
@@ -1189,25 +1198,28 @@ is again in `apps/peerharness` only, with no signed byte, wire type or schema to
      are removed (`governance::apply_on`, the third step of `settle` alone). Neither
      uses a key. The whole of `settle` is not run here, because it unlocks the device
      key to publish a RESULT and, on the founder's node, the root key.
-  3. It makes the request. The rule set is read again, the removal is drafted from
-     the charter that is current at that moment, signed through `propose_under` and
-     approved. No prompt lies between that read and the signature. No request is made
-     while `missing_carried` is not empty, when the device key does not unlock, when
-     the proposal is refused or when the member is no longer on the roll. The command
-     then exits 0 and reports that the machine left and why no request was made
-     (`requested` and `reason` in the JSON).
+  3. It made the request. The rule set was read again, the removal was drafted from
+     the charter that was current at that moment, signed through `propose_under` and
+     approved. No prompt lay between that read and the signature. No request was made
+     while `missing_carried` was not empty, when the device key did not unlock, when
+     the proposal was refused or when the member was no longer on the roll. The
+     command then exited 0 and reported that the machine left and why no request was
+     made (`requested` and `reason` in the JSON, which it still does). Since the
+     third review the request is no longer drafted after the answer: the run signs
+     the removal it drafted for its preview, or none.
 
   A second `circle leave` on a machine that already left was a usage error. It is
   now how the request is made when the first run could not make it
   (`circle::leave_again`). It says so and changes nothing when the member is off the
   roll, when a proposal that takes them off the roll of the current charter is on
   record (their own, or a member's `circle remove`) and while the node lacks a carried
-  rule. Otherwise it previews the request alone, asks, and puts it to the vote bound
-  to the charter that was shown, like every other request above. Inside a session it
-  is refused. This also ends an older fault the review found: `leave` marked the
-  circle as left and then needed the device key before it removed anything, so with a
-  key that did not unlock the rules stayed installed, no request was made, and the
-  second run was refused.
+  rule. (Which proposal counts as on record was narrowed after the third review: only
+  one that is exactly this removal.) Otherwise it previews the request alone, asks,
+  and puts it to the vote bound to the charter that was shown, like every other
+  request above. Inside a session it is refused. This also ends an older fault the
+  review found: `leave` marked the circle as left and then needed the device key
+  before it removed anything, so with a key that did not unlock the rules stayed
+  installed, no request was made, and the second run was refused.
 
   The cost: a member whose scopes do not cover a carried rule cannot ask to be taken
   off the roll from their own node until they import such a file. Their machine is
@@ -1247,7 +1259,207 @@ leave. Not tested through the binary: the same race at a prompt in a terminal
 a second process. The check those commands share with `circle invite` has unit tests
 (`governance::as_drafted`, `governance::propose_under`, `Changes::same_as`). The
 reviewers ran the old behaviour at a real prompt on a pseudo-terminal; the fix was
-not run there. Nothing was run on macOS.
+not run there. Nothing was run on macOS. (The third review ran the fix there, and
+what it found is next.)
+
+**After a third review.** A review of the changes under "After a second review" ran
+the commands at real prompts on a pseudo-terminal, with stock commands and a second
+process that imported a file while a prompt waited. The four cases of the second
+review ended in the refusal, with nothing signed. It found one wait that the check
+did not cover, one run of `circle leave` that signed what its preview had excluded,
+and smaller things. What was changed for them is in `apps/peerharness` only, with no
+signed byte, wire type or schema touched.
+
+* **The check after the yes runs after the key is unlocked.** `as_drafted` and the
+  second reading in `proposal vote` ran after the owner's answer and before the
+  device key was unlocked. With the key in an encrypted file and no
+  `PEERHARNESS_PASSPHRASE` in the environment, which is the default on Linux,
+  unlocking asks for the passphrase on the terminal. That prompt is a second wait,
+  and it came after the check. The review answered y, imported the records of a rule
+  that had just passed while "PeerHarness key passphrase:" waited, and then typed the
+  passphrase. `circle remove`, `circle amend`, `circle invite` and a second `circle
+  leave` each signed an amendment that takes that rule out of force, under a preview
+  that said nothing about rules or said that they stay as they are. `proposal vote
+  <admission> approve` signed an approval under "the rules in force stay as they
+  are". It was the deciding one, and the founder's node issued a charter without the
+  rule. A newer charter that arrived at the same prompt was refused by
+  `propose_under`. A step asked in a window was not affected: there the key is
+  unlocked before the window opens (`proposal::key_before_window`).
+
+  The order is now the answer, the key, the check, the signature, with no prompt
+  between the last two. `governance::as_drafted` takes the unlocked signing key as a
+  parameter. It does nothing with it: the parameter is there so that the function
+  cannot be called before the key is unlocked. `circle invite` and
+  `circle::propose_amendment`, which `remove`, `amend`, `device` and the second run
+  of `leave` share, unlock the key, call `as_drafted` and then `propose_under`.
+  `proposal vote` unlocks the key before `proposal::approval_as_shown`, which now
+  holds the second reading of `amendment_changes` and of `sole_admission` and takes
+  the key in the same way. `reject` and `revise` are still never refused by it.
+
+  What is left between the check and the signature is the time between two calls in
+  one process. A charter that arrives in it is refused by `propose_under`, or leaves a
+  proposal that names the earlier charter and can no longer pass. A rule that passes
+  in it is not caught. For a draft, the ballot the other voters are shown names that
+  rule. For an approval, nothing more is shown to anyone.
+* **A repeal and a recorded stance are checked in the same way.** Two more commands
+  read what they sign before the preview and signed it after a prompt. `rule repeal`
+  names the proposal it repeals, and `rule opt-out --announce` and `rule opt-in
+  --announce` name the proposal their stance is about. A newer rule that took the
+  name while the owner read, or typed a passphrase, left a repeal of the old text
+  under which the new one stays in force, or a stance about a rule that was no
+  longer the rule. Both now look again once the key is unlocked
+  (`governance::rule_as_shown`, which takes the key like `as_drafted`). `rule repeal`
+  refuses (exit 3): "the rule changed while this was being confirmed: what you were
+  shown is no longer the rule in force. Nothing was proposed and nothing was signed.
+  Run the command again to see the rule as it is now." With `--announce`, what the
+  command already did on the machine stands: an opt-out waits for nobody, and an
+  opt-in had its own confirmation. Its report is printed, and the command then
+  refuses (exit 3): "nothing was announced: the rule changed while this was being
+  confirmed, and what you were shown is no longer the rule in force. Run the command
+  again to see the rule as it is now." Neither message names a circle.
+* **The refusal names both things that can have changed.** `as_drafted` gives one
+  refusal for a changed charter and for changed rules in force, and its text said
+  only that the charter changed. An owner who then saw the same charter number could
+  take the refusal for a mistake. `governance::CHARTER_CHANGED` now reads "the
+  circle's charter or the rules in force changed on this node while this was being
+  confirmed. Nothing was proposed and nothing was signed. Run the command again to
+  see what it would do now."
+* **`governance::propose` signs no amendment.** That it is for `adopt` and `repeal`
+  proposals was a sentence in a comment and in `AGENTS.md`, and `peerharness demo`
+  proposed its admissions through it. It now returns an error for an `amend` action
+  ("an amendment is put to the vote under the charter it was drafted from"), and the
+  demo calls `propose_under` with the digest of the charter it drafted from. The demo
+  has no prompt between its draft and its signature, so nothing was at risk there.
+* **The first run of `circle leave` signs the request it showed, or none.** Step 3
+  above drafted the request after the answer, from what the node held then. The
+  review ran two consequences. On a node that lacked a carried rule the preview said
+  "no request to take you off the roll is made from this node … You stay on the
+  roll". The rule's records were imported while the prompt waited, and the yes signed
+  a removal and the owner's approval of it. And a preview that named "the roll of
+  charter 3" and "2 of 3" was followed, once charter 4 had arrived, by a request
+  under charter 4 that needs 3 of 4. Either way the owner's approval, which cannot
+  be withdrawn, stood on something they had not been shown.
+
+  What the run does about the request is now decided before the owner is asked
+  (`circle::plan_request`, `RequestPlan`), and the preview says which of three it is:
+
+  * no request from this node, while it lacks a rule the charter in force carries;
+  * no request by this run, because one is on record already, named by its id;
+  * the request: the removal that was drafted for the preview, under the charter
+    the preview names.
+
+  After the yes the machine comes first, as before, and uses no key: the skills
+  directory is located, the circle is marked as left, and `governance::apply_on`
+  removes its rules. Only where the preview announced a request does the run go on.
+  It unlocks the device key, checks with `as_drafted` that the node still holds the
+  charter and the rules in force that the preview was built from, and signs that
+  very draft through `propose_under` (`circle::sign_removal`), and then the owner's
+  approval. It drafts nothing anew. Where the preview announced no request, no key
+  is asked for.
+
+  When no request is made the command exits 0 and reports why (`reason` in the
+  JSON). `missing_carried_rules` and `request_on_record` are what the preview said.
+  `device_key_locked` is a key that did not unlock. `changed_while_confirming` is
+  new: the node no longer holds what the preview was built from, so nothing was
+  signed. `proposal_refused` is a proposal refused at the moment it was to be stored.
+  `off_the_roll` is a member who was not on the roll when they ran the command.
+  `changed_while_confirming` is also reported where the preview announced no request
+  and the node changed while its owner read, because what the preview said about the
+  request is then no longer true either (`governance::still_as_read`, a comparison
+  that needs no key and decides what a report says, never what is signed). With
+  this, a request to change the charter is signed only under the charter that was
+  shown, and `circle leave` is no exception.
+
+  A second run does what it did: it shows the request as it would be now, asks, and
+  is checked like every other draft. It is refused with exit 3 when the node changed
+  meanwhile, and a key that does not unlock is an ordinary error there.
+
+  The cost: a sync or an import that lands while the owner reads, or types a
+  passphrase, costs them a second run before a request exists. Their machine is
+  changed either way.
+* **Only the exact removal counts as the request on record.** `removal_on_record`
+  took any amendment under the charter in force whose next roll lacks the member for
+  the request to leave. `circle leave` then made none of its own and named the
+  command that approves the one it had found. The review left a member's
+  `circle remove` on record, passed a rule under the same charter and ran `circle
+  leave` again: the proposal it called the request would also have taken that rule
+  out of force. `circle::removals_on_record` replaces it. A proposal is the request
+  only when it names the charter in force and its next charter, put in one order
+  (`circle::canonical`), equals the removal this node would draft now. The member's
+  own comes first, then another member's `circle remove`. Any other proposal that
+  takes the member off the roll gets one line, "Proposal <id> on record also takes
+  you off the roll, and changes more than that: `peerharness proposal show <id>`.",
+  and the owner's own request is previewed and made. A node that lacks a carried
+  rule drafts no removal to compare with, and says of such a proposal "This node
+  cannot show whether it changes anything else".
+
+  The first run looks at what is on record as well. It did not, so `circle leave`,
+  `circle leave --undo` and `circle leave` again signed a second identical removal,
+  and the members had two to split their approvals between. Such a run now previews
+  that it makes no request, uses no key, and reports `request_on_record` with the
+  proposal, its count and, where the member's approval is not on it, the command
+  that gives it.
+* **`circle leave --undo`, and a member who is off the roll.** The preview of `--undo`
+  always said that the owner's request stays on record, also on a machine that had
+  left without making one. It now reads what is on record: "A request to take you
+  off the roll is on record (proposal <id>) and stays there; the members may still
+  approve it.", or "No request to take you off the roll is on record.", or, for a
+  member who is off the roll, that none of the circle's rules binds them and none is
+  installed. The first run by a member who is already off the roll reported neither
+  `requested` nor `reason`. It reports `requested: false` and `reason:
+  "off_the_roll"` like the second run. It also locates the skills directory before
+  it marks the circle, and runs `apply_on` and not the whole of `settle`, so it uses
+  no key.
+
+Tested. Unit tests in `apps/peerharness/src/governance.rs`:
+`a_draft_is_put_to_the_vote_only_while_the_node_would_still_draft_it`,
+`a_repeal_and_a_stance_are_signed_only_for_the_rule_that_was_shown`, and
+`a_change_to_the_charter_is_signed_only_under_the_charter_it_was_drafted_from`, which
+now also asserts that `propose` refuses an amendment and stores nothing. Unit tests
+in `apps/peerharness/src/commands/circle.rs`:
+`a_first_leave_decides_about_its_request_before_it_asks`,
+`a_leave_request_is_signed_only_as_it_was_previewed` and
+`a_removal_that_changes_anything_else_is_not_the_request_to_leave`. Through the
+binary, in `apps/peerharness/tests/amendment_ballots.rs`:
+`leaving_again_after_an_undo_makes_no_second_request`,
+`a_first_leave_names_a_members_removal_that_is_on_record_and_signs_nothing`,
+`a_removal_that_would_also_drop_a_rule_is_not_reported_as_the_request_to_leave` and
+`leaving_when_already_off_the_roll_reports_like_every_other_leave`. The window test
+`an_amendment_that_drops_an_unheld_rule_is_never_a_ballot_for_a_window` now also
+takes an honest admission, drafted on a complete node, to the node that lacks the
+rule it keeps: from a session none of the three decisions opens a window, and in the
+terminal the approval is refused and a reject and a revise are recorded.
+
+Not in the suite: a prompt that is held open. The suite has no pseudo-terminal, and
+every command in it gets its passphrase from the environment. That the check comes
+after the key is unlocked is carried by the signatures of `as_drafted`,
+`approval_as_shown` and `rule_as_shown`, which take the unlocked key. The order
+itself was run by hand on a pseudo-terminal, not as part of the suite: on Linux,
+with a debug build, the key in an encrypted file, and an `events import` from a
+second process while the named prompt waited.
+
+* A rule arriving at "Proceed? [y/N]" and at "PeerHarness key passphrase:" of
+  `circle remove`, `circle amend`, `circle device add` and `circle invite`: exit 3
+  each time, and no proposal stored.
+* The same at both prompts of `proposal vote <admission> approve`: exit 3, and the
+  admission stayed at 1 of 3 approved.
+* A newer charter arriving at the passphrase prompt of `circle remove`: exit 3.
+* A first `circle leave` with a rule arriving at the passphrase prompt: exit 0, the
+  machine left, reason `changed_while_confirming`, no request. A second `circle
+  leave` in the same race: exit 3.
+* A first `circle leave` on a node that lacked a carried rule, with the rule's
+  records imported at the y/N prompt: exit 0, the machine left, no request, nothing
+  signed.
+* `rule repeal` with a newer rule of the name arriving at either prompt: exit 3, and
+  no repeal proposal. `rule opt-out --announce` at the passphrase prompt: exit 3,
+  opted out on the machine, no stance.
+
+The outputs of these runs are not in the repository.
+
+Not done. Nothing was run on macOS, and whether the OS keychain asks when the key is
+unlocked was not looked at. No automated test interleaves an import with a prompt in
+a terminal. The limit named under "After a review" stays: a rule that passed in a
+scope the node cannot read.
 
 ## ADR-042: A vote never replaces a skill it did not install, the name of PeerHarness's own skill is reserved, and more steps are refused inside a session
 ADR-023 recorded the installs made because a rule passed in `rule_installs`, so that a
@@ -1408,7 +1620,9 @@ all three by hand, as said below.
   user's skills directory and the rule is held there by the owner's own skill
   (`Held::OwnSkill`). That is the copy the hint is about. Every other skill that is a
   rule in force and not opted out is refused as it was before the first review, with
-  the opt-out named as the way to keep it off the machine.
+  the opt-out named as the way to keep it off the machine. (As it was before the
+  first review means: in the user's skills directory. In a project the check was not
+  made at all, which a third review found: below.)
 * **The way out of a hold names the project.** Where the rule's scope is placed in a
   project, the skill in the way is in that project. The review's first step there, a
   plain `skills uninstall <name>`, was refused as ambiguous beside the copy a vote had
@@ -1426,7 +1640,10 @@ all three by hand, as said below.
   machine and the proposal id) and prints a peer's report when it has a hold that is
   not among them, and never for that hold again. A hold that was there before the
   daemon started is printed once, at the first exchange that finds it. A one-shot
-  `sync` is unchanged.
+  `sync` is unchanged. (Two things were left, which a third review found. A report
+  that was printed for another reason still listed the hold again. And a daemon
+  that makes no exchange of its own still printed nothing about a pushed hold. Both
+  are changed: below.)
 * **`proposal adopt` refuses when the rule it showed is no longer the rule.** It
   printed a sentence and exited 0, where `rule opt-in` refuses in the same condition.
   A script that ran `proposal adopt <id> --yes` and went on when it succeeded took
@@ -1435,8 +1652,11 @@ all three by hand, as said below.
   or none: "the rule changed while it was being confirmed: what you were shown is no
   longer the rule in force, and nothing was installed on your confirmation.
   `peerharness rule list` shows the rule as it is now." It looks once more after the
-  rules were applied, for a rule that took the name in the instant between, and gives
-  the same refusal. The JSON member `changed_while_confirming` is gone.
+  rules were applied, for a rule that took the name in the instant between, and gave
+  the same refusal there. (Since the third review that second look says what the
+  rules' application installed: below.) The JSON member `changed_while_confirming`
+  of `proposal adopt` is gone. The same word is since then a value of `reason` in the
+  report of `circle leave`, which is another thing (ADR-041, "After a third review").
 
 Tested: `a_hold_in_a_project_does_not_let_the_voted_copy_elsewhere_be_taken_out` in
 `apps/peerharness/tests/vote_and_own_skills.rs` follows the review's case through the
@@ -1456,6 +1676,148 @@ refusal, the opt-out stood and nothing was installed. A hold caused by another
 circle's rule was followed through the binary: `skills uninstall` named the other
 circle and its opt-out, the opt-out removed that circle's copy, and `proposal adopt`
 installed the second circle's text. Nothing of this was run on macOS.
+
+**After a third review.**
+
+* **`skills uninstall` refuses a voted copy in a project as in the user's
+  directory.** The check for a rule in force was made for the user's skills
+  directory only. `skills uninstall <name> --scope project`, and a plain `skills
+  uninstall <name>` where the project's copy is the only installation, skipped it.
+  The review placed a scope in a project (`circle place`), let the vote install a
+  rule there and ran the command in that project. The copy was removed with exit 0
+  and its `rule_installs` row stayed, and after the owner had installed the same
+  name themselves a repeal removed their skill: a vote removing a skill it did not
+  install (ADR-023), which the second review had closed for `--scope user`. The hint
+  of a hold names this very command. Where the skill in the way was another
+  circle's voted rule, it took that circle's copy out and said nothing about that
+  circle.
+
+  The check now runs for both scopes, for the directory the command acts on: the
+  user's skills directory, or the project the command is run in, by its canonical
+  path, which is how `circle place` stores a project (`skills::project_here`). In
+  the user's directory nothing changed. In a project it goes through each circle
+  whose rule of that name is in force with the installed text and not opted out.
+  Where that rule lives in this project and is held there by this very skill
+  (`Held::OwnSkill`), the command goes on: that is the way out of the hold. Where
+  the rule lives in this project otherwise, or `rule_installs` records that this
+  circle's vote installed the name in this project (`governance::voted_install`),
+  the command is refused with the message that names the circle and its opt-out
+  (exit 2). Any other copy in the project is one the owner installed themselves, of
+  a rule that lives elsewhere, and is theirs to remove. The hint of a hold is
+  unchanged. Where the skill in the way is another circle's rule, the command the
+  hint names is now refused in a project as in the user's directory, and names that
+  circle and its opt-out.
+* **A skill that cannot be removed stays on record, is reported and is tried
+  again.** When a rule leaves force, stops binding the node or is opted out of, and
+  when its owner leaves the circle or moves the rule's scope, `apply_rules` removes
+  the copy a vote installed. A removal that failed was ignored, and the
+  `rule_installs` row was cleared all the same. The review made an
+  installed `SKILL.md` unchangeable and ran `circle leave`. The command reported
+  that the machine had left, printed no "removed rule" line and exited 0. The skill
+  stayed in the agent's directory, and no later command took it out, because the
+  record that a vote had installed it was gone. The fault is older than these
+  changes. A failed removal now keeps the row and puts the name in
+  `Applied::not_removed`, and every later settle of the circle tries again. Each
+  command that prints removed rules prints one line for such a rule
+  (`governance::not_removed_line`): "rule <name> could not be removed: its files
+  could not be changed. It is still installed. It is tried again each time this
+  circle is settled on this machine (an `events import`, or a sync with one of its
+  members)." Those commands are `circle leave`, `proposal vote` and `proposal
+  adopt`, `sync` and a daemon in their reports, `events import`, `rule opt-out`,
+  `circle revoke` and `circle place`. The JSON has `not_removed_rules` beside
+  `removed_rules` (`circle leave`, `remove`, `amend` and `device`) and `not_removed`
+  beside `removed` (`events import`, `sync`, `rule opt-out` and `rule opt-in`). Where
+  the owner moved a scope and the copy in the old place cannot be removed, the rule
+  is not installed in the new place meanwhile, because that install would overwrite
+  the record of the old copy. Like a hold, such a skill does not by itself make a
+  daemon print a report on every tick.
+
+  The line names no command that takes the skill out. `skills uninstall` refuses a
+  copy that a vote installed while its rule is in force and not opted out, and it
+  still does after `circle leave`: run by hand, it answered the owner of a machine
+  that had left with that circle's opt-out.
+* **A daemon prints each hold once per run, also one that a peer's push created.**
+  The change above made a new hold a reason to print a peer's report, and a report
+  still listed every hold. So a hold came back with each later report that was
+  printed for another reason. The review saw it again when an event moved, and on
+  every tick while another rule waited in mode `ask`, which is the repetition the
+  first review had removed. And a daemon that makes no exchange of its own, because
+  the members sync to it and it knows no peer, still said nothing about a hold that
+  a push created: only the reports of its own exchanges were looked at.
+
+  `HoldsTold::new_in` (it was `any_new`) returns the holds that are new to this run.
+  What a daemon prints for a report of its own exchange is `net::daemon_report`. The
+  report is printed when events moved, something changed on the machine, a rule
+  waits, the owner was voted off a roll, or a hold is new, and its hold lines are
+  the new ones only. A rule that waits is still printed on every tick while it
+  waits. A one-shot `sync` lists every hold it finds, each time. For a push, the
+  daemon starts the transport with `Running::start_telling` and a bounded queue
+  (`runtime::held_queue`, 64 batches). The request handler puts the held rules of
+  its settles on it, the settle it runs at once and the one that follows a fetch of
+  rule texts, and the daemon prints each through the same `HoldsTold`: a line of its
+  own, "rule <name> is in force and is held on this machine: …", without a "Synced
+  …" line above it, as soon as the push is settled, with or without `--sync-every`
+  and whether or not the daemon ever dials that peer. Only holds pass through the
+  queue. Nothing of it reaches `--notify`, and every other command starts the
+  transport as before and prints nothing for a push. Nothing in `ph-network` and
+  nothing about who is answered changed.
+
+  Two limits. A hold that goes away and comes back within one run of the daemon is
+  not printed a second time. And a batch that finds the queue full is dropped: a
+  hold in it is printed when a later settle of that circle finds it again, in the
+  request handler or in the daemon's own next exchange.
+* **`proposal adopt` says what was installed when the rule changed after
+  settling.** The command looks twice at whether the rule it showed is still the
+  rule of that name: before it settles, and after. The second look gave the first
+  one's refusal, "nothing was installed on your confirmation", without knowing what
+  the settle had done. If another rule took the name after the settle had read the
+  rules, the settle had installed the shown text on the owner's yes, and the command
+  said the opposite and dropped the settle's other lines. Where the settle installed
+  something under the name and the text now there is the one that was shown, the
+  command now prints "Installed rule <name>, as you were shown it." and the settle's
+  lines, and then refuses (exit 3): "the rule was installed as you were shown it,
+  and another rule of that name is in force since: it took the name while this
+  command ran. What is installed now is the text you confirmed, not the rule in
+  force. `peerharness rule list` shows the rule as it is now." The settle's lines
+  are printed and not put into the error, because they can name the circle. The
+  first look, its refusal and the exit code are unchanged. The review reasoned this
+  case from the code and did not reproduce it. It was not reproduced for the change
+  either: a test covers only which of the two sentences is chosen.
+
+Tested. `a_voted_copy_in_a_project_is_not_taken_out_by_skills_uninstall` and
+`the_way_out_of_a_hold_does_not_take_out_another_circles_rule_unasked` in
+`apps/peerharness/tests/vote_and_own_skills.rs` follow the review's two cases through
+the binary, and `a_hold_in_a_project_does_not_let_the_voted_copy_elsewhere_be_taken_out`
+now goes on to the copy the vote then installs in the project, which is refused.
+`a_skill_that_cannot_be_removed_stays_on_record_and_is_tried_again` in
+`apps/peerharness/src/governance.rs` (unix) makes the removal fail without file
+permissions, which a suite that runs as root cannot count on: the project's skills
+directory becomes a link that leads out of the project. What a daemon prints has two
+unit tests in `apps/peerharness/src/commands/net.rs`
+(`a_daemon_tells_a_hold_once_when_it_is_new` and
+`a_daemon_prints_a_hold_with_one_report_and_no_later_one`) and a test with three
+processes over QUIC on loopback,
+`a_daemon_that_only_answers_tells_a_hold_that_a_push_created_once` in
+`apps/peerharness/tests/network.rs`: a daemon without a sync interval that knows no
+peer prints the hold's line once, not again after a second push that settles the
+circle, and a second held rule once in its turn. The choice of sentence in `proposal
+adopt` is a unit test
+(`adopt_says_what_was_installed_when_the_rule_changed_after_settling`).
+
+By hand, on Linux with debug builds, and not part of the suite. A skill made
+unchangeable with `chattr +i` while its owner left the circle: the line was printed,
+the record was kept, and once the attribute was cleared the next `events import`
+removed the skill. `skills uninstall` in a project, in the review's two cases. A
+daemon that dials nobody, without `--sync-every` and with `--sync-every 30`: one
+hold line after a push, and none after a second push. Two daemons where the hold was
+found by the daemon's own exchange and a later report was printed for new events:
+one hold line, where the review had counted two.
+
+Not done. `skills uninstall` does not ask whether its owner left the circle: run by
+hand on a machine that had left, it answered with that circle's opt-out for the copy
+that could not be removed, while the rule stayed in force for the circle. The timer
+of `--sync-every` still has no test. The case of `proposal adopt` above was not
+reproduced. Nothing was run on macOS.
 
 ## ADR-043: A record from a file is parsed like a frame from the wire, a join from a file chooses the circle before the charter, and two more high-risk scanner rules
 ADR-019 and ADR-025 say the carrier is not trusted because every line is verified by
@@ -1804,7 +2166,8 @@ macOS lines only where it runs.
   without condition "The agent cannot approve, share, install or join anything" and,
   without windows, "The agent can only add a note to your inbox". Both sentences now
   begin with "Inside its session". This is the preview in the terminal. No window
-  text changed.
+  text changed. (The sentence for a machine without windows was reworded once more
+  after a third review, below: "can only add a note" claimed more than is enforced.)
 * **The two-process demo prints the rule's text again.** Since the first review of
   ADR-041 `proposal show` prints a rule's text behind `| `. The filter in
   `demo/two-peers.sh` still looked for the bare text, so the step headed "reads the
@@ -1831,3 +2194,39 @@ Two limits of `init` that the review named. The code was not changed for either:
   does not remove it. The review saw it in 4 of 150 rounds of two inits started
   together on one core. `status` then says that the home is not initialized, and the
   next `init` works.
+
+**After a third review.**
+
+* **The preview without windows says what the skill asks, and what is refused.** The
+  sentence above for a machine without windows still read "Inside its session the
+  agent can only add a note to your inbox; it cannot approve, share or install
+  anything." Its first half is what the skill's text asks of the agent, not what the
+  program enforces: with windows off the review founded a circle and opted out of a
+  rule from inside a session. The two are now said apart: "It asks your agent to
+  write down a rule when you correct it, and to run nothing else. Inside its session
+  the agent cannot approve, share or install anything." The sentence for a machine
+  with windows was read again and left as it is. Each thing it says the agent
+  cannot do (approve, share, install, join) is refused in a session unless the owner
+  clicks in a window. This is the preview in the terminal, and no window text
+  changed. `without_windows_setup_says_what_works_and_suggests_nothing_that_cannot`
+  in `apps/peerharness/tests/setup.rs` asserts the two sentences, and that "can only
+  add a note" is gone.
+* **The control of the join test no longer depends on catching a connection.**
+  `a_join_nobody_can_be_asked_about_goes_nowhere_near_the_network` runs the person's
+  join as a control, to show that the hub would have seen the session's. The control
+  looked up the hub's own peer id and polled the hub for a connection, which the hub
+  forgets when it closes, for 60 seconds and without looking at whether the command
+  had ended. The review saw the test file fail 2 times in 18 runs, both at that
+  deadline. The control now looks up the peer id of a second throwaway key, so the
+  node has to ask the hub where that peer is, and the hub keeps every such question.
+  It fails at once, with what the command printed, when the command has ended and
+  the hub was not asked, and the child process is stopped when the test is done
+  with it. What the test shows about the session's join is unchanged. After the
+  change the file was run 25 times in a row on Linux, 10 of them while six busy
+  loops loaded the machine's four cores, and passed each time.
+* **The network tests no longer read the developer's Claude settings.**
+  `apps/peerharness/tests/network.rs` named no `PEERHARNESS_CLAUDE_SETTINGS`, so the
+  `status` calls of its nodes read the settings file of whoever ran the suite, and
+  its daemons were started with `PEERHARNESS_AGENT_SESSION` left as it was. Nothing
+  was written. Each node now has a temporary settings file, and the daemons start
+  with neither session variable.
