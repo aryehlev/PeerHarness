@@ -14,8 +14,10 @@
 //! roll from that node.
 //!
 //! What is put to the vote is what was shown. Each of these commands drafts from the
-//! charter and the rules in force it read before its preview, and after the owner
-//! answered it checks that the node still holds exactly that ([`put_amendment`]).
+//! charter and the rules in force it read before its preview. After the owner answered
+//! it unlocks the key, checks that the node still holds exactly that, and signs, in
+//! that order ([`put_amendment`]). `leave` is no exception: its first run changes the
+//! machine and then signs the request it previewed, or none.
 //!
 //! Two commands act on this machine alone. `mode` is the owner's standing choice about
 //! rules that pass. `revoke` is the founder's emergency brake for a lost device: it cuts
@@ -28,7 +30,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{anyhow, Context, Result};
-use ph_core::{CircleId, DeviceKey, Scope};
+use ph_core::{CircleId, DeviceKey, Scope, Timestamp};
 use ph_governance::{
     add_device, admit_member, change_rules, remove_device, remove_member, threshold_for,
     ProposalView, RuleSet, Tally,
@@ -36,9 +38,9 @@ use ph_governance::{
 use ph_identity::{accept_credential, CircleAuthority};
 use ph_protocol::{
     is_valid_member_name, validate_stateless, Charter, CharterContent, EventBody, ProposalAction,
-    RevocationBody, RollEntry, Threshold, VoteDecision,
+    RevocationBody, RollEntry, SigningKey, Threshold, VoteDecision,
 };
-use ph_store::CircleRow;
+use ph_store::{CircleRow, Store};
 use serde_json::{json, Value};
 
 use crate::carrier::Record;
@@ -731,13 +733,18 @@ enum NoRequest {
     MissingCarried(usize),
     /// The device key could not be unlocked.
     KeyLocked,
-    /// The proposal was refused: the charter changed at that instant, or this node
-    /// would not accept the event.
+    /// What this node holds of the circle is no longer what the preview was built
+    /// from: the charter in force or the rules in force changed while the owner read
+    /// or while the key was being unlocked. What the preview said about the request is
+    /// not carried out on another state.
+    Changed,
+    /// The proposal was refused when it was to be stored: the charter changed in the
+    /// instant after the check, or this node would not accept the event.
     Refused,
     /// The member is no longer on the roll of the charter in force.
     OffTheRoll,
-    /// A proposal that takes the member off the roll of the charter in force is on
-    /// record already.
+    /// The request is on record already: a proposal under the charter in force that is
+    /// exactly this removal ([`removals_on_record`]).
     OnRecord,
 }
 
@@ -747,6 +754,7 @@ impl NoRequest {
         match self {
             NoRequest::MissingCarried(_) => "missing_carried_rules",
             NoRequest::KeyLocked => "device_key_locked",
+            NoRequest::Changed => "changed_while_confirming",
             NoRequest::Refused => "proposal_refused",
             NoRequest::OffTheRoll => "off_the_roll",
             NoRequest::OnRecord => "request_on_record",
@@ -771,14 +779,21 @@ impl NoRequest {
                 "the device key could not be unlocked, and the request is signed with it. \
                  You stay on the roll. Run {again} again to make the request."
             ),
+            NoRequest::Changed => format!(
+                "what this node holds of the circle changed while this was being confirmed \
+                 (its charter, or the rules in force). This machine was changed as shown. \
+                 No request was made and nothing was signed: what you were shown about the \
+                 request no longer holds. Run {again} again: it shows the request as it \
+                 would be now and, once you confirm, makes it."
+            ),
             NoRequest::Refused => format!(
                 "the circle's charter changed on this node at that moment, or this node \
                  would not accept the request. You stay on the roll. Run {again} again to \
                  make the request."
             ),
             NoRequest::OffTheRoll => {
-                "you are no longer on the roll of the charter in force, so there is nothing \
-                 to ask for."
+                "you are not on the roll of the charter in force, so there is nothing to \
+                 ask for."
                     .to_owned()
             }
             NoRequest::OnRecord => "one is on record already.".to_owned(),
@@ -798,93 +813,308 @@ const LEFT_AND_REQUESTED: &str =
     "this machine left <circle>, the rules that circle installed were removed, and the \
      request to take you off the roll is stored. What follows from it failed";
 
-/// The request half of `circle leave`, after the machine was changed: puts the removal
-/// of `member` to the vote with their approval, drafted from the charter that is
-/// current at this moment. No prompt lies between the read here and the signature.
+/// A charter's content in the order `remove_member` and the other drafting functions
+/// give it: the roll by member, each entry's devices and scopes sorted, the carried
+/// rules by id. Two contents that say the same compare equal afterwards.
+fn canonical(mut content: CharterContent) -> CharterContent {
+    content.normalize();
+    for entry in &mut content.roll {
+        entry.devices.sort_by_key(DeviceKey::to_string);
+        entry.scopes.sort();
+    }
+    content
+}
+
+/// The proposals on this node that would take one member off the roll of the charter
+/// in force.
+struct OnRecord {
+    /// The request: a proposal whose next charter is exactly what this node would draft
+    /// for the removal now, with its count. The member's own comes first, then another
+    /// member's `circle remove`.
+    request: Option<(ProposalView, Tally)>,
+    /// A proposal that takes the member off the roll and is not the request: it changes
+    /// something else as well (a removal drafted before a rule passed drops that rule),
+    /// or this node cannot draft the removal to compare it with. The member's own
+    /// comes first.
+    other: Option<ProposalView>,
+}
+
+/// What is on record about taking `member` off the roll of `current`, the charter in
+/// force. `draft` is the removal this node would draft now (`remove_member` from the
+/// charter and the rules in force), or `None` where it drafts none.
+///
+/// Only a proposal whose next charter equals `draft` counts as "the request". An
+/// amendment that takes the member off the roll and changes anything else is another
+/// proposal: `circle leave` does not call it the request to leave, does not point its
+/// owner at approving it, and goes on to make a request of its own.
+fn removals_on_record(
+    store: &Store,
+    me: &DeviceKey,
+    current: &Charter,
+    draft: Option<&CharterContent>,
+    member: &str,
+) -> Result<OnRecord> {
+    let digest = current.digest()?;
+    let mut request: Option<ProposalView> = None;
+    let mut other: Option<ProposalView> = None;
+    for ev in store.proposals(&current.circle_id)? {
+        let Ok(p) = governance::proposal_view(store, &ev.event_id) else {
+            continue;
+        };
+        let Some(next) = p
+            .amend_next()
+            .filter(|next| p.charter() == digest && next.member(member).is_none())
+        else {
+            continue;
+        };
+        let exact = draft.is_some_and(|draft| canonical(next.clone()) == *draft);
+        let slot = if exact { &mut request } else { &mut other };
+        // The first one found, unless a later one is the member's own.
+        let own = p.author() == *me;
+        let have_own = slot.as_ref().is_some_and(|held| held.author() == *me);
+        if slot.is_none() || (own && !have_own) {
+            *slot = Some(p);
+        }
+    }
+    let request = match request {
+        Some(p) => {
+            let (_, tally) = governance::count(store, &p)?;
+            Some((p, tally))
+        }
+        None => None,
+    };
+    Ok(OnRecord { request, other })
+}
+
+/// The line that names a proposal which takes the member off the roll and is not the
+/// request `circle leave` makes (see [`OnRecord::other`]). `comparable` says whether
+/// this node could draft the removal to compare it with.
+fn other_removal_line(other: &ProposalView, comparable: bool) -> String {
+    let id = short_id(&other.event_id());
+    if comparable {
+        format!(
+            "Proposal {id} on record also takes you off the roll, and changes more than \
+             that: `peerharness proposal show {id}`."
+        )
+    } else {
+        format!(
+            "Proposal {id} on record takes you off the roll. This node cannot show whether \
+             it changes anything else: `peerharness proposal show {id}`."
+        )
+    }
+}
+
+/// The lines of a report about a request that is on record, and whether the member's
+/// own approval is on it.
+fn on_record_lines(t: &mut Text, proposal: &ProposalView, tally: &Tally, member: &str) {
+    t.line(format!("  {tally}"));
+    if !tally.approvals().iter().any(|a| a.member == member) {
+        t.line(format!(
+            "  Your approval is not on it: `peerharness proposal vote {} approve`.",
+            short_id(&proposal.event_id())
+        ));
+    }
+}
+
+fn on_record_json(proposal: &ProposalView, tally: &Tally) -> Value {
+    json!({
+        "proposal_id": proposal.event_id(),
+        "passed": tally.passed(),
+        "approvals": tally.approvals().len(),
+        "need": tally.need(),
+    })
+}
+
+/// What the first run of `circle leave` does about the request to be taken off the
+/// roll. It is decided from what the node holds before its owner is asked, and the
+/// preview says exactly this. After the answer the run does this or nothing: it never
+/// makes a request that its preview did not announce.
+enum RequestPlan {
+    /// No request from this node, and why ([`NoRequest::MissingCarried`]).
+    None(NoRequest),
+    /// No request by this run: this one is on record under the charter in force.
+    OnRecord(Box<ProposalView>),
+    /// The request: the removal that was drafted for the preview.
+    Make,
+}
+
+/// Decides [`RequestPlan`] for the member `member` of `current`, from the rules in
+/// force that were read with it and the removal drafted from both (`draft`).
+fn plan_request(
+    store: &Store,
+    me: &DeviceKey,
+    current: &Charter,
+    rules: &RuleSet,
+    draft: &CharterContent,
+    member: &str,
+) -> Result<(RequestPlan, Option<ProposalView>)> {
+    let missing = rules.missing_carried().len();
+    if missing > 0 {
+        // Nothing can be compared with a draft this node could not make.
+        let on_record = removals_on_record(store, me, current, None, member)?;
+        return Ok((
+            RequestPlan::None(NoRequest::MissingCarried(missing)),
+            on_record.other,
+        ));
+    }
+    let on_record = removals_on_record(store, me, current, Some(draft), member)?;
+    Ok(match on_record.request {
+        Some((proposal, _)) => (RequestPlan::OnRecord(Box::new(proposal)), on_record.other),
+        None => (RequestPlan::Make, on_record.other),
+    })
+}
+
+/// Signs the request a first `circle leave` previewed: the removal `next`, drafted from
+/// `from` before the owner was asked, under the charter it was drafted from. `key` is
+/// the unlocked device key, so no prompt lies between the check here and the signature.
+///
+/// The check is the one every change to a charter gets ([`governance::as_drafted`]).
+/// When this node no longer holds what the preview was built from, nothing is signed
+/// and the reason is [`NoRequest::Changed`]: the draft is not made anew from what the
+/// node holds now, because nobody was shown that.
+fn sign_removal(
+    store: &Store,
+    key: &SigningKey,
+    circle: &CircleId,
+    member: &str,
+    next: CharterContent,
+    from: &Drafted<'_>,
+    now: Timestamp,
+) -> Result<std::result::Result<ProposalView, NoRequest>> {
+    let drafted = match governance::as_drafted(store, key, circle, from.current, from.rules) {
+        Ok(drafted) => drafted,
+        Err(e) if exit_kind(&e) == ExitKind::Refused => return Ok(Err(NoRequest::Changed)),
+        Err(e) => return Err(e),
+    };
+    let title = format!("Remove {member}");
+    let signed = governance::propose_under(
+        store,
+        key,
+        circle,
+        &drafted,
+        NewProposal {
+            scope: &Scope::all(),
+            title: &title,
+            summary: "",
+            action: ProposalAction::Amend { next },
+        },
+        now,
+    );
+    match signed {
+        Ok(proposal) => Ok(Ok(proposal)),
+        Err(e) if exit_kind(&e) == ExitKind::Refused => Ok(Err(NoRequest::Refused)),
+        Err(e) => Err(e),
+    }
+}
+
+/// The request half of a first `circle leave`, after the machine was changed: unlocks
+/// the device key, then signs the removal the preview described and the owner's
+/// approval of it ([`sign_removal`]).
 ///
 /// Nothing in here undoes the leave. A request that cannot be made is a reason in the
-/// report (`Err` of the inner result), and a later `circle leave` makes it.
+/// report (`Err` of the inner result), and a later `circle leave` shows and makes it.
 fn request_removal(
     node: &Node,
     circle: &CircleRow,
     member: &str,
-) -> Result<std::result::Result<(Put, u64), NoRequest>> {
-    let (current, rules, _) =
-        governance::rule_set(&node.store, &circle.circle_id).context(LEFT_WITHOUT_REQUEST)?;
-    if current.content.member(member).is_none() {
-        return Ok(Err(NoRequest::OffTheRoll));
-    }
-    let missing = rules.missing_carried().len();
-    if missing > 0 {
-        return Ok(Err(NoRequest::MissingCarried(missing)));
-    }
-    let Ok(next) = remove_member(&current.content, &rules, member) else {
-        return Ok(Err(NoRequest::Refused));
-    };
-    if node.device().is_err() {
+    next: CharterContent,
+    from: &Drafted<'_>,
+) -> Result<std::result::Result<Put, NoRequest>> {
+    // A passphrase prompt, where the keystore has one, is here: before the check.
+    let Ok(device) = node.device() else {
         return Ok(Err(NoRequest::KeyLocked));
-    }
-    let from = Drafted {
-        current: &current,
-        rules: &rules,
     };
-    let title = format!("Remove {member}");
-    let proposal = match propose_amendment(node, circle, &title, next, &from) {
+    let signed = sign_removal(
+        &node.store,
+        device.signing_key(),
+        &circle.circle_id,
+        member,
+        next,
+        from,
+        node.now(),
+    )
+    .map_err(|e| e.context(LEFT_WITHOUT_REQUEST))?;
+    let proposal = match signed {
         Ok(proposal) => proposal,
-        Err(e) if exit_kind(&e) == ExitKind::Refused => return Ok(Err(NoRequest::Refused)),
-        Err(e) => return Err(e.context(LEFT_WITHOUT_REQUEST)),
+        Err(why) => return Ok(Err(why)),
     };
     let put = approve_and_settle(node, circle, proposal).context(LEFT_AND_REQUESTED)?;
-    Ok(Ok((put, current.seq)))
+    Ok(Ok(put))
 }
 
-/// A proposal on this node that names the charter in force and whose next roll no
-/// longer has `member`, with its count: the member's own request to leave, or another
-/// member's `circle remove`. The member's own comes first.
-fn removal_on_record(
-    node: &Node,
-    current: &Charter,
-    member: &str,
-) -> Result<Option<(ProposalView, Tally)>> {
-    let digest = current.digest()?;
-    let mut found = None;
-    for ev in node.store.proposals(&current.circle_id)? {
-        let Ok(p) = governance::proposal_view(&node.store, &ev.event_id) else {
-            continue;
-        };
-        let removes = p.charter() == digest
-            && p.amend_next()
-                .is_some_and(|next| next.member(member).is_none());
-        if !removes {
-            continue;
+/// `circle leave --undo`: the owner follows the circle again on this machine. Nothing
+/// is signed and nothing on record changes; the preview says what is on record.
+fn follow_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<Report> {
+    let id = circle.circle_id;
+    let me = node.device_key();
+    let name = safe(&circle.name);
+    let (current, rules, _) = governance::rule_set(&node.store, &id)?;
+    let preview = match current.content.member_of(&me) {
+        Some(entry) => {
+            let member = entry.member.clone();
+            // A request that is on record stays there: this run withdraws nothing, and
+            // nothing that was signed can be withdrawn. Whether one is on record is
+            // read here, not assumed: a machine can have left without making one.
+            let draft = if rules.missing_carried().is_empty() {
+                remove_member(&current.content, &rules, &member).ok()
+            } else {
+                None
+            };
+            let on_record =
+                removals_on_record(&node.store, &me, &current, draft.as_ref(), &member)?;
+            let request = on_record
+                .request
+                .map(|(proposal, _)| proposal)
+                .or(on_record.other.filter(|p| p.author() == me));
+            let about_the_request = match request {
+                Some(proposal) => format!(
+                    "A request to take you off the roll is on record (proposal {}) and \
+                     stays there; the members may still approve it.",
+                    short_id(&proposal.event_id())
+                ),
+                None => "No request to take you off the roll is on record.".to_owned(),
+            };
+            format!(
+                "This follows {name} again on this machine: rules in force are installed \
+                 for your agent according to your mode ({}).\n{about_the_request}",
+                circle.adoption_mode
+            )
         }
-        let own = p.author() == node.device_key();
-        if own || found.is_none() {
-            found = Some(p);
-        }
-        if own {
-            break;
-        }
+        None => format!(
+            "This follows {name} again on this machine. You are not on the roll of its \
+             charter in force, so none of its rules binds you and none is installed."
+        ),
+    };
+    confirm(&ctx.out, &preview, yes, "following the circle again")?;
+    node.store.set_circle_left(&id, None)?;
+    let settled = governance::settle(node, circle, &governance::user_installer()?, &[])?;
+    let mut t = Text::new();
+    t.line(format!("Following {name} again."));
+    for skill in &settled.applied.installed {
+        t.line(format!("  installed rule {skill} for your agent"));
     }
-    match found {
-        Some(p) => {
-            let (_, tally) = governance::count(&node.store, &p)?;
-            Ok(Some((p, tally)))
-        }
-        None => Ok(None),
+    for held in &settled.applied.held {
+        t.line(format!("  {}", held.line(&circle.name)));
     }
+    Ok(Report::new(
+        json!({ "circle": circle.name, "left": false, "installed": settled.applied.installed }),
+        t.finish(),
+    ))
 }
 
 /// `circle leave`: the owner stops following the circle on this machine at once, and
 /// asks the members to take them off the roll. Nobody can be made to follow a circle;
 /// the roll itself changes only by vote, like every change to it.
 ///
-/// The machine comes first and needs no key: the circle is marked as left and the rules
-/// it installed are removed before anything is signed. The request comes after, and is
-/// made only where this node can show what it asks for: not while it lacks a rule the
-/// charter in force carries. A request that was not made (that, a key that does not
-/// unlock) leaves the owner off this machine and on the roll, and running the command
-/// again makes it ([`leave_again`]).
+/// What the run does about the request is decided before the owner is asked
+/// ([`RequestPlan`]), and the preview says it. The machine then comes first and needs
+/// no key: the circle is marked as left and the rules it installed are removed before
+/// anything is signed. The request comes after, and is signed only if it is still what
+/// the preview said: the key is unlocked, the node is checked against what the preview
+/// was built from, and the removal that was drafted for the preview is signed. A
+/// request that was not made (a node that lacks a carried rule, a key that does not
+/// unlock, a node that changed meanwhile) leaves the owner off this machine and on the
+/// roll, and running the command again shows and makes it ([`leave_again`]).
 fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     let node = ctx.open_node()?;
     let circle = find_circle(&node, Some(&args.circle))?;
@@ -895,39 +1125,14 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         if left.is_none() {
             return Err(usage("you have not left that circle"));
         }
-        confirm(
-            &ctx.out,
-            &format!(
-                "This follows {} again on this machine: rules in force are installed for \
-                 your agent according to your mode ({}).\nYour request to be taken off the \
-                 roll stays on record; the members may still approve it.",
-                safe(&circle.name),
-                circle.adoption_mode
-            ),
-            args.yes,
-            "following the circle again",
-        )?;
-        node.store.set_circle_left(&id, None)?;
-        let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
-        let mut t = Text::new();
-        t.line(format!("Following {} again.", safe(&circle.name)));
-        for skill in &settled.applied.installed {
-            t.line(format!("  installed rule {skill} for your agent"));
-        }
-        for held in &settled.applied.held {
-            t.line(format!("  {}", held.line(&circle.name)));
-        }
-        return Ok(Report::new(
-            json!({ "circle": circle.name, "left": false, "installed": settled.applied.installed }),
-            t.finish(),
-        ));
+        return follow_again(ctx, &node, &circle, args.yes);
     }
     if left.is_some() {
         return leave_again(ctx, &node, &circle, args.yes);
     }
     let (current, rules, _) = governance::rule_set(&node.store, &id)?;
     let Some(entry) = current.content.member_of(&me) else {
-        // Already off the roll: only this machine is left to change.
+        // Already off the roll: only this machine is left to change. No key is used.
         confirm(
             &ctx.out,
             &format!(
@@ -938,41 +1143,78 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
             args.yes,
             "leaving the circle",
         )?;
+        let installer = governance::user_installer()?;
         node.store.set_circle_left(&id, Some(node.now()))?;
-        let settled = governance::settle(&node, &circle, &governance::user_installer()?, &[])?;
+        let applied = governance::apply_on(&node, &circle, &installer, &[])?;
+        let why = NoRequest::OffTheRoll;
+        let mut t = Text::new();
+        t.line(format!("Left {} on this machine.", safe(&circle.name)));
+        for skill in &applied.removed {
+            t.line(format!("  removed rule {skill}"));
+        }
+        for skill in &applied.not_removed {
+            t.line(format!("  {}", governance::not_removed_line(skill)));
+        }
+        t.line(format!(
+            "No request to take you off the roll was made: {}",
+            why.explain(&circle.name, "")
+        ));
         return Ok(Report::new(
-            json!({ "circle": circle.name, "left": true, "removed_rules": settled.applied.removed }),
-            format!("Left {} on this machine.", safe(&circle.name)),
+            json!({
+                "circle": circle.name,
+                "left": true,
+                "requested": false,
+                "reason": why.code(),
+                "removed_rules": applied.removed,
+                "not_removed_rules": applied.not_removed,
+            }),
+            t.finish(),
         ));
     };
     let member = entry.member.clone();
-    // Drafted here for the preview only: whether there is anybody to leave, and what
-    // the request needs. What is signed is drafted again after the owner answered.
+    // The removal that is signed, if one is: drafted here, shown in the preview, and
+    // signed after the owner's answer only if the node still holds what it was drafted
+    // from.
     let draft = remove_member(&current.content, &rules, &member).map_err(|_| only_member())?;
     let installed = node.store.rule_installs(&id)?.len();
-    let missing = rules.missing_carried().len();
+    let (plan, other) = plan_request(&node.store, &me, &current, &rules, &draft, &member)?;
     let mut preview = format!(
         "Leaving {circle}:\n  \
          now, on this machine: the {installed} rule(s) the circle installed for your agent \
          are removed, and no rule of this circle is installed here again;\n  ",
         circle = safe(&circle.name),
     );
-    if missing == 0 {
-        preview.push_str(&format!(
+    // A proposal on record that takes the member off the roll and is not this request.
+    let also = other
+        .as_ref()
+        .map(|p| {
+            let comparable = !matches!(plan, RequestPlan::None(_));
+            format!("\n{}", other_removal_line(p, comparable))
+        })
+        .unwrap_or_default();
+    match &plan {
+        RequestPlan::Make => preview.push_str(&format!(
             "for the circle: an amendment that removes {member} from the roll of charter \
-             {seq} is put to the vote, with your approval.\n\
+             {seq} is put to the vote, with your approval.{also}\n\
              You stay on the roll until the members have approved it. {need}",
             seq = current.seq,
             need = need_line(&current, &draft),
-        ));
-    } else {
+        )),
         // The node cannot show what such a request would do to the rules, so it does
         // not promise one: its owner would be approving what they cannot read.
-        preview.push_str(&format!(
+        RequestPlan::None(why) => preview.push_str(&format!(
             "for the circle: no request to take you off the roll is made from this node, \
-             because {}",
-            NoRequest::MissingCarried(missing).explain(&circle.name, &member),
-        ));
+             because {}{also}",
+            why.explain(&circle.name, &member),
+        )),
+        RequestPlan::OnRecord(proposal) => preview.push_str(&format!(
+            "for the circle: no request is made by this run and nothing is signed, because \
+             a request to take {member} off the roll of charter {seq} is on record already \
+             (proposal {id}).{also}\n\
+             You stay on the roll until the members have approved it.",
+            seq = current.seq,
+            id = short_id(&proposal.event_id()),
+        )),
     }
     if circle.is_founder {
         preview.push_str(FOUNDER_LEAVES);
@@ -981,20 +1223,42 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
 
     // The machine first. Neither step uses a key, so a key that does not unlock and a
     // request that cannot be made leave nothing of the circle installed here. (Where
-    // the skills directory cannot be located nothing is marked either.)
+    // the skills directory cannot be located nothing is marked either.) Neither step
+    // touches what the request is checked against: the charter and the rules in force
+    // are read from the circle's records, which these two do not write.
     let installer = governance::user_installer()?;
     node.store.set_circle_left(&id, Some(node.now()))?;
     let applied = governance::apply_on(&node, &circle, &installer, &[])?;
 
-    // Then the request, from what this node holds now.
+    // Then the request, as the preview said and only that. Where the preview announced
+    // none, no key is asked for. The report says when the node changed while its owner
+    // read: what the preview said about the request would no longer be true of it.
+    let from = Drafted {
+        current: &current,
+        rules: &rules,
+    };
+    let outcome = match plan {
+        RequestPlan::Make => {
+            request_removal(&node, &circle, &member, draft, &from)?.map_err(|why| (why, None))
+        }
+        RequestPlan::None(why) => Err((unless_changed(&node, &from, why)?, None)),
+        RequestPlan::OnRecord(proposal) => {
+            let why = unless_changed(&node, &from, NoRequest::OnRecord)?;
+            let (_, tally) =
+                governance::count(&node.store, &proposal).context(LEFT_WITHOUT_REQUEST)?;
+            Err((why, Some((proposal, tally))))
+        }
+    };
     let mut t = Text::new();
     let mut removed = applied.removed;
-    let mut report = match request_removal(&node, &circle, &member)? {
-        Ok((put, seq)) => {
+    let mut not_removed = applied.not_removed;
+    let mut report = match outcome {
+        Ok(put) => {
             t.line(format!(
-                "Left {} on this machine and asked to be taken off the roll of charter {seq} \
+                "Left {} on this machine and asked to be taken off the roll of charter {} \
                  (proposal {}).",
                 safe(&circle.name),
+                current.seq,
                 short_id(&put.proposal.event_id())
             ));
             for skill in &put.settled.applied.removed {
@@ -1002,33 +1266,80 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                     removed.push(skill.clone());
                 }
             }
+            not_removed.retain(|skill| !removed.contains(skill));
+            for skill in &put.settled.applied.not_removed {
+                if !not_removed.contains(skill) {
+                    not_removed.push(skill.clone());
+                }
+            }
             for skill in &removed {
                 t.line(format!("  removed rule {skill}"));
+            }
+            for skill in &not_removed {
+                t.line(format!("  {}", governance::not_removed_line(skill)));
             }
             let mut report = amendment_report(&circle, &put, "You are off the roll.", t);
             report.json["requested"] = json!(true);
             report.json["reason"] = Value::Null;
             report
         }
-        Err(why) => {
+        Err((why, on_record)) => {
             t.line(format!("Left {} on this machine.", safe(&circle.name)));
             for skill in &removed {
                 t.line(format!("  removed rule {skill}"));
             }
-            t.line(format!(
-                "No request to take you off the roll was made: {}",
-                why.explain(&circle.name, &member)
-            ));
-            Report::new(
-                json!({ "requested": false, "reason": why.code() }),
-                t.finish(),
-            )
+            for skill in &not_removed {
+                t.line(format!("  {}", governance::not_removed_line(skill)));
+            }
+            let mut json = json!({ "requested": false, "reason": why.code() });
+            match on_record.filter(|_| why == NoRequest::OnRecord) {
+                Some((proposal, tally)) => {
+                    t.line(format!(
+                        "No request to take you off the roll was made by this run: one is \
+                         on record already, under charter {} (proposal {}):",
+                        current.seq,
+                        short_id(&proposal.event_id())
+                    ));
+                    on_record_lines(&mut t, &proposal, &tally, &member);
+                    if let (Some(json), Some(extra)) = (
+                        json.as_object_mut(),
+                        on_record_json(&proposal, &tally).as_object(),
+                    ) {
+                        json.extend(extra.clone());
+                    }
+                }
+                None => {
+                    t.line(format!(
+                        "No request to take you off the roll was made: {}",
+                        why.explain(&circle.name, &member)
+                    ));
+                }
+            }
+            Report::new(json, t.finish())
         }
     };
     report.json["circle"] = json!(circle.name);
     report.json["left"] = json!(true);
     report.json["removed_rules"] = json!(removed);
+    report.json["not_removed_rules"] = json!(not_removed);
     Ok(report)
+}
+
+/// For the report of a first `circle leave` that makes no request: `why`, unless this
+/// node no longer holds what the preview was built from (`from`), in which case what
+/// the preview said about the request no longer holds either ([`NoRequest::Changed`]).
+///
+/// This decides what a report says and nothing else. Nothing is signed on its answer:
+/// what is signed is checked by [`governance::as_drafted`], which takes the key.
+fn unless_changed(node: &Node, from: &Drafted<'_>, why: NoRequest) -> Result<NoRequest> {
+    let same = governance::still_as_read(
+        &node.store,
+        &from.current.circle_id,
+        from.current,
+        from.rules,
+    )
+    .context(LEFT_WITHOUT_REQUEST)?;
+    Ok(if same { why } else { NoRequest::Changed })
 }
 
 /// What the founder is told before they ask to be taken off the roll.
@@ -1057,6 +1368,7 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
          machine.)",
         circle.name
     );
+    let me = node.device_key();
     let (current, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
     let mut t = Text::new();
     let nothing = |why: NoRequest, t: Text, extra: Value| -> Report {
@@ -1071,7 +1383,7 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         }
         Report::new(json, t.finish())
     };
-    let Some(entry) = current.content.member_of(&node.device_key()) else {
+    let Some(entry) = current.content.member_of(&me) else {
         t.line(format!(
             "You left {name} on this machine already, and you are not on its roll: there \
              is nothing left to ask for."
@@ -1080,45 +1392,55 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         return Ok(nothing(NoRequest::OffTheRoll, t, Value::Null));
     };
     let member = entry.member.clone();
-    if let Some((proposal, tally)) = removal_on_record(node, &current, &member)? {
-        let id = short_id(&proposal.event_id());
+    // The removal this node would ask for now. Where it lacks a carried rule it drafts
+    // none, and then nothing on record can be called this request either.
+    let missing = rules.missing_carried().len();
+    let draft = if missing == 0 {
+        Some(remove_member(&current.content, &rules, &member).map_err(|_| only_member())?)
+    } else {
+        None
+    };
+    let on_record = removals_on_record(&node.store, &me, &current, draft.as_ref(), &member)?;
+    if let Some((proposal, tally)) = &on_record.request {
         t.line(format!(
             "You left {name} on this machine already, and a request to take {member} off \
-             the roll of charter {} is on record (proposal {id}):",
-            current.seq
+             the roll of charter {} is on record (proposal {}):",
+            current.seq,
+            short_id(&proposal.event_id())
         ));
-        t.line(format!("  {tally}"));
-        if !tally.approvals().iter().any(|a| a.member == member) {
-            t.line(format!(
-                "  Your approval is not on it: `peerharness proposal vote {id} approve`."
-            ));
-        }
+        on_record_lines(&mut t, proposal, tally, &member);
         t.line("Nothing was changed and nothing was signed.");
         t.line(undo);
-        let extra = json!({
-            "proposal_id": proposal.event_id(),
-            "passed": tally.passed(),
-            "approvals": tally.approvals().len(),
-            "need": tally.need(),
-        });
-        return Ok(nothing(NoRequest::OnRecord, t, extra));
+        return Ok(nothing(
+            NoRequest::OnRecord,
+            t,
+            on_record_json(proposal, tally),
+        ));
     }
-    let missing = rules.missing_carried().len();
-    if missing > 0 {
+    // A proposal that takes the member off the roll and does something else is not
+    // their request to leave. It is named, and the request is still theirs to make.
+    let other = on_record
+        .other
+        .as_ref()
+        .map(|p| other_removal_line(p, draft.is_some()));
+    let Some(next) = draft else {
         let why = NoRequest::MissingCarried(missing);
         t.line(format!("You left {name} on this machine already."));
         t.line(format!(
             "No request to take you off the roll was made: {}",
             why.explain(&circle.name, &member)
         ));
+        if let Some(other) = other {
+            t.line(other);
+        }
         return Ok(nothing(why, t, Value::Null));
-    }
-    let next = remove_member(&current.content, &rules, &member).map_err(|_| only_member())?;
+    };
+    let also = other.map(|line| format!("\n{line}")).unwrap_or_default();
     let mut preview = format!(
         "You left {name} on this machine already. This asks the members to take you off \
          its roll:\n  \
          an amendment that removes {member} from the roll of charter {seq} is put to the \
-         vote, with your approval.\n\
+         vote, with your approval.{also}\n\
          You stay on the roll until the members have approved it. {need}",
         seq = current.seq,
         need = need_line(&current, &next),
@@ -1579,7 +1901,7 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
 /// of the lines. A line is parsed strictly, like every imported record
 /// (`carrier::parse_record`): what is shown to the owner before a join is what the
 /// import after it will accept.
-fn charters_for(lines: &[&str], device: &DeviceKey, now: ph_core::Timestamp) -> Vec<Charter> {
+fn charters_for(lines: &[&str], device: &DeviceKey, now: Timestamp) -> Vec<Charter> {
     let mut found = Vec::new();
     for line in lines {
         let Some(Record::Event(event)) = crate::carrier::parse_record(line) else {
@@ -1610,7 +1932,7 @@ fn newest(charters: impl IntoIterator<Item = Charter>) -> Option<Charter> {
 }
 
 /// The newest charter in `lines` whose roll lists `device`, verified statelessly.
-fn charter_for(lines: &[&str], device: &DeviceKey, now: ph_core::Timestamp) -> Option<Charter> {
+fn charter_for(lines: &[&str], device: &DeviceKey, now: Timestamp) -> Option<Charter> {
     newest(charters_for(lines, device, now))
 }
 
@@ -1954,4 +2276,249 @@ fn join_from_peer(ctx: &Ctx, args: CircleJoinArgs, from: JoinFrom) -> Result<Rep
         run.stop().await;
         joined
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::governance::tests::{adopt, device, key, next_charter, node, pass};
+    use ph_core::{Digest, EventId};
+
+    /// The charter in force and the rules in force, as a command reads them before
+    /// its preview.
+    fn read(store: &Store, circle: &CircleId) -> (Charter, RuleSet) {
+        let (current, rules, _) = governance::rule_set(store, circle).unwrap();
+        (current, rules)
+    }
+
+    fn id(proposal: &Option<ProposalView>) -> Option<EventId> {
+        proposal.as_ref().map(ProposalView::event_id)
+    }
+
+    /// An amendment of `current` with the next content `next`, signed by `seed`.
+    fn amendment(
+        store: &Store,
+        seed: u8,
+        current: &Charter,
+        title: &str,
+        next: CharterContent,
+        now: Timestamp,
+    ) -> ProposalView {
+        governance::propose_under(
+            store,
+            &key(seed),
+            &current.circle_id,
+            &current.digest().unwrap(),
+            NewProposal {
+                scope: &Scope::all(),
+                title,
+                summary: "",
+                action: ProposalAction::Amend { next },
+            },
+            now,
+        )
+        .unwrap()
+    }
+
+    /// What a first `circle leave` does about the request is decided from what the
+    /// node holds before its owner is asked, and it is one of three things: the
+    /// request, no request because one is on record, or no request from this node
+    /// because it lacks a rule the charter carries. Bob (device 2) leaves; the store
+    /// is what his node holds.
+    #[test]
+    fn a_first_leave_decides_about_its_request_before_it_asks() {
+        let (store, circle, now) = node();
+        let bob = device(2);
+        let (current, rules) = read(&store, &circle);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+
+        // Nothing is on record and the node is complete: the request.
+        let (plan, other) = plan_request(&store, &bob, &current, &rules, &draft, "bob").unwrap();
+        assert!(matches!(plan, RequestPlan::Make));
+        assert_eq!(id(&other), None);
+
+        // The request is made. A first run after `--undo` finds it on record, and
+        // plans no second one.
+        let from = Drafted {
+            current: &current,
+            rules: &rules,
+        };
+        let request = sign_removal(&store, &key(2), &circle, "bob", draft.clone(), &from, now)
+            .unwrap()
+            .unwrap();
+        let (plan, other) = plan_request(&store, &bob, &current, &rules, &draft, "bob").unwrap();
+        assert!(
+            matches!(&plan, RequestPlan::OnRecord(p) if p.event_id() == request.event_id()),
+            "the request on record is the plan"
+        );
+        assert_eq!(id(&other), None);
+
+        // A newer charter carries a rule that never reached this node. No request is
+        // made from here, and the old request, which names the earlier charter, is
+        // nothing on record under this one.
+        let mut content = current.content.clone();
+        content.carried = vec![EventId::from_digest(Digest::sha256(
+            b"a rule not held here",
+        ))];
+        next_charter(&store, &current, content, now);
+        let (current, rules) = read(&store, &circle);
+        assert_eq!(current.seq, 2);
+        assert_eq!(rules.missing_carried().len(), 1);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+        let (plan, other) = plan_request(&store, &bob, &current, &rules, &draft, "bob").unwrap();
+        assert!(matches!(
+            plan,
+            RequestPlan::None(NoRequest::MissingCarried(1))
+        ));
+        assert_eq!(id(&other), None);
+        // A removal a complete node drafted under this charter is on record. This node
+        // cannot compare it with a draft of its own, so it is not called the request.
+        let mut honest = current.content.clone();
+        honest.roll.retain(|e| e.member != "bob");
+        let by_alice = amendment(&store, 1, &current, "Remove bob", honest, now);
+        let (plan, other) = plan_request(&store, &bob, &current, &rules, &draft, "bob").unwrap();
+        assert!(matches!(
+            plan,
+            RequestPlan::None(NoRequest::MissingCarried(1))
+        ));
+        assert_eq!(id(&other), Some(by_alice.event_id()));
+    }
+
+    /// The request a first `circle leave` signs is the removal its preview described,
+    /// and it is signed only while the node still holds what that preview was built
+    /// from. The check runs with the unlocked key, after every prompt. A rule that
+    /// passed or a charter that arrived meanwhile leaves no request, with the reason
+    /// `changed_while_confirming`: the removal is not drafted anew from a state nobody
+    /// was shown.
+    #[test]
+    fn a_leave_request_is_signed_only_as_it_was_previewed() {
+        let (store, circle, now) = node();
+        let proposals = |store: &Store| store.proposals(&circle).unwrap().len();
+        let (current, rules) = read(&store, &circle);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+        let from = Drafted {
+            current: &current,
+            rules: &rules,
+        };
+        let sign = |next: &CharterContent, from: &Drafted<'_>| {
+            sign_removal(&store, &key(2), &circle, "bob", next.clone(), from, now).unwrap()
+        };
+
+        // A rule passes while the owner reads the preview or types a passphrase. The
+        // removal that was shown carries no rule and would now take that one out of
+        // force: nothing is signed.
+        let rule = adopt(&store, &circle, "*", now);
+        pass(&store, &rule, now);
+        let before = proposals(&store);
+        assert_eq!(sign(&draft, &from).unwrap_err(), NoRequest::Changed);
+        assert_eq!(NoRequest::Changed.code(), "changed_while_confirming");
+        assert_eq!(proposals(&store), before, "nothing was signed or stored");
+        // The sentence says what happened and what to run, and names the circle only
+        // inside that command.
+        let said = NoRequest::Changed.explain("team", "bob");
+        assert!(said.contains("changed while this was being confirmed"));
+        assert!(said.contains("This machine was changed as shown."));
+        assert!(said.contains("No request was made and nothing was signed"));
+        assert!(said.contains("`peerharness circle leave --circle team` again"));
+        assert_eq!(said.matches("team").count(), 1, "{said}");
+
+        // Read again, as a second run does: the removal carries the rule, and is
+        // signed exactly as drafted, under the charter it was drafted from.
+        let (current, rules) = read(&store, &circle);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+        assert_eq!(draft.carried, [rule.event_id()]);
+        let from = Drafted {
+            current: &current,
+            rules: &rules,
+        };
+        let request = sign(&draft, &from).unwrap();
+        assert_eq!(request.charter(), current.digest().unwrap());
+        assert_eq!(request.amend_next(), Some(&draft));
+        assert_eq!(proposals(&store), before + 1);
+
+        // A newer charter arrives while another member reads the same kind of preview.
+        let carol_goes = remove_member(&current.content, &rules, "carol").unwrap();
+        let mut content = current.content.clone();
+        content
+            .roll
+            .push(RollEntry::new("dave", vec![device(4)], vec![Scope::all()]));
+        content.normalize();
+        next_charter(&store, &current, content, now);
+        let stored = proposals(&store);
+        let outcome =
+            sign_removal(&store, &key(3), &circle, "carol", carol_goes, &from, now).unwrap();
+        assert_eq!(outcome.unwrap_err(), NoRequest::Changed);
+        assert_eq!(proposals(&store), stored);
+    }
+
+    /// Only a proposal that is exactly the removal this node would draft now counts as
+    /// "the request to take you off the roll". A removal that was drafted before a rule
+    /// passed drops that rule when it is approved: `circle leave` used to call it the
+    /// request, point its owner at approving it, and make none of its own.
+    #[test]
+    fn a_removal_that_changes_anything_else_is_not_the_request_to_leave() {
+        let (store, circle, now) = node();
+        let bob = device(2);
+        let (current, rules) = read(&store, &circle);
+        let stale = remove_member(&current.content, &rules, "bob").unwrap();
+        let by_alice = amendment(&store, 1, &current, "Remove bob", stale.clone(), now);
+        // While no rule is in force it is exactly the removal: the request.
+        let on = removals_on_record(&store, &bob, &current, Some(&stale), "bob").unwrap();
+        assert_eq!(
+            on.request.as_ref().map(|(p, _)| p.event_id()),
+            Some(by_alice.event_id())
+        );
+        assert_eq!(id(&on.other), None);
+
+        // A rule passes under the same charter. Alice's removal would now drop it.
+        let rule = adopt(&store, &circle, "*", now);
+        pass(&store, &rule, now);
+        let (current, rules) = read(&store, &circle);
+        let draft = remove_member(&current.content, &rules, "bob").unwrap();
+        assert_ne!(draft, stale);
+        let on = removals_on_record(&store, &bob, &current, Some(&draft), "bob").unwrap();
+        assert!(on.request.is_none(), "a stale removal is not the request");
+        assert_eq!(id(&on.other), Some(by_alice.event_id()));
+        // So a first run plans a request of its own, and a second run previews one.
+        let (plan, other) = plan_request(&store, &bob, &current, &rules, &draft, "bob").unwrap();
+        assert!(matches!(plan, RequestPlan::Make));
+        assert_eq!(id(&other), Some(by_alice.event_id()));
+        let said = other_removal_line(other.as_ref().unwrap(), true);
+        assert!(said.contains("also takes you off the roll, and changes more than that"));
+        assert!(said.contains(&format!(
+            "`peerharness proposal show {}`",
+            short_id(&by_alice.event_id())
+        )));
+
+        // An amendment that takes bob off the roll and changes the rules of the vote,
+        // or takes someone else off as well, is not the request either.
+        let mut more = draft.clone();
+        more.roll.retain(|e| e.member != "carol");
+        let both = amendment(&store, 1, &current, "Remove bob", more, now);
+        let others = [by_alice.event_id(), both.event_id()];
+        let on = removals_on_record(&store, &bob, &current, Some(&draft), "bob").unwrap();
+        assert!(on.request.is_none());
+        assert!(id(&on.other).is_some_and(|other| others.contains(&other)));
+
+        // Bob's own clean request is the request, whatever else is on record.
+        let from = Drafted {
+            current: &current,
+            rules: &rules,
+        };
+        let own = sign_removal(&store, &key(2), &circle, "bob", draft.clone(), &from, now)
+            .unwrap()
+            .unwrap();
+        let on = removals_on_record(&store, &bob, &current, Some(&draft), "bob").unwrap();
+        assert_eq!(
+            on.request.as_ref().map(|(p, _)| p.event_id()),
+            Some(own.event_id())
+        );
+        assert!(id(&on.other).is_some_and(|other| others.contains(&other)));
+        // Nothing under this charter takes carol off the roll and nothing else.
+        let carol_goes = remove_member(&current.content, &rules, "carol").unwrap();
+        let on =
+            removals_on_record(&store, &device(3), &current, Some(&carol_goes), "carol").unwrap();
+        assert!(on.request.is_none());
+        assert_eq!(id(&on.other), Some(both.event_id()));
+    }
 }

@@ -1890,21 +1890,21 @@ pub fn user_installer() -> Result<ph_skills::Installer> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ph_protocol::{AnswerBody, AnswerChoice, QuestionBody};
     use ph_store::QuestionStatus;
 
-    fn key(seed: u8) -> SigningKey {
+    pub(crate) fn key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
     }
-    fn device(seed: u8) -> DeviceKey {
+    pub(crate) fn device(seed: u8) -> DeviceKey {
         DeviceKey::from_signing_key(&key(seed))
     }
 
     /// A node (device 1, alice) holding a circle whose roll is alice (every scope), bob
     /// (device 2, every scope) and carol (device 3, only `team/backend`).
-    fn node() -> (Store, CircleId, Timestamp) {
+    pub(crate) fn node() -> (Store, CircleId, Timestamp) {
         let store = Store::open_in_memory().unwrap();
         let now = Timestamp::now();
         store
@@ -2426,7 +2426,12 @@ mod tests {
         assert!(row.is_local && row.status == QuestionStatus::New);
     }
 
-    fn adopt(store: &Store, circle: &CircleId, scope: &str, now: Timestamp) -> ProposalView {
+    pub(crate) fn adopt(
+        store: &Store,
+        circle: &CircleId,
+        scope: &str,
+        now: Timestamp,
+    ) -> ProposalView {
         propose(
             store,
             &key(1),
@@ -2818,7 +2823,7 @@ mod tests {
         (proposal, bundle)
     }
 
-    fn pass(store: &Store, proposal: &ProposalView, now: Timestamp) {
+    pub(crate) fn pass(store: &Store, proposal: &ProposalView, now: Timestamp) {
         for seed in [1, 2] {
             cast_vote(
                 store,
@@ -3582,7 +3587,12 @@ mod tests {
 
     /// The next charter after `current`, with `content`, as the founder's node issues
     /// it, stored as this node's current charter.
-    fn next_charter(store: &Store, current: &Charter, content: CharterContent, now: Timestamp) {
+    pub(crate) fn next_charter(
+        store: &Store,
+        current: &Charter,
+        content: CharterContent,
+        now: Timestamp,
+    ) {
         let authority = CircleAuthority::from_signing_key(key(100));
         let next = authority
             .issue_next_charter(

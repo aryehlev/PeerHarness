@@ -24,9 +24,14 @@
 //! charter, or a rule that passed. Their stand-in window imports a file before it
 //! answers Proceed, which is what a sync by a running daemon does while a real window
 //! is open. The terminal's prompt cannot be held open that way without a terminal, so
-//! the check that `circle remove`, `amend` and `device` share with `circle invite` is
-//! covered there by the window test of `invite` and by the unit tests of
-//! `governance::as_drafted` and `governance::propose_under`.
+//! the check that `circle remove`, `amend`, `device` and `leave` share with `circle
+//! invite` is covered there by the window test of `invite` and by the unit tests of
+//! `governance::as_drafted`, `governance::propose_under` and `circle.rs`.
+//!
+//! Nor can a passphrase prompt be held open here: every command gets its passphrase
+//! from the environment. That the check comes after the key is unlocked is a matter of
+//! the functions' signatures (`as_drafted` takes the unlocked key), and was run by hand
+//! on a pseudo-terminal.
 
 use std::path::{Path, PathBuf};
 
@@ -1658,4 +1663,287 @@ fn a_removal_a_member_proposed_is_not_asked_for_a_second_time() {
     // The approval is hers to give, in the ordinary way.
     let voted = carol.run(&["proposal", "vote", &removal, "approve", "--yes"]);
     assert_eq!(voted["passed"], true, "{voted}");
+}
+
+/// A command of `node` run by its owner with a passphrase that does not unlock the
+/// device key: its exit code and its JSON. A command that succeeds this way used no
+/// key.
+fn with_a_passphrase_that_unlocks_nothing(node: &Node, args: &[&str]) -> (i32, Value) {
+    let out = node
+        .bare()
+        .arg("--json")
+        .args(args)
+        .env("PEERHARNESS_PASSPHRASE", "not the passphrase of this key")
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        serde_json::from_slice(&out.stdout).unwrap_or(Value::Null),
+    )
+}
+
+/// The proposals on `node` with the title `title`.
+fn titled(node: &Node, title: &str) -> Vec<String> {
+    node.run(&["proposal", "list"])["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["title"] == title)
+        .map(|p| p["proposal_id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// A request that is on record is not made a second time by a first run either. Carol
+/// leaves, follows the circle again and leaves once more while her request still names
+/// the charter in force. The second leave used to sign a second, identical removal:
+/// the members then had two to split their approvals between, each with an approval
+/// of hers that cannot be withdrawn. Now its preview says that no request is made by
+/// that run, and it uses no key. `--undo` says what is on record, and says so only
+/// when something is.
+#[test]
+fn leaving_again_after_an_undo_makes_no_second_request() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (_alice, _bob, carol) = trio(root);
+    let leave = ["circle", "leave", "--circle", "team"];
+    let leave_yes = ["circle", "leave", "--circle", "team", "--yes"];
+    let undo = ["circle", "leave", "--circle", "team", "--undo"];
+    let undo_yes = ["circle", "leave", "--circle", "team", "--undo", "--yes"];
+
+    // --- A machine that left without a request: `--undo` does not speak of one.
+    let (code, left) = with_a_passphrase_that_unlocks_nothing(&carol, &leave_yes);
+    assert_eq!(code, 0, "{left}");
+    assert_eq!(left["reason"], "device_key_locked", "{left}");
+    let (code, preview) = carol.reads(&undo);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains("No request to take you off the roll is on record."),
+        "{preview}"
+    );
+    assert!(!preview.contains("stays there"), "{preview}");
+    carol.run(&undo_yes);
+
+    // --- She leaves and the request is made.
+    let asked = carol.run(&leave_yes);
+    assert_eq!(asked["requested"], true, "{asked}");
+    let request = asked["proposal_id"].as_str().unwrap().to_owned();
+    assert_eq!(titled(&carol, "Remove carol"), vec![request.clone()]);
+
+    // --- `--undo` now says that it stays on record, and names it.
+    let (code, preview) = carol.reads(&undo);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains(&format!(
+            "A request to take you off the roll is on record (proposal {}) and stays \
+             there; the members may still approve it.",
+            short(&request)
+        )),
+        "{preview}"
+    );
+    carol.run(&undo_yes);
+
+    // --- She leaves again. The preview says beforehand that this run asks for nothing.
+    let (code, preview) = carol.reads(&leave);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains(&format!(
+            "for the circle: no request is made by this run and nothing is signed, because \
+             a request to take carol off the roll of charter 3 is on record already \
+             (proposal {}).",
+            short(&request)
+        )),
+        "{preview}"
+    );
+    assert!(!preview.contains("is put to the vote"), "{preview}");
+    // And none is made: it succeeds with a passphrase that unlocks nothing.
+    let (code, again) = with_a_passphrase_that_unlocks_nothing(&carol, &leave_yes);
+    assert_eq!(code, 0, "{again}");
+    assert_eq!(again["left"], true, "{again}");
+    assert_eq!(again["requested"], false, "{again}");
+    assert_eq!(again["reason"], "request_on_record", "{again}");
+    assert_eq!(again["proposal_id"], request.as_str(), "{again}");
+    assert_eq!(again["approvals"], 1, "{again}");
+    assert_eq!(again["need"], 2, "{again}");
+    assert_eq!(
+        titled(&carol, "Remove carol"),
+        vec![request.clone()],
+        "one removal, not two"
+    );
+    assert_eq!(carol.approvals(&request), serde_json::json!(["carol"]));
+}
+
+/// The same when the request on record is another member's `circle remove`, on a first
+/// run: nothing is signed, and the report says that her approval is not on it.
+#[test]
+fn a_first_leave_names_a_members_removal_that_is_on_record_and_signs_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (_alice, bob, carol) = trio(root);
+    let removal = bob.run(&["circle", "remove", "carol", "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    carol.run(&[
+        "events",
+        "import",
+        &bob.export(&root.join("bob-removes-carol.jsonl")),
+    ]);
+    let before = carol.run(&["proposal", "list"])["proposals"].clone();
+
+    let (code, said) = carol.reads(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(code, 0, "{said}");
+    assert!(
+        said.contains("no request is made by this run and nothing is signed"),
+        "{said}"
+    );
+    assert!(said.contains("Left team on this machine."), "{said}");
+    assert!(
+        said.contains(&format!(
+            "No request to take you off the roll was made by this run: one is on record \
+             already, under charter 3 (proposal {}):",
+            short(&removal)
+        )),
+        "{said}"
+    );
+    assert!(said.contains("1 of 3 approved"), "{said}");
+    assert!(
+        said.contains(&format!(
+            "Your approval is not on it: `peerharness proposal vote {} approve`.",
+            short(&removal)
+        )),
+        "{said}"
+    );
+    assert_eq!(carol.run(&["proposal", "list"])["proposals"], before);
+    assert_eq!(carol.approvals(&removal), serde_json::json!(["bob"]));
+    assert_eq!(titled(&carol, "Remove carol"), [removal]);
+}
+
+/// A removal that would do more than take her off the roll is not "the request".
+/// Carol left on her machine and her request was not made. Bob proposed her removal
+/// while no rule was in force, and then a rule passed under the same charter: approved
+/// now, Bob's removal takes that rule out of force. `circle leave` used to call it the
+/// request to leave, point her at approving it, and make none of its own. It names
+/// that proposal for what it is, and previews and makes a clean request.
+#[test]
+fn a_removal_that_would_also_drop_a_rule_is_not_reported_as_the_request_to_leave() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let leave_yes = ["circle", "leave", "--circle", "team", "--yes"];
+    let (_, left) = with_a_passphrase_that_unlocks_nothing(&carol, &leave_yes);
+    assert_eq!(left["reason"], "device_key_locked", "{left}");
+
+    let stale = bob.run(&["circle", "remove", "carol", "--circle", "team", "--yes"])["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (rule, skill) = propose(&alice, RULE);
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob]);
+    bob.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    assert_eq!(carol.rules(), [skill.as_str()]);
+    let dropped = |node: &Node, id: &str| -> Value {
+        node.run(&["proposal", "show", id])["amendment"]["rules_in_force"]["dropped"].clone()
+    };
+    assert_eq!(dropped(&carol, &stale)[0]["skill_name"], skill.as_str());
+
+    // --- Run again, it previews a request of her own and names Bob's proposal as
+    // another one. It does not say that a request is on record.
+    let (code, preview) = carol.reads(&["circle", "leave", "--circle", "team"]);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains(
+            "an amendment that removes carol from the roll of charter 3 is put to the \
+             vote, with your approval."
+        ),
+        "{preview}"
+    );
+    assert!(
+        preview.contains(&format!(
+            "Proposal {id} on record also takes you off the roll, and changes more than \
+             that: `peerharness proposal show {id}`.",
+            id = short(&stale)
+        )),
+        "{preview}"
+    );
+    assert!(!preview.contains("is on record (proposal"), "{preview}");
+    assert!(!preview.contains("Your approval is not on it"), "{preview}");
+    assert_eq!(titled(&carol, "Remove carol"), vec![stale.clone()]);
+
+    // --- With her yes it makes a clean one: the roll changes and nothing else.
+    let asked = carol.run(&leave_yes);
+    assert_eq!(asked["requested"], true, "{asked}");
+    let own = asked["proposal_id"].as_str().unwrap().to_owned();
+    assert_ne!(own, stale);
+    let json = carol.run(&["proposal", "show", &own]);
+    assert_eq!(
+        json["amendment"]["rules_in_force"],
+        serde_json::json!({ "dropped": [], "added": [] }),
+        "{json}"
+    );
+    assert_eq!(json["amendment"]["roll"]["removed"][0]["member"], "carol");
+    assert_eq!(carol.approvals(&own), serde_json::json!(["carol"]));
+    assert_eq!(
+        carol.approvals(&stale),
+        serde_json::json!(["bob"]),
+        "nothing of hers is on the other proposal"
+    );
+    // A further run finds her own request on record, and it is the one it names.
+    let again = carol.run(&leave_yes);
+    assert_eq!(again["reason"], "request_on_record", "{again}");
+    assert_eq!(again["proposal_id"], own.as_str(), "{again}");
+}
+
+/// A member who was voted off the roll before they left: the first run of `circle
+/// leave` changes their machine, uses no key, and reports like every other run that
+/// made no request (`requested`, `reason`). It used to report neither.
+#[test]
+fn leaving_when_already_off_the_roll_reports_like_every_other_leave() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let (rule, skill) = propose(&alice, RULE);
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob]);
+    bob.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    assert!(has_skill(&carol, &skill));
+
+    // Alice and Bob vote Carol off: charter 4. Her node learns of it; she has not left.
+    let removal = alice.run(&["circle", "remove", "carol", "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    carry(root, &[&alice, &bob]);
+    bob.run(&["proposal", "vote", &removal, "approve", "--yes"]);
+    carry(root, &[&alice, &bob, &carol]);
+    assert_eq!(
+        carol.run(&["circle", "members", "--circle", "team"])["charter"]["seq"],
+        4
+    );
+
+    let leave_yes = ["circle", "leave", "--circle", "team", "--yes"];
+    let (code, first) = with_a_passphrase_that_unlocks_nothing(&carol, &leave_yes);
+    assert_eq!(code, 0, "{first}");
+    assert_eq!(first["circle"], "team", "{first}");
+    assert_eq!(first["left"], true, "{first}");
+    assert_eq!(first["requested"], false, "{first}");
+    assert_eq!(first["reason"], "off_the_roll", "{first}");
+    assert!(first["removed_rules"].is_array(), "{first}");
+    assert!(!has_skill(&carol, &skill));
+    // The second run says the same.
+    let second = carol.run(&leave_yes);
+    assert_eq!(second["requested"], false, "{second}");
+    assert_eq!(second["reason"], "off_the_roll", "{second}");
+    // Following again is offered for what it is: nothing of the circle binds her.
+    let (code, preview) = carol.reads(&["circle", "leave", "--circle", "team", "--undo"]);
+    assert_eq!(code, 3, "{preview}");
+    assert!(
+        preview.contains("You are not on the roll of its charter in force"),
+        "{preview}"
+    );
+    assert!(!preview.contains("request"), "{preview}");
 }

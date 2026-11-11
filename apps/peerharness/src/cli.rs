@@ -463,7 +463,8 @@ pub enum CircleCommand {
 pub struct CircleLeaveArgs {
     #[arg(long, value_name = "NAME")]
     pub circle: String,
-    /// Follow the circle again on this machine (your request to leave stays on record).
+    /// Follow the circle again on this machine (a request to leave that is on record
+    /// stays there).
     #[arg(long)]
     pub undo: bool,
     /// Skip the confirmation prompt (after reviewing the preview).
