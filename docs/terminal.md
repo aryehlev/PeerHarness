@@ -446,7 +446,8 @@ unlocked. It is signed the next time this circle is settled with the key unlocke
 behaves the same. `rule opt-in` installs what you confirmed in the same order. In
 `--json` the three have `device_key_locked`. Bringing your skills in line this way
 can also install another rule that passed on your node, in mode `follow`, before its
-result is signed.
+result is signed. The text of the command does not name that rule; `--json` lists it
+under `installed`, and `peerharness rule list` shows it.
 
 Your yes counts for the rule you were shown and for no other rule of that name. If a
 sync or an import stored a newer proposal of the same name while you read, `rule
@@ -583,7 +584,8 @@ named again, and no vote removes it. Two cases name no command:
 
 In `--json` the names are in `kept_edited_rules` beside `not_removed_rules` (`circle
 leave`, `remove`, `amend`, `device`) and in `kept_edited` beside `not_removed`
-(`events import`, `sync`, `rule opt-out`, `rule opt-in`). The preview of `circle
+(`events import`, `sync`, `rule opt-out`, `rule opt-in`). `rule opt-in` prints
+neither line in its text: there the names are in `--json` only. The preview of `circle
 leave` still says that the rules the circle installed are removed. An edited copy is
 the exception, and the report names it. After `circle leave`, `rule list` shows that
 rule as `held` by your edited copy and names `proposal adopt`, which is not for a

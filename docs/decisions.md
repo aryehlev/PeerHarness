@@ -1508,7 +1508,8 @@ schema touched.
   `follow`, an opt-out on such a node therefore also installs the rule that passed
   there, before its RESULT is signed. Whether a rule passed is decided by the count
   on the node, as everywhere, and with a key that unlocked the old code installed
-  that rule in the same command too.
+  that rule in the same command too. The text of `rule opt-out` does not name such a
+  rule: its JSON lists it under `installed`.
 * **An announcement that cannot be signed says what was done on the machine.**
   `rule opt-out --announce` and `rule opt-in --announce` change the machine before
   they sign the stance. With a key that did not unlock they ended with the key error
@@ -2136,6 +2137,11 @@ the owner on it.
   rule as `held`, and names `proposal adopt` for a circle its owner left.
 * The line for a skill that could not be removed does not say that a second
   `circle leave` tries again.
+* `rule opt-in` prints neither that line nor the one for an edited copy, for any
+  rule but the one it was run for: its JSON has `not_removed` and `kept_edited`. An
+  edited copy that its settle leaves in place is therefore named in `--json` only,
+  and by no later command, because its record is cleared. This was read in the code
+  and not run.
 * A batch that finds the queue full is still dropped. A hold, a waiting rule and a
   skill that could not be removed come again with the next settle of the circle. An
   "installed rule", "removed rule" or "issued charter" line of a dropped batch is
