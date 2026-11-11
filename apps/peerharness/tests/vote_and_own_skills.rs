@@ -1422,6 +1422,156 @@ fn a_copy_of_a_rule_that_no_longer_binds_its_owner_is_theirs_to_take_out() {
     }
 }
 
+/// What `circle leave` says about a rule it does not remove, and what running it again
+/// does.
+///
+/// A copy that a vote installed and its owner then edited is never deleted unasked.
+/// Leaving used to keep it without a word, after a preview that says the circle's
+/// rules are removed. Now it is named, with the command that takes it out, and it is
+/// in the JSON report.
+///
+/// A copy whose files cannot be changed is reported and stays on record. Running
+/// `circle leave` again used to change nothing on the machine: once the files could be
+/// changed, the rule still stayed until an import or a sync. Now a second run tries
+/// again first, without a key, and says what it removed.
+#[test]
+fn leaving_names_what_it_left_in_place_and_a_second_run_tries_again() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let leave = ["circle", "leave", "--circle", "team", "--yes"];
+
+    // --- Carol places the circle's rules in her project. Two rules pass, and every
+    // node installs them: Carol's in her project, Bob's in his user directory.
+    let project = std::fs::canonicalize(&carol.cwd).unwrap();
+    let place = project.to_str().unwrap().to_owned();
+    let skills = project.join(".claude").join("skills");
+    carol.run(&[
+        "circle",
+        "place",
+        "*",
+        "--circle",
+        "team",
+        "--project",
+        &place,
+        "--yes",
+    ]);
+    for (name, text) in [
+        ("style", "Indent with two spaces."),
+        ("commits", "Commit subjects are one word."),
+    ] {
+        let noted = alice.note(name, text);
+        let proposal =
+            id_of(&alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]));
+        alice.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        bob.import(&alice.export(root, name));
+        let voted = bob.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        assert_eq!(voted["passed"], true, "{voted}");
+        let passed = bob.export(root, name);
+        alice.import(&passed);
+        carol.import(&passed);
+        assert!(skills.join(name).join("SKILL.md").is_file(), "{name}");
+        assert!(bob.skill_file(name).is_file(), "{name}");
+    }
+    let edit = |file: &Path| -> String {
+        let mut text = std::fs::read_to_string(file).unwrap();
+        text.push_str("\nOne more line, typed by the owner.\n");
+        std::fs::write(file, &text).unwrap();
+        text
+    };
+
+    // --- Bob edits one of them and leaves. The edited copy is left in place and
+    // named in the report; the other rule is removed.
+    let bobs = edit(&bob.skill_file("style"));
+    let left = bob.run(&leave);
+    assert_eq!(left["left"], true, "{left}");
+    assert_eq!(left["kept_edited_rules"], json!(["style"]), "{left}");
+    assert_eq!(left["removed_rules"], json!(["commits"]), "{left}");
+    assert_eq!(left["not_removed_rules"], json!([]), "{left}");
+    assert_eq!(bob.skill_text("style"), bobs);
+    assert!(!bob.skill_file("commits").exists());
+    // The command the line names for a copy in the user's directory takes it out.
+    let gone = bob.run(&["skills", "uninstall", "style", "--allow-modified"]);
+    assert_eq!(gone["skill_name"], "style", "{gone}");
+    assert!(!bob.skill_file("style").exists());
+
+    // --- Carol edits the same rule in her project, and her project's skills
+    // directory becomes one that nothing can be removed from. She leaves.
+    let in_project_style = skills.join("style").join("SKILL.md");
+    let carols = edit(&in_project_style);
+    let elsewhere = out_of_reach(&skills);
+    let said = carol.reads(&leave);
+    assert!(said.contains("Left team on this machine"), "{said}");
+    // The edited copy: left in place, with the command that takes it out and where.
+    let kept = format!(
+        "rule style: the copy a vote installed was edited on this machine and was left in \
+         place. `peerharness skills uninstall style --scope project --allow-modified`, run \
+         in {place}, takes it out."
+    );
+    assert!(said.contains(&kept), "{said}");
+    // The other one could not be removed.
+    let stuck = "rule commits could not be removed: its files could not be changed.";
+    assert!(said.contains(stuck), "{said}");
+    assert!(!said.contains("removed rule"), "{said}");
+    assert_eq!(
+        std::fs::read_to_string(elsewhere.join("style").join("SKILL.md")).unwrap(),
+        carols
+    );
+    assert!(elsewhere.join("commits").join("SKILL.md").is_file());
+
+    // --- She runs it again while nothing can be removed: tried, and reported again.
+    // The edited copy is hers now and is not named a second time.
+    let again = carol.reads(&leave);
+    assert!(again.contains(stuck), "{again}");
+    assert!(!again.contains("was edited on this machine"), "{again}");
+    assert!(
+        again.contains("Nothing was changed and nothing was signed."),
+        "{again}"
+    );
+
+    // --- The files can be changed again. Inside a session the command is refused as
+    // before, and nothing is removed.
+    within_reach(&skills, &elsewhere);
+    let out = carol.cmd(&leave).env("CLAUDECODE", "1").output().unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    assert!(skills.join("commits").join("SKILL.md").is_file());
+
+    // --- She runs it again herself, with a key that does not unlock: the rule the
+    // first run could not remove goes, and she is told. Her request is on record, so
+    // nothing is signed either way.
+    let (code, out, noted) = with_a_passphrase_that_unlocks_nothing(&carol, &leave);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(out["removed_rules"], json!(["commits"]), "{out}");
+    assert_eq!(out["not_removed_rules"], json!([]), "{out}");
+    assert_eq!(out["kept_edited_rules"], json!([]), "{out}");
+    assert_eq!(out["reason"], "request_on_record", "{out}");
+    assert!(noted.contains("removed rule commits"), "{noted}");
+    assert!(!skills.join("commits").exists());
+    let after = carol.reads(&leave);
+    assert!(!after.contains("commits"), "{after}");
+    let once_more = carol.run(&leave);
+    assert_eq!(once_more["removed_rules"], json!([]), "{once_more}");
+
+    // --- Her edited copy is still there, and the command the line named takes it out.
+    assert_eq!(std::fs::read_to_string(&in_project_style).unwrap(), carols);
+    let (code, said) = in_project(
+        &carol,
+        &[
+            "skills",
+            "uninstall",
+            "style",
+            "--scope",
+            "project",
+            "--allow-modified",
+        ],
+    );
+    assert_eq!(code, 0, "{said}");
+    assert!(!in_project_style.exists());
+    for node in [&alice, &bob, &carol] {
+        assert!(!node.windows_opened(), "{}", node.name);
+    }
+}
+
 /// An opt-out never waits for anyone, and not for a key either. A proposal can have
 /// passed on a node whose key did not unlock when its ballots arrived, so that the
 /// RESULT this node may publish is still to be signed. `rule opt-out` used to ask for

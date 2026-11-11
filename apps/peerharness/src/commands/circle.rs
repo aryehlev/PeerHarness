@@ -1394,10 +1394,18 @@ fn only_member() -> anyhow::Error {
     )
 }
 
-/// `circle leave` on a machine that left already: all that can be left to do is the
-/// request to be taken off the roll, when the first run could not make it. Nothing on
-/// this machine changes here, so this is a request to change the charter like any
-/// other: previewed, confirmed, and bound to the charter the preview named.
+/// `circle leave` on a machine that left already. Two things can be left to do.
+///
+/// One is on this machine: a rule the circle installed that the first run could not
+/// remove (its files could not be changed). It is tried again here, first and with no
+/// key, as the first run changes the machine ([`governance::apply_on`]), and what it
+/// did is printed before anything else. Nothing of a circle that was left is installed
+/// by it. Like the first run, none of this happens inside a coding agent's session: the
+/// first run is refused there before it changes anything, and so is this one.
+///
+/// The other is the request to be taken off the roll, when the first run could not
+/// make it. That is a request to change the charter like any other: previewed,
+/// confirmed, and bound to the charter the preview named.
 fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<Report> {
     human_only("leaving the circle")?;
     let name = safe(&circle.name);
@@ -1406,6 +1414,29 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
          machine.)",
         circle.name
     );
+    // The machine first. This writes none of what the request is checked against: the
+    // charter and the rules in force are read from the circle's records.
+    let applied = governance::apply_on(node, circle, &governance::user_installer()?, &[])?;
+    let mut machine = Text::new();
+    for skill in &applied.removed {
+        machine.line(format!("removed rule {skill}"));
+    }
+    for skill in &applied.not_removed {
+        machine.line(governance::not_removed_line(skill));
+    }
+    for kept in &applied.kept_edited {
+        machine.line(kept.line());
+    }
+    let machine = machine.finish();
+    if !machine.is_empty() {
+        // Said now: the request below can still be declined or refused.
+        ctx.out.note(machine.trim_end());
+    }
+    let nothing_changed = if applied.removed.is_empty() {
+        "Nothing was changed and nothing was signed."
+    } else {
+        "Nothing else was changed, and nothing was signed."
+    };
     let me = node.device_key();
     let (current, rules, _) = governance::rule_set(&node.store, &circle.circle_id)?;
     let mut t = Text::new();
@@ -1415,6 +1446,9 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
             "left": true,
             "requested": false,
             "reason": why.code(),
+            "removed_rules": applied.removed,
+            "not_removed_rules": applied.not_removed,
+            "kept_edited_rules": applied.kept_edited_names(),
         });
         if let (Some(json), Some(extra)) = (json.as_object_mut(), extra.as_object()) {
             json.extend(extra.clone());
@@ -1447,7 +1481,7 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
             short_id(&proposal.event_id())
         ));
         on_record_lines(&mut t, proposal, tally, &member);
-        t.line("Nothing was changed and nothing was signed.");
+        t.line(nothing_changed);
         t.line(undo);
         return Ok(nothing(
             NoRequest::OnRecord,
@@ -1497,11 +1531,20 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         current.seq,
         short_id(&put.proposal.event_id())
     ));
+    // What the machine part did above and what settling after the ballot did, together.
+    // The lines of the first were printed; these are the ones that are new.
+    let all = applied.clone().followed_by(put.settled.applied.clone());
+    for skill in all.removed.iter().filter(|s| !applied.removed.contains(s)) {
+        t.line(format!("  removed rule {skill}"));
+    }
     let mut report = amendment_report(circle, &put, "You are off the roll.", t);
     report.json["circle"] = json!(circle.name);
     report.json["left"] = json!(true);
     report.json["requested"] = json!(true);
     report.json["reason"] = Value::Null;
+    report.json["removed_rules"] = json!(all.removed);
+    report.json["not_removed_rules"] = json!(all.not_removed);
+    report.json["kept_edited_rules"] = json!(all.kept_edited_names());
     Ok(report)
 }
 
