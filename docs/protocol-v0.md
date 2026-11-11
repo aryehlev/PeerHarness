@@ -1925,7 +1925,9 @@ Reference: `crates/ph-governance/src/tally.rs`, `result.rs`, `ruleset.rs`,
 A circle governs itself by majority vote. Every node computes every outcome **locally**,
 from signed records it has verified. No peer's conclusion is trusted, and no step below
 reads a clock: two nodes holding the same records reach the same outcome, and an outcome
-never changes later.
+never changes later, except through a revocation the node learns of afterwards: the
+revoked device's ballots stop counting, whenever they were cast, so a proposal that had
+reached its threshold can fall below it again (sections 14.2 and 14.9).
 
 ### 14.1 The inputs
 
