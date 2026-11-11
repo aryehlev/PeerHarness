@@ -8,6 +8,9 @@
 //!   sentence, and `observe` and `hook` are out of the list of commands but still run;
 //! * the project page in `site/` has that sentence and the README's setup prompt, line
 //!   for line, and its policy lets it load nothing from another origin;
+//! * what that page gives search engines and language models is what it shows a
+//!   reader: the answers in its structured data, `llms.txt`, and one address in its
+//!   sitemap and in the workflow that publishes it;
 //! * `init` and `note` point at `demo`, `note` and `keep`, and following them works;
 //! * an `init` that fails before it has a key leaves the home as it found it, a second
 //!   `init` is refused while one runs in the same home, and a failing one never takes
@@ -245,6 +248,89 @@ fn the_project_page_has_the_readmes_sentence_and_its_setup_prompt() {
         assert!(!page.contains(elsewhere), "{elsewhere}");
         assert!(!style.contains(elsewhere), "{elsewhere} in the stylesheet");
     }
+}
+
+/// What the page gives search engines and language models is what it shows a reader
+/// (ADR-049). Each question and answer in its structured data stands on the page word
+/// for word, `llms.txt` has the opening sentence and the status, and the page, its
+/// sitemap and the workflow that publishes it give one address, with the key that the
+/// workflow sends in a file of the page.
+#[test]
+fn the_project_page_tells_machines_what_it_shows_its_readers() {
+    const ADDRESS: &str = "https://aryehlev.github.io/PeerHarness/";
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| std::fs::read_to_string(root.join(path)).unwrap();
+    let page = read("site/index.html");
+
+    let open = "<script type=\"application/ld+json\">";
+    let start = page.find(open).expect("the page has no structured data") + open.len();
+    let end = start + page[start..].find("</script>").unwrap();
+    let data: serde_json::Value =
+        serde_json::from_str(&page[start..end]).expect("the structured data is not JSON");
+    let graph = data["@graph"].as_array().expect("no graph");
+    let of_type = |name: &str| {
+        graph
+            .iter()
+            .find(|node| node["@type"] == name)
+            .unwrap_or_else(|| panic!("the structured data has no {name}"))
+    };
+
+    // The page without that block and without its tags: what a reader sees.
+    let mut shown = String::new();
+    let mut in_tag = false;
+    for c in page[..start].chars().chain(page[end..].chars()) {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => shown.push(c),
+            _ => {}
+        }
+    }
+    let shown = shown.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let questions = of_type("FAQPage")["mainEntity"].as_array().unwrap();
+    assert!(questions.len() >= 5, "{} questions", questions.len());
+    for question in questions {
+        let name = question["name"].as_str().unwrap();
+        let answer = question["acceptedAnswer"]["text"].as_str().unwrap();
+        assert!(
+            shown.contains(&format!("{name} {answer}")),
+            "the page does not show this answer as its structured data has it: {name}"
+        );
+    }
+
+    // Nothing is said of the software that is not so: the sentence, and no rating.
+    let software = of_type("SoftwareApplication");
+    assert!(
+        software["description"]
+            .as_str()
+            .is_some_and(|d| d.starts_with(PITCH)),
+        "{software}"
+    );
+    assert_eq!(software["url"], ADDRESS);
+    for invented in ["aggregateRating", "review", "interactionStatistic"] {
+        assert!(software.get(invented).is_none(), "{invented}");
+    }
+
+    let llms = read("site/llms.txt");
+    assert!(llms.contains(PITCH), "llms.txt no longer has the sentence");
+    assert!(llms.contains("Early and not audited"), "{llms}");
+
+    assert!(
+        page.contains(&format!("<link rel=\"canonical\" href=\"{ADDRESS}\">")),
+        "the page's canonical address"
+    );
+    assert!(
+        read("site/sitemap.xml").contains(&format!("<loc>{ADDRESS}</loc>")),
+        "the sitemap's address"
+    );
+    let workflow = read(".github/workflows/site.yml");
+    assert!(workflow.contains(&format!("PAGE: {ADDRESS}")), "{workflow}");
+    let key = workflow
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("KEY: "))
+        .expect("site.yml names no key");
+    assert_eq!(read(&format!("site/{key}.txt")), key, "the key file");
 }
 
 /// Help that says what is true: Windows is not supported, so `init` does not name it as

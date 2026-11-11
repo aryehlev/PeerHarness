@@ -3186,3 +3186,64 @@ GitHub's API in the page: a request to another origin for one number.
 **From now on.** When the README changes, the page changes in the same commit where
 it says the same thing. `og.png` is the picture a link to the page shows: the top of
 the page in the light theme, 1200 by 630. It is made again when the top changes.
+
+## ADR-049: The page and the repository say what PeerHarness is to search engines and language models
+The owner asked that the project be found: by search engines, and by the language
+models that people now ask in their place ("how do I share Claude Code rules with my
+team?").
+
+**Decision.** The repository and the page say what PeerHarness is in the places those
+readers look, in the README's words. Nothing is said there that the README does not
+say.
+
+* **The repository has a description and topics on GitHub.** GitHub's search reads the
+  name, the description and the topics, and a search engine shows the description as
+  the title of the repository's page. Both were empty. They are set with `gh repo
+  edit` and live in no file, so they are written down here. The description: "Your
+  team votes on how its AI coding agents behave. Correct Claude Code once, and
+  PeerHarness turns it into a one-sentence rule (an Agent Skill) that a majority of
+  your team votes in for every member's agent. Peer-to-peer, no server." The topics:
+  `claude-code`, `claude`, `anthropic`, `agent-skills`, `claude-skills`, `ai-agents`,
+  `coding-agents`, `ai-coding`, `agentic-coding`, `mcp`, `mcp-server`,
+  `developer-tools`, `cli`, `rust`, `p2p`, `libp2p`, `local-first`, `decentralized`,
+  `voting`, `governance`.
+* **The page has a section of questions** (§ 6): what PeerHarness is, how a rule is
+  shared with a team, whether it needs a server, whether the agent can vote, what it
+  runs on, what it costs and how far along it is. "Why not a CLAUDE.md in git?" moved
+  into it from the limits. The page's title names Claude Code.
+* **Structured data** in the page's head (`application/ld+json`): the software, its
+  source and those questions with their answers. A browser does not run such a block,
+  so the policy of ADR-048 stays as it is. It carries no rating, no review and no
+  count of users: there are none to report.
+* **`site/llms.txt`**: the same in plain text, with links to the documents as raw
+  files, in the form of the llms.txt proposal. Which crawlers read it is not known
+  here. It costs one file.
+* **`site/sitemap.xml`** with the one address, and a canonical link on the page. There
+  is no `robots.txt`: a crawler asks for it at the root of the host
+  (`aryehlev.github.io/robots.txt`), which this repository does not publish, and
+  where there is none everything may be read.
+* **IndexNow.** After each publication `site.yml` tells the search engines that take
+  IndexNow (Bing among them) that the page changed. The request carries the page's
+  address and a key, and nothing else. The key is public by design: it is the name
+  and the content of a file in `site/`, which shows them that the request comes from
+  whoever publishes the page. The workflow sends it, not the page: a reader's browser
+  still loads nothing from another origin. A request that fails does not fail the
+  publication.
+* **A test holds it** (`first_run.rs`): each question and answer in the structured
+  data stands on the page word for word, the structured data names no rating,
+  `llms.txt` has the opening sentence and the status, and the canonical link, the
+  sitemap and the workflow give one address, with the key in a file of the page.
+
+**Rejected.** A page per question: each would say the README once more, with no test
+to hold it. A rating or a number of stars in the structured data: invented, or stale
+the next day. A `robots.txt` in `site/`: it is not read from a project's path.
+Analytics, to see what people search for: ADR-048.
+
+**Left to the owner.** Two things have no interface a workflow or an agent can use.
+Google takes no IndexNow: the page is verified and its sitemap submitted in Google
+Search Console, with the owner's Google account. And the picture that a link to the
+repository shows is uploaded in the repository's settings ("Social preview"):
+`site/og.png` is made for it.
+
+**From now on.** When an answer on the page changes, its copy in the structured data
+changes with it, and `llms.txt` where it says the same.

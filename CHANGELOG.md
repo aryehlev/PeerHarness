@@ -24,6 +24,10 @@ database schema it writes.
   done only there (ADR-047).
 * A project page, published from `site/` to GitHub Pages: what the README says, as
   one static page that loads nothing from another origin (ADR-048).
+* The project page says what it is to search engines and language models: a section
+  of questions with the same answers as structured data, `llms.txt`, a sitemap, and a
+  notice to IndexNow each time it is published. The repository has a description and
+  topics on GitHub (ADR-049).
 
 ## 0.4.0 (2026-11-11)
 

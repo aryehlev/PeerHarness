@@ -4,10 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
-<title>PeerHarness: your team votes on how its AI coding agents behave</title>
-<meta name="description" content="You correct your coding agent. PeerHarness turns the correction into a one-sentence rule that you keep for yourself or put to your team's vote. There is no server: every node checks every signature and counts every vote for itself.">
+<title>PeerHarness: team-voted rules for Claude Code agents</title>
+<meta name="description" content="Correct Claude Code once. PeerHarness makes it a one-sentence rule your team votes on. Once a majority approves, every member's agent follows it. No server.">
+<link rel="canonical" href="https://aryehlev.github.io/PeerHarness/">
+<link rel="alternate" type="text/plain" href="llms.txt" title="PeerHarness in plain text, for language models">
 <meta name="color-scheme" content="light dark">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="PeerHarness">
 <meta property="og:title" content="PeerHarness">
 <meta property="og:description" content="Your team votes on how its AI coding agents behave.">
 <meta property="og:url" content="https://aryehlev.github.io/PeerHarness/">
@@ -18,6 +21,75 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='4' fill='%23f4f1e8' stroke='%23191814' stroke-width='2.5'/%3E%3Cpath d='M8.5 17c2.3 1.7 4 3.7 5.3 6.2 2.7-6.6 5.9-11 10.2-14.7' fill='none' stroke='%232440c4' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://aryehlev.github.io/PeerHarness/#software",
+      "name": "PeerHarness",
+      "description": "Your team votes on how its AI coding agents behave. You correct your coding agent in Claude Code, and PeerHarness turns the correction into a one-sentence rule. Keep it for your own agent, or propose it to your team: once a majority approves, every member's agent follows it. There is no server.",
+      "url": "https://aryehlev.github.io/PeerHarness/",
+      "image": "https://aryehlev.github.io/PeerHarness/og.png",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "downloadUrl": "https://github.com/aryehlev/PeerHarness/releases/latest",
+      "sameAs": "https://github.com/aryehlev/PeerHarness"
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "name": "PeerHarness",
+      "codeRepository": "https://github.com/aryehlev/PeerHarness",
+      "programmingLanguage": "Rust",
+      "license": ["https://spdx.org/licenses/MIT", "https://spdx.org/licenses/Apache-2.0"],
+      "targetProduct": { "@id": "https://aryehlev.github.io/PeerHarness/#software" }
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is PeerHarness?",
+          "acceptedAnswer": { "@type": "Answer", "text": "PeerHarness is an open-source tool for teams that work in Claude Code. It turns a correction you give your coding agent into a one-sentence rule. You keep the rule for your own agent, or propose it to your team: once a majority approves, it is installed for every member's agent." }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I share a Claude Code rule with my team?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Say the rule to your agent, then ask it to propose the rule to your team. Every member sees the exact text and votes. Once a majority of all members approves, the rule is installed for every member's agent as an Agent Skill, and any member can opt out of it on their own machine." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it need a server or an account?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. There is no server and nothing to sign up for. Each person runs their own node with their own keys, and every node checks every signature and counts every vote for itself. To find each other across the internet, nodes can use a public network, which shows a node's public key and IP address to servers run by volunteers." }
+        },
+        {
+          "@type": "Question",
+          "name": "Can my agent vote or share a rule for me?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. Your agent can note a rule and open a window on your screen that shows the exact text. It cannot answer the window: keeping a rule, sharing one, voting, inviting and joining take your click. That stops an agent that is trying to help. It is not a sandbox." }
+        },
+        {
+          "@type": "Question",
+          "name": "Which agents and systems does it work with?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only SKILL.md file, an Agent Skill, and PeerHarness never executes it." }
+        },
+        {
+          "@type": "Question",
+          "name": "What does it cost, and how far along is it?",
+          "acceptedAnswer": { "@type": "Answer", "text": "PeerHarness is free and open source, under MIT or Apache-2.0 at your option, and written in Rust. It is early and has not been audited: read the limits before you rely on it." }
+        },
+        {
+          "@type": "Question",
+          "name": "Why not a CLAUDE.md in git?",
+          "acceptedAnswer": { "@type": "Answer", "text": "If the rule is about one repository and your team already reviews pull requests, commit the file. You need nothing else. PeerHarness is for rules that follow people across repositories, for groups with no shared repository or nobody who administers one, and for members who want to see the exact text they vote on and to opt out of a rule alone. It is also more dynamic and more democratic. A rule starts as a correction in the middle of work, with no file to edit and no pull request to open. And it passes by a majority of everyone, not by the say of whoever can merge." }
+        }
+      ]
+    }
+  ]
+}
+</script>
 </head>
 <body id="top">
 
@@ -39,6 +111,7 @@
       <a href="#vote">The vote</a>
       <a href="#setup">Set it up</a>
       <a href="#limits">Limits</a>
+      <a href="#questions">Questions</a>
       <a class="nav-out" href="https://github.com/aryehlev/PeerHarness">GitHub</a>
     </nav>
   </div>
@@ -276,6 +349,42 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
       <li><strong>Internet mode</strong> shows your node's public key and IP address to servers run by volunteers.</li>
     </ul>
     <p class="after">The full list is in <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/limits.md">docs/limits.md</a>, and how each part was checked in <a href="https://github.com/aryehlev/PeerHarness/blob/main/docs/checked.md">docs/checked.md</a>.</p>
+  </div>
+</section>
+
+<section id="questions" class="sec">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="label">§ 6 · Questions</p>
+      <h2>Short answers.</h2>
+    </header>
+
+    <div class="qa">
+      <div>
+        <h3>What is PeerHarness?</h3>
+        <p>PeerHarness is an open-source tool for teams that work in Claude Code. It turns a correction you give your coding agent into a one-sentence rule. You keep the rule for your own agent, or propose it to your team: once a majority approves, it is installed for every member's agent.</p>
+      </div>
+      <div>
+        <h3>How do I share a Claude Code rule with my team?</h3>
+        <p>Say the rule to your agent, then ask it to propose the rule to your team. Every member sees the exact text and votes. Once a majority of all members approves, the rule is installed for every member's agent as an Agent Skill, and any member can opt out of it on their own machine.</p>
+      </div>
+      <div>
+        <h3>Does it need a server or an account?</h3>
+        <p>No. There is no server and nothing to sign up for. Each person runs their own node with their own keys, and every node checks every signature and counts every vote for itself. To find each other across the internet, nodes can use a public network, which shows a node's public key and IP address to servers run by volunteers.</p>
+      </div>
+      <div>
+        <h3>Can my agent vote or share a rule for me?</h3>
+        <p>No. Your agent can note a rule and open a window on your screen that shows the exact text. It cannot answer the window: keeping a rule, sharing one, voting, inviting and joining take your click. That stops an agent that is trying to help. It is not a sandbox.</p>
+      </div>
+      <div>
+        <h3>Which agents and systems does it work with?</h3>
+        <p>Claude Code on macOS. On Linux it works from a terminal, without the windows. Windows is not supported. A rule is one instruction-only <code>SKILL.md</code> file, an Agent Skill, and PeerHarness never executes it.</p>
+      </div>
+      <div>
+        <h3>What does it cost, and how far along is it?</h3>
+        <p>PeerHarness is free and open source, under MIT or Apache-2.0 at your option, and written in Rust. It is early and has not been audited: read the limits before you rely on it.</p>
+      </div>
+    </div>
 
     <div class="principle why">
       <h3>Why not a CLAUDE.md in git?</h3>
@@ -308,7 +417,7 @@ Then tell me to start a new Claude Code session, and what I can ask you there.</
     </div>
     <div>
       <p class="label">This page</p>
-      <p>Static files and no build step. It loads nothing from anywhere else: no fonts, no scripts, no trackers.</p>
+      <p>Static files and no build step. It loads nothing from anywhere else: no fonts, no scripts, no trackers. The same in plain text, for language models: <a href="llms.txt">llms.txt</a>.</p>
       <p>PeerHarness is MIT or Apache-2.0, at your option. It was written with Claude Code, as the commit trailers say.</p>
     </div>
   </div>

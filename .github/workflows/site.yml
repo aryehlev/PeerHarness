@@ -39,3 +39,19 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v5
+      # Tells the search engines that take IndexNow (Bing among them) that the page
+      # changed (ADR-049). Only the page's address and the key are sent. The key is
+      # public by design: it is the name and the content of a file in `site/`, which
+      # shows them that the request comes from whoever publishes the page. A request
+      # that fails does not fail the publication.
+      - name: tell search engines that the page changed (IndexNow)
+        continue-on-error: true
+        env:
+          PAGE: https://aryehlev.github.io/PeerHarness/
+          KEY: a1248b0fe0e1697ec9adaef2d69872b6
+        run: |
+          curl -sS --max-time 20 -o /dev/null -w 'IndexNow answered %{http_code}\n' -G \
+            --data-urlencode "url=${PAGE}" \
+            --data-urlencode "key=${KEY}" \
+            --data-urlencode "keyLocation=${PAGE}${KEY}.txt" \
+            https://api.indexnow.org/indexnow

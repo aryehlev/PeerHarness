@@ -159,6 +159,13 @@ python3 -m http.server --directory site
 `site/og.png` is the picture a link to the page shows: the top of the page in the
 light theme, 1200 by 630. Make it again when the top changes.
 
+The page also says what it is to search engines and language models (ADR-049). The
+answers in its "Questions" section stand a second time in the structured data in its
+head: change both, and the same test says so when they differ. `site/llms.txt` says
+the same in plain text, and `site/sitemap.xml` has the page's address. The file named
+with 32 hexadecimal digits is the IndexNow key that `site.yml` sends: it is public,
+leave it where it is. Put no rating, review or count of users in the structured data.
+
 ### Pull requests
 
 * Keep pull requests focused. Explain what changed and why, how you tested it, and any
