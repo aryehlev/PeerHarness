@@ -11,6 +11,10 @@
 //! registration of the MCP server with Claude Code. All three belong to the agent's
 //! configuration. The registration is named whether or not there is one: PeerHarness
 //! does not read Claude Code's configuration to find out.
+//!
+//! The commands that take an installed skill out need the node. Before the reset they
+//! are named; after it they could no longer run, so the report names the folders
+//! instead, which are then the owner's to delete by hand.
 
 use anyhow::{anyhow, Context, Result};
 use ph_identity::{root_key_label, DeviceIdentity};
@@ -60,7 +64,8 @@ pub fn run(ctx: &Ctx, args: ResetArgs) -> Result<Report> {
     let backend = node.backend()?;
     let circles = node.store.circles()?;
     let founded: Vec<_> = circles.iter().filter(|c| c.is_founder).collect();
-    let installed = node.store.active_installations()?.len();
+    let installations = node.store.active_installations()?;
+    let installed = installations.len();
     let candidates = node.store.candidates(&[])?.len();
     let skills = node.store.skills()?.len();
 
@@ -86,12 +91,15 @@ pub fn run(ctx: &Ctx, args: ResetArgs) -> Result<Report> {
     ));
     t.line("It cannot be undone. Your ballots already cast stay on the other members' nodes.");
     // What belongs to the agent's configuration, or is the program itself, stays. Each
-    // line names the way to remove it: the commands that need a node run before the
-    // reset, Claude Code's own command at any time.
+    // line names the way to remove it. The commands for an installed skill need the
+    // node: they are named here, before the reset, and not after it. `watch claude
+    // --remove` and Claude Code's own command work at any time.
+    t.line("Left in place:");
+    t.line(format!(
+        "  {installed} skill(s) installed for your agent (`peerharness skills uninstall`, \
+         `peerharness rule opt-out`: both need this node, so run them before the reset)"
+    ));
     let left = [
-        format!(
-            "  {installed} skill(s) installed for your agent (`peerharness skills uninstall`, `peerharness rule opt-out`)"
-        ),
         "  the hooks and the reporting skill, if installed (`peerharness watch claude --remove`)"
             .to_owned(),
         format!(
@@ -99,10 +107,8 @@ pub fn run(ctx: &Ctx, args: ResetArgs) -> Result<Report> {
              setup` made one (`{}`)",
             super::setup::UNREGISTER
         ),
-        "  the peerharness program, which is one file: delete it where it was installed"
-            .to_owned(),
+        "  the peerharness program, which is one file: delete it where it was installed".to_owned(),
     ];
-    t.line("Left in place:");
     for line in &left {
         t.line(line);
     }
@@ -157,8 +163,22 @@ pub fn run(ctx: &Ctx, args: ResetArgs) -> Result<Report> {
         home.root().display()
     ));
     t.line("Still in place:");
+    if installations.is_empty() {
+        t.line("  no skill installed for your agent");
+    } else {
+        // The commands that take a skill out needed the node that is gone now.
+        t.line(format!(
+            "  {installed} skill(s) installed for your agent. The commands that take one \
+             out needed this node, so each is now a folder for you to delete by hand:"
+        ));
+        for row in &installations {
+            t.line(format!("      {}", safe(&row.path)));
+        }
+    }
     for line in &left {
         t.line(line);
     }
+    json["installed_skill_folders_left"] =
+        json!(installations.iter().map(|r| &r.path).collect::<Vec<_>>());
     Ok(Report::new(json, t.finish()))
 }

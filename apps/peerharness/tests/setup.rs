@@ -386,6 +386,62 @@ fn on_a_machine_without_a_window_setup_says_what_works_there() {
     assert_eq!(status["windows_available"], false);
 }
 
+/// Windows that were turned on where one could be shown, and a machine that can show
+/// none (a home that came along from a Mac). `setup` turns nothing off by itself, and
+/// what a tool may run is read from the settings: the tools that need no window still
+/// run. The closing lines must not say that the agent only notes rules. They say what
+/// still runs, and the command that turns it off does.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn settings_that_allow_more_than_this_machine_can_ask_are_said_and_can_be_turned_off() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    // Where a window can be shown (the stand-in), the owner allows every step.
+    let out = m.setup(&["--yes"]).output().unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+    let windowless = |args: &[&str]| -> Output {
+        m.setup(args)
+            .env_remove("PEERHARNESS_TEST_WINDOW_BIN")
+            .output()
+            .unwrap()
+    };
+
+    // The same home on a machine without one.
+    let out = windowless(&["--yes"]);
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(
+        said.contains("This machine has no window PeerHarness can show")
+            || said.contains("this machine has no window PeerHarness can show"),
+        "{said}"
+    );
+    assert!(!said.contains("That is all it does"), "{said}");
+    assert!(!said.contains("Start a new Claude Code session"), "{said}");
+    assert!(
+        said.contains("A step that would ask you in a window is refused on this machine."),
+        "{said}"
+    );
+    assert!(
+        said.contains("still allow your agent the steps that need no window"),
+        "{said}"
+    );
+    assert!(said.contains("founding a circle"), "{said}");
+    assert!(said.contains("over the public network"), "{said}");
+    assert!(said.contains("`peerharness setup --no-dialogs`"), "{said}");
+    let report = json(&windowless(&["--yes", "--json"]));
+    assert_eq!(report["agent_can_ask"], false);
+    assert_eq!(report["agent"]["windows"], true, "nothing was turned off");
+
+    // The command it names turns them off, and then the agent does only note.
+    let out = windowless(&["--no-dialogs", "--yes"]);
+    let said = text(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("That is all it does"), "{said}");
+    assert!(!said.contains("still allow your agent"), "{said}");
+    let report = json(&windowless(&["--no-dialogs", "--yes", "--json"]));
+    assert_eq!(report["agent"]["windows"], false);
+}
+
 /// For a node that is already there, step 1 says which keystore holds its key. A
 /// plaintext keystore is said loudly: whoever ran `init` saw its warning, and that may
 /// not have been the owner.

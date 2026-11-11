@@ -18,6 +18,13 @@
 //! other than `note` run nothing (ADR-038), so it does not suggest asking the agent for
 //! anything: it says what works there and where the terminal's commands are.
 //!
+//! One state is in between: the settings allow windows (they were turned on where one
+//! could be shown, and came along with the home) and this machine can show none.
+//! `setup` turns nothing off by itself, and a tool runs at the level the settings
+//! allow. The steps that would ask in a window are refused there, and the ones that
+//! need none still run: the status, the inbox, founding a circle, the exchange and the
+//! daemon. The closing lines say so, and name the command that turns them off.
+//!
 //! For a node that is already there, step 1 names the keystore its private key is in.
 //! A plaintext keystore (`insecure-dev`) gets a warning: an earlier `init` may have
 //! chosen it where its own warning reached nobody.
@@ -120,11 +127,14 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
     let tools = register(ctx, a.yes)?;
     t.line(format!("3. The tools: {}", tools.says()));
 
-    // What the owner can do now. With the windows off, or on a machine that can show
-    // none, every tool but `note` answers that the step is the owner's.
+    // What the owner can do now. With the windows off, every tool but `note` answers
+    // that the step is the owner's. What a tool may run is read from the settings
+    // alone, so where they are on and no window can be shown, the tools that need no
+    // window still run.
     let agent_can_ask = agent.json["windows"] == true && Window::find().is_some();
+    let allowed = crate::config::Config::load(&ctx.home)?.agent.asked();
     t.line("");
-    for line in next_steps(agent_can_ask) {
+    for line in next_steps(agent_can_ask, allowed) {
         t.line(line);
     }
     Ok(Report::new(
@@ -161,9 +171,13 @@ const PLAINTEXT_WARNING: &str = "this node's private keys are stored in PLAINTEX
     node with a protected key is a new node, with a new device key (`peerharness reset` \
     says what it deletes, then `peerharness setup`).";
 
-/// The closing lines: what to do next, which depends on whether the agent can put a
-/// decision in front of the owner.
-fn next_steps(agent_can_ask: bool) -> Vec<String> {
+/// The closing lines: what to do next. It depends on whether the agent can put a
+/// decision in front of the owner (`agent_can_ask`), and on what the settings allow
+/// the agent's tools (`allowed`), which is what they run at whether or not this
+/// machine can show a window.
+fn next_steps(agent_can_ask: bool, allowed: crate::config::Asked) -> Vec<String> {
+    use crate::config::Asked;
+
     if agent_can_ask {
         return vec![
             "Start a new Claude Code session and ask it, for example:".to_owned(),
@@ -171,11 +185,35 @@ fn next_steps(agent_can_ask: bool) -> Vec<String> {
             "  \"Create a PeerHarness team called acme.\"".to_owned(),
         ];
     }
-    vec![
-        "Without confirmation windows, this is what works from here:".to_owned(),
-        "  Your agent notes a rule when you correct it or state one. That is all it does: \
-         asked for anything else, it answers that the step is yours."
-            .to_owned(),
+    let mut lines = vec!["Without confirmation windows, this is what works from here:".to_owned()];
+    if allowed == Asked::Nothing {
+        lines.push(
+            "  Your agent notes a rule when you correct it or state one. That is all it does: \
+             asked for anything else, it answers that the step is yours."
+                .to_owned(),
+        );
+    } else {
+        // Windows are on in the settings and this machine can show none.
+        lines.push(
+            "  Your agent notes a rule when you correct it or state one. A step that would \
+             ask you in a window is refused on this machine."
+                .to_owned(),
+        );
+        let mut still = "this node's status and what waits for you".to_owned();
+        if allowed >= Asked::RulesAndCircle {
+            still.push_str(
+                ", founding a circle, exchanging with the members of your circles over the \
+                 public network, and keeping this node reachable there",
+            );
+        }
+        lines.push(format!(
+            "  This node's settings still allow your agent the steps that need no window, \
+             because windows were turned on for it (on a machine that could show one): \
+             {still}. To turn those off as well, so that your agent only notes rules: \
+             `peerharness setup --no-dialogs`."
+        ));
+    }
+    lines.extend([
         "  At the end of a turn, at most once a day, Claude Code tells you how many noted \
          rules and proposals wait for you."
             .to_owned(),
@@ -184,7 +222,8 @@ fn next_steps(agent_can_ask: bool) -> Vec<String> {
          voting, inviting and joining are commands as well."
             .to_owned(),
         format!("  The commands, step by step: {TERMINAL_GUIDE}"),
-    ]
+    ]);
+    lines
 }
 
 /// How registering the tools with Claude Code came out.
@@ -408,17 +447,45 @@ mod tests {
 
     #[test]
     fn the_closing_lines_follow_what_the_agent_can_do() {
+        use crate::config::Asked;
+
         // With windows: something to ask the agent.
-        let with = next_steps(true).join("\n");
+        let with = next_steps(true, Asked::All).join("\n");
         assert!(with.contains("Start a new Claude Code session"));
         assert!(!with.contains("terminal.md"));
         // Without: what works, where the commands are, and no prompt for the agent.
-        let without = next_steps(false).join("\n");
+        let without = next_steps(false, Asked::Nothing).join("\n");
         assert!(without.contains("Your agent notes a rule"));
+        assert!(without.contains("That is all it does"));
         assert!(without.contains("typed in your own terminal"));
         assert!(without.ends_with("/blob/main/docs/terminal.md"));
         assert!(TERMINAL_GUIDE.starts_with("https://"));
         assert!(!without.contains("ask it") && !without.contains("PeerHarness team called"));
+        // Windows on in the settings, on a machine that can show none: the agent's tools
+        // run at the level the settings allow, so "that is all it does" would be false.
+        // What still runs is named, per level, with the command that turns it off.
+        for allowed in [Asked::Rules, Asked::RulesAndCircle, Asked::All] {
+            let between = next_steps(false, allowed).join("\n");
+            assert!(!between.contains("That is all it does"), "{between}");
+            assert!(between.contains("is refused on this machine"), "{between}");
+            assert!(
+                between.contains("this node's status and what waits for you"),
+                "{between}"
+            );
+            assert_eq!(
+                between.contains("founding a circle")
+                    && between.contains("over the public network")
+                    && between.contains("keeping this node reachable"),
+                allowed >= Asked::RulesAndCircle,
+                "{allowed:?}: {between}"
+            );
+            assert!(
+                between.contains("`peerharness setup --no-dialogs`"),
+                "{between}"
+            );
+            assert!(between.contains("typed in your own terminal"));
+            assert!(!between.contains("ask it"), "{between}");
+        }
         // The command `reset` names is the one that removes what `add` registered.
         assert_eq!(
             UNREGISTER,

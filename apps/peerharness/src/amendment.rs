@@ -72,6 +72,23 @@ pub struct AddedRule {
     pub skill_name: String,
     /// The rule's text, when this node has it.
     pub text: Option<Bundle>,
+    /// A rule in force with the same name that the amendment carries as well. One rule
+    /// per name is in force, the later proposal of the two, so listing both does not
+    /// add a rule: it replaces the text of one, or changes nothing.
+    pub same_name: Option<SameName>,
+}
+
+/// How a listed proposal stands to a rule in force of the same name that the amendment
+/// also carries. Which of the two is the later one is read from what each signed (its
+/// time, then its id), as the rule set reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SameName {
+    /// The listed proposal is the later one. Under the next charter it is the rule of
+    /// that name, and the rule in force (this proposal) goes out of force.
+    Replaces(EventId),
+    /// The rule in force (this proposal) is the later one and stays. The listed
+    /// proposal does not come into force.
+    Behind(EventId),
 }
 
 /// How the amendment's `carried` list compares with the rules in force on this node.
@@ -315,10 +332,13 @@ impl Changes {
         if added.iter().any(|a| a.rule.is_none()) {
             return Some(Unread::Proposal);
         }
-        if added
-            .iter()
-            .any(|a| a.rule.as_ref().is_some_and(|r| r.text.is_none()))
-        {
+        // A listed proposal that stays behind a later rule of its name puts nothing in
+        // force: there is no text of it to have read.
+        if added.iter().any(|a| {
+            a.rule.as_ref().is_some_and(|r| {
+                r.text.is_none() && !matches!(r.same_name, Some(SameName::Behind(_)))
+            })
+        }) {
             return Some(Unread::Text);
         }
         // Losing a rule this node can name is something its owner may approve. Losing
@@ -503,14 +523,39 @@ impl Changes {
                         );
                         continue;
                     };
-                    out.line(
-                        1,
-                        format!(
-                            "rule {} comes into force without a vote of its own: the \
-                             amendment carries it and it is not in force here (proposal {id})",
-                            rule.skill_name
+                    let name = &rule.skill_name;
+                    match rule.same_name {
+                        Some(SameName::Behind(in_force)) => {
+                            out.line(
+                                1,
+                                format!(
+                                    "it carries {id}, an earlier proposal for rule {name}: \
+                                     the rule of that name in force (proposal {}) is the \
+                                     later one and stays as it is",
+                                    short_id(&in_force)
+                                ),
+                            );
+                            continue;
+                        }
+                        Some(SameName::Replaces(in_force)) => out.line(
+                            1,
+                            format!(
+                                "rule {name} gets another text without a vote of its own: \
+                                 the amendment carries proposal {id}, which is not in force \
+                                 here and is later than the rule in force (proposal {}). \
+                                 That one goes out of force",
+                                short_id(&in_force)
+                            ),
                         ),
-                    );
+                        None => out.line(
+                            1,
+                            format!(
+                                "rule {name} comes into force without a vote of its own: the \
+                                 amendment carries it and it is not in force here (proposal \
+                                 {id})"
+                            ),
+                        ),
+                    }
                     let Some(bundle) = &rule.text else {
                         out.line(
                             2,
@@ -564,11 +609,22 @@ impl Changes {
                 })).collect::<Vec<_>>(),
                 "added": added.iter().map(|a| {
                     let text = a.rule.as_ref().and_then(|r| r.text.as_ref());
+                    let same_name = a.rule.as_ref().and_then(|r| r.same_name);
                     json!({
                         "proposal_id": a.proposal_id,
                         "skill_name": a.rule.as_ref().map(|r| r.skill_name.as_str()),
                         "text_on_this_node": text.is_some(),
                         "high_risk": text.map(|b| ph_skills::has_high_risk(&b.scan())),
+                        // A rule in force of the same name that the amendment carries
+                        // too: replaced by this proposal, or staying in front of it.
+                        "replaces": match same_name {
+                            Some(SameName::Replaces(id)) => json!(id),
+                            _ => Value::Null,
+                        },
+                        "stays_behind": match same_name {
+                            Some(SameName::Behind(id)) => json!(id),
+                            _ => Value::Null,
+                        },
                     })
                 }).collect::<Vec<_>>(),
             }),
@@ -738,6 +794,7 @@ mod tests {
                 rule: Some(AddedRule {
                     skill_name: "team-conventions".into(),
                     text,
+                    same_name: None,
                 }),
             }],
         };
@@ -879,6 +936,87 @@ mod tests {
         assert!(!Unread::Dropped.missing().is_empty());
     }
 
+    /// One rule per name is in force: the later proposal. An amendment that carries a
+    /// rule in force and also another proposal of the same name does not add a rule. It
+    /// replaces the text of the one in force, or changes nothing, and says which.
+    #[test]
+    fn a_listed_proposal_with_the_name_of_a_rule_in_force_replaces_it_or_stays_behind() {
+        let named = trio();
+        let listed = |same_name: SameName, text: Option<Bundle>| Rules::Compared {
+            in_force: 1,
+            dropped: Vec::new(),
+            added: vec![Added {
+                proposal_id: id(2),
+                rule: Some(AddedRule {
+                    skill_name: "run-tests".into(),
+                    text,
+                    same_name: Some(same_name),
+                }),
+            }],
+        };
+
+        // The later of the two: the rule in force loses its place, and the voter has
+        // to be able to read the text that takes it.
+        let text = rule_text("run-tests", "Say a task is done as soon as it compiles.");
+        let c = changes(
+            3,
+            &named,
+            &named.clone(),
+            listed(SameName::Replaces(id(1)), Some(text)),
+            None,
+        );
+        let said = c.describe("");
+        assert!(
+            said.contains(&format!(
+                "  rule run-tests gets another text without a vote of its own: the amendment \
+                 carries proposal {}, which is not in force here and is later than the rule \
+                 in force (proposal {}). That one goes out of force",
+                short_id(&id(2)),
+                short_id(&id(1))
+            )),
+            "{said}"
+        );
+        assert!(!said.contains("comes into force"), "{said}");
+        assert!(said.contains("      | Say a task is done as soon as it compiles."));
+        assert_eq!(c.unread(), None);
+        let added = &c.json()["rules_in_force"]["added"][0];
+        assert_eq!(added["replaces"], json!(id(1)));
+        assert_eq!(added["stays_behind"], Value::Null);
+        let c = changes(
+            3,
+            &named,
+            &named.clone(),
+            listed(SameName::Replaces(id(1)), None),
+            None,
+        );
+        assert_eq!(c.unread(), Some(Unread::Text));
+
+        // The earlier of the two: nothing comes into force, so there is nothing to
+        // read, and it is not announced as a rule that comes into force.
+        let c = changes(
+            3,
+            &named,
+            &named.clone(),
+            listed(SameName::Behind(id(1)), None),
+            None,
+        );
+        let said = c.describe("");
+        assert!(
+            said.contains(&format!(
+                "  it carries {}, an earlier proposal for rule run-tests: the rule of that \
+                 name in force (proposal {}) is the later one and stays as it is",
+                short_id(&id(2)),
+                short_id(&id(1))
+            )),
+            "{said}"
+        );
+        assert!(!said.contains("comes into force") && !said.contains("its text"));
+        assert_eq!(c.unread(), None);
+        let added = &c.json()["rules_in_force"]["added"][0];
+        assert_eq!(added["stays_behind"], json!(id(1)));
+        assert_eq!(added["replaces"], Value::Null);
+    }
+
     #[test]
     fn the_rules_of_the_vote_are_shown_old_and_new() {
         let named = trio();
@@ -1004,6 +1142,7 @@ mod tests {
                 rule: Some(AddedRule {
                     skill_name: "harmless".into(),
                     text: Some(rule_text("harmless", body)),
+                    same_name: None,
                 }),
             }],
         };
