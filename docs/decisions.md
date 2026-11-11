@@ -3857,3 +3857,38 @@ the spool holds 5 MiB.
 spool, the database held by `sqlite3`, one `Stop` hook killed after three seconds.
 0.4.0 ran into the limit and left 8 of the 200 lines. This branch returned after
 0.77 seconds with every line in the spool, and stored all 200 once the lock was gone.
+
+### A number in the owner's settings file is written back as it was read
+
+**Found.** `watch claude --install` and `--remove` rewrite the settings file of
+Claude Code, which is its owner's and holds what other tools put there. The file was
+read into serde_json's numbers and written from them, so every number that is not in
+serde_json's own shortest form came back changed, anywhere in the file: `1e5` as
+`100000.0`, `1E-7` as `1e-7`, `-0` as `-0.0`, `1.10` as `1.1`. Two kinds lost their
+value and not only their form: `0.1234567890123456789` came back as
+`0.12345678901234568`, and an integer beyond 64 bits such as
+`12345678901234567890123` as `1.2345678901234568e22`. The module said "values are
+kept exactly".
+
+**Decision.** A number of the settings file is kept as its text
+(`ph_observer::json_doc::Num`). `Doc::parse` lets serde_json check the file as
+before, then reads the numbers of the text in order and gives each number of the
+document the text it had. Writing copies that text out (serde_json's `raw_value`).
+The numbers PeerHarness writes itself (the `timeout` of its own hook entries) are
+written as before. Two numbers are equal when their text is, which is what "an entry
+that is exactly what PeerHarness writes" already meant.
+
+**Rejected.** serde_json's `arbitrary_precision` does this by itself, and Cargo would
+turn it on for every crate of the workspace, where it changes what a number is for
+the protocol's parser. It is the reason `preserve_order` is not used either.
+
+**Not changed.** Whitespace, indentation and the escapes inside a string are still
+not kept: the file is written with two spaces, and `"\u00e9"` comes back as `"é"`,
+which is the same string. A number that serde_json cannot read at all (`1e999`) still
+makes the file malformed for PeerHarness, and it is left untouched.
+
+**Tests.** `numbers_elsewhere_in_the_file_are_written_back_as_they_were`
+(`crates/ph-observer/tests/settings.rs`) and `numbers_keep_their_text`
+(`crates/ph-observer/src/json_doc.rs`). The audit's settings file was installed into
+again with this branch: its line of ten numbers came back character for character,
+and a second install changed nothing.

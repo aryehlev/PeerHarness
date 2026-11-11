@@ -4,22 +4,43 @@
 //! the workspace and other crates rely on `serde_json::Map` being sorted. This type keeps
 //! object members in file order, rejects duplicate keys while parsing, and serializes
 //! back in the same order through serde_json's pretty printer.
+//!
+//! A number is kept as it stands in the file ([`Num`], ADR-050). serde_json reads one
+//! into an integer or a float and writes the shortest form of that: `1.0` stays, and
+//! `1e5` becomes `100000.0`, `12345678901234567890123` becomes
+//! `1.2345678901234568e22` and `0.1234567890123456789` loses its last digits. The file
+//! is its owner's and holds other tools' settings, so [`Doc::parse`] puts the text of
+//! each number back after parsing, and writing copies it out (`raw_value`). We cannot
+//! enable `arbitrary_precision` for the reason above: it changes `serde_json::Number`
+//! for every crate.
 
 use std::fmt;
 
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
+use serde_json::value::RawValue;
 use serde_json::Number;
 
 /// Message of the parse error raised for a duplicate key.
 pub(crate) const DUPLICATE_KEY_MSG: &str = "duplicate key";
+
+/// A JSON number as text: the text it has in the file, or serde_json's for one that
+/// was made here. Two numbers are equal when their text is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Num(String);
+
+impl From<Number> for Num {
+    fn from(n: Number) -> Self {
+        Num(n.to_string())
+    }
+}
 
 /// A JSON value whose objects keep member order.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Doc {
     Null,
     Bool(bool),
-    Number(Number),
+    Number(Num),
     String(String),
     Array(Vec<Doc>),
     Object(Obj),
@@ -88,6 +109,47 @@ impl Doc {
         Doc::String(s.to_owned())
     }
 
+    pub(crate) fn number(n: u64) -> Self {
+        Doc::Number(Number::from(n).into())
+    }
+
+    /// Parses a document, with every number as it is written in `bytes`.
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Doc, serde_json::Error> {
+        let mut doc: Doc = serde_json::from_slice(bytes)?;
+        // The parser took the bytes, so they are UTF-8 and well-formed JSON: the
+        // numbers of the text and of the document are the same ones, in one order.
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            let written = number_texts(text);
+            if written.len() == doc.count_numbers() {
+                doc.set_numbers(&mut written.into_iter());
+            }
+        }
+        Ok(doc)
+    }
+
+    fn count_numbers(&self) -> usize {
+        match self {
+            Doc::Number(_) => 1,
+            Doc::Array(a) => a.iter().map(Doc::count_numbers).sum(),
+            Doc::Object(o) => o.iter().map(|(_, v)| v.count_numbers()).sum(),
+            Doc::Null | Doc::Bool(_) | Doc::String(_) => 0,
+        }
+    }
+
+    /// Gives every number its text, in document order.
+    fn set_numbers<'a>(&mut self, written: &mut impl Iterator<Item = &'a str>) {
+        match self {
+            Doc::Number(n) => {
+                if let Some(text) = written.next() {
+                    n.0 = text.to_owned();
+                }
+            }
+            Doc::Array(a) => a.iter_mut().for_each(|v| v.set_numbers(written)),
+            Doc::Object(o) => o.iter_mut().for_each(|(_, v)| v.set_numbers(written)),
+            Doc::Null | Doc::Bool(_) | Doc::String(_) => {}
+        }
+    }
+
     pub(crate) fn as_object(&self) -> Option<&Obj> {
         match self {
             Doc::Object(o) => Some(o),
@@ -138,7 +200,9 @@ impl Serialize for Doc {
         match self {
             Doc::Null => s.serialize_unit(),
             Doc::Bool(b) => s.serialize_bool(*b),
-            Doc::Number(n) => n.serialize(s),
+            Doc::Number(n) => RawValue::from_string(n.0.clone())
+                .map_err(serde::ser::Error::custom)?
+                .serialize(s),
             Doc::String(v) => s.serialize_str(v),
             Doc::Array(a) => {
                 let mut seq = s.serialize_seq(Some(a.len()))?;
@@ -176,14 +240,14 @@ impl<'de> Visitor<'de> for DocVisitor {
         Ok(Doc::Bool(v))
     }
     fn visit_i64<E>(self, v: i64) -> Result<Doc, E> {
-        Ok(Doc::Number(v.into()))
+        Ok(Doc::Number(Number::from(v).into()))
     }
     fn visit_u64<E>(self, v: u64) -> Result<Doc, E> {
-        Ok(Doc::Number(v.into()))
+        Ok(Doc::Number(Number::from(v).into()))
     }
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<Doc, E> {
         Number::from_f64(v)
-            .map(Doc::Number)
+            .map(|n| Doc::Number(n.into()))
             .ok_or_else(|| E::custom("non-finite number"))
     }
     fn visit_str<E>(self, v: &str) -> Result<Doc, E> {
@@ -218,6 +282,39 @@ impl<'de> Visitor<'de> for DocVisitor {
     }
 }
 
+/// The text of every number of a well-formed JSON document, in document order. A
+/// number starts with a minus sign or a digit outside a string, and nothing else
+/// does.
+fn number_texts(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    // An escaped character, a quote among them, is not the end.
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'-' | b'0'..=b'9' => {
+                let start = i;
+                while i < bytes.len()
+                    && matches!(bytes[i], b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')
+                {
+                    i += 1;
+                }
+                // Only ASCII was stepped over, so both ends are character boundaries.
+                out.push(&text[start..i]);
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +324,55 @@ mod tests {
         let src = r#"{"z":1,"a":{"y":[1,-2,2.5,true,null,"s"],"b":{}},"m":[]}"#;
         let d: Doc = serde_json::from_str(src).unwrap();
         assert_eq!(serde_json::to_string(&d).unwrap(), src);
+        assert_eq!(
+            serde_json::to_string(&Doc::parse(src.as_bytes()).unwrap()).unwrap(),
+            src
+        );
+    }
+
+    /// A number is written back as it was read (ADR-050). Without that, each of these
+    /// but the first and the last comes back as another text, and four of them as
+    /// another value.
+    #[test]
+    fn numbers_keep_their_text() {
+        let numbers = [
+            "1.0",
+            "1e5",
+            "1E-7",
+            "-0",
+            "0.1234567890123456789",
+            "12345678901234567890123",
+            "9007199254740993",
+            "18446744073709551616",
+            "-9223372036854775809",
+            "1.10",
+            "0",
+            "-12",
+            "2.5e+3",
+        ];
+        // Among strings that look like numbers, escapes, and words with an `e` in them.
+        let src = format!(
+            r#"{{"a":[{}],"s":"1e5 \" 12 \\","t":true,"f":false,"n":null,"k-1":{{"2":3.00}},"e":"é -7"}}"#,
+            numbers.join(",")
+        );
+        let doc = Doc::parse(src.as_bytes()).unwrap();
+        assert_eq!(serde_json::to_string(&doc).unwrap(), src);
+        // And through the pretty printer, which is what a settings file is written with.
+        let pretty = serde_json::to_string_pretty(&doc).unwrap();
+        for n in numbers {
+            assert!(pretty.contains(&format!("    {n}")), "{n} in {pretty}");
+        }
+        assert!(pretty.contains("\"2\": 3.00"), "{pretty}");
+        assert_eq!(
+            Doc::parse(pretty.as_bytes()).unwrap(),
+            doc,
+            "read again, it is the same document"
+        );
+        // A number made here is serde_json's.
+        assert_eq!(serde_json::to_string(&Doc::number(5)).unwrap(), "5");
+        // What is not JSON is refused as before.
+        assert!(Doc::parse(b"{\"a\": 01}").is_err());
+        assert!(Doc::parse(b"{\"a\": 1e999}").is_err());
     }
 
     #[test]

@@ -118,6 +118,10 @@ database schema it writes.
     the lock once for every line, and lost the lines it had not put back when it ran
     into its time limit. It now waits once, leaves the spool alone while the
     database is busy, and deletes a spool file only after its lines are stored.
+  * **Connecting Claude Code rewrote numbers elsewhere in its settings file.**
+    `watch claude --install` and `--remove` wrote `1e5` back as `100000.0`, and
+    rounded a long decimal or an integer beyond 64 bits. Every number in the file
+    now comes back with the text it had.
 
 ## 0.4.0 (2026-11-11)
 

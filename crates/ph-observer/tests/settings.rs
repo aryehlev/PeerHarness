@@ -413,6 +413,55 @@ fn already_empty_containers_are_kept() {
     );
 }
 
+/// The file is its owner's and holds other tools' settings. A number in it comes back
+/// with the text it had: no exponent expanded, no digit rounded away, no `-0` turned
+/// into `-0.0` (ADR-050).
+#[test]
+fn numbers_elsewhere_in_the_file_are_written_back_as_they_were() {
+    const NUMBERS: &str = "[1.0, 1e5, 1E-7, -0, 0.1234567890123456789, \
+                           12345678901234567890123, 9007199254740993, \
+                           18446744073709551616, -9223372036854775809, 1.10]";
+    let env = env();
+    let before = format!(
+        r#"{{"numbers": {NUMBERS}, "env": {{"LIMIT": 2.50, "s": "not 1e5, not -0"}}, "hooks": {{"Stop": [{{"hooks": [{{"type": "command", "command": "say done", "timeout": 30.0}}]}}]}}}}"#
+    );
+    write_settings(&env, before.as_bytes());
+    let c = cmd(&env);
+    assert!(
+        install_hooks(&env.settings, &c, &env.backups)
+            .unwrap()
+            .changed
+    );
+    let squeezed = |p: &Path| -> String {
+        fs::read_to_string(p)
+            .unwrap()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    };
+    let wanted: String = NUMBERS.chars().filter(|c| !c.is_whitespace()).collect();
+    let after = squeezed(&env.settings);
+    assert!(after.contains(&format!(r#""numbers":{wanted}"#)), "{after}");
+    assert!(after.contains(r#""LIMIT":2.50"#), "{after}");
+    assert!(after.contains(r#""s":"not1e5,not-0""#), "{after}");
+    // Another tool's hook keeps its own number, and ours has the one we write.
+    assert!(
+        after.contains(r#""command":"saydone","timeout":30.0"#),
+        "{after}"
+    );
+    assert!(after.contains(r#""timeout":5}"#), "{after}");
+    // A second install changes nothing, and a removal leaves the numbers too.
+    assert!(
+        !install_hooks(&env.settings, &c, &env.backups)
+            .unwrap()
+            .changed
+    );
+    remove_hooks(&env.settings, &env.backups).unwrap();
+    let after = squeezed(&env.settings);
+    assert!(after.contains(&format!(r#""numbers":{wanted}"#)), "{after}");
+    assert!(after.contains(r#""timeout":30.0"#), "{after}");
+}
+
 #[cfg(unix)]
 #[test]
 fn existing_permissions_are_kept() {
