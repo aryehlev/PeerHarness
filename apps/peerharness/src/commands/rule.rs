@@ -222,26 +222,36 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
 
 /// Opts out of the rule named `name`, then brings the agent's skills directory in line.
 /// Only this machine changes, and nobody is asked: an opt-out never waits for anyone.
+///
+/// Nor for a key. The machine is changed first, with no key
+/// ([`governance::settle_machine_first`]). Where settling the circle would also sign
+/// something (the RESULT of a vote that passed here) the device key is asked for after
+/// that, and a key that does not unlock is a line in the report, not a failure: the
+/// rule is off this machine either way.
 pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
     if !ph_core::is_valid_skill_name(name) {
         return Err(usage("that is not a rule (skill) name"));
     }
     let id = &circle.circle_id;
     node.store.set_rule_opt_out(id, name, node.now())?;
-    let settled = governance::settle(node, circle, &governance::user_installer()?, &[])?;
+    let done = governance::settle_machine_first(node, circle, &governance::user_installer()?, &[])?;
+    let applied = &done.applied;
     let mut t = Text::new();
     t.line(format!(
         "Opted out of {name} in {}. Only this machine changes; the rule stays in force for the circle.",
         safe(&circle.name)
     ));
-    if settled.applied.removed.iter().any(|s| s == name) {
+    if applied.removed.iter().any(|s| s == name) {
         t.line("  removed it from your agent's skills");
     }
-    for skill in &settled.applied.not_removed {
+    for skill in &applied.not_removed {
         t.line(format!("  {}", governance::not_removed_line(skill)));
     }
-    for kept in &settled.applied.kept_edited {
+    for kept in &applied.kept_edited {
         t.line(format!("  {}", kept.line()));
+    }
+    if done.key_locked {
+        t.line(format!("  {}", governance::NOT_SIGNED_KEY_LOCKED));
     }
     t.line(format!(
         "  Nobody else is told. To put it on the circle's record: \
@@ -253,10 +263,11 @@ pub fn opt_out(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
             "circle": circle.name,
             "skill_name": name,
             "opted_out": true,
-            "installed": settled.applied.installed,
-            "removed": settled.applied.removed,
-            "not_removed": settled.applied.not_removed,
-            "kept_edited": settled.applied.kept_edited_names(),
+            "installed": applied.installed,
+            "removed": applied.removed,
+            "not_removed": applied.not_removed,
+            "kept_edited": applied.kept_edited_names(),
+            "device_key_locked": done.key_locked,
         }),
         t.finish(),
     ))
@@ -346,13 +357,18 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
     // The owner has read the text and said yes: that is the confirmation an install
     // needs, for the proposal they were shown and no other (`apply_rules` reads the
     // rules once more, and counts the confirmation only for that proposal).
-    let settled = governance::settle(node, circle, &installer, shown.as_slice())?;
+    //
+    // The install needs no key and comes first. What settling the circle would sign
+    // besides comes after it, and a key that does not unlock leaves that unsigned
+    // without undoing what the owner just confirmed.
+    let done = governance::settle_machine_first(node, circle, &installer, shown.as_slice())?;
+    let applied = &done.applied;
     let mut t = Text::new();
     t.line(format!("Following {name} again."));
-    if settled.applied.installed.iter().any(|s| s == name) {
+    if applied.installed.iter().any(|s| s == name) {
         t.line("  installed it for your agent");
     }
-    for waiting in &settled.applied.asking {
+    for waiting in &applied.asking {
         if waiting.name == name {
             t.line(format!(
                 "  it waits for your confirmation, because {}: `peerharness proposal adopt {}`",
@@ -361,29 +377,33 @@ fn opt_in(ctx: &Ctx, node: &Node, circle: &CircleRow, name: &str, yes: bool) -> 
             ));
         }
     }
-    for (skill, why) in &settled.applied.refused {
+    for (skill, why) in &applied.refused {
         if skill == name {
             t.line(format!("  it cannot be installed ({why})"));
         }
     }
-    if settled.applied.conflicts.iter().any(|s| s == name) {
+    if applied.conflicts.iter().any(|s| s == name) {
         t.line(
             "  it was not installed: a skill of that name that PeerHarness does not manage \
              is in the way",
         );
     }
-    for held in settled.applied.held.iter().filter(|h| h.name == name) {
+    for held in applied.held.iter().filter(|h| h.name == name) {
         t.line(format!("  {}", held.line(&circle.name)));
+    }
+    if done.key_locked {
+        t.line(format!("  {}", governance::NOT_SIGNED_KEY_LOCKED));
     }
     Ok(Report::new(
         json!({
             "circle": circle.name,
             "skill_name": name,
             "opted_out": false,
-            "installed": settled.applied.installed,
-            "removed": settled.applied.removed,
-            "not_removed": settled.applied.not_removed,
-            "kept_edited": settled.applied.kept_edited_names(),
+            "installed": applied.installed,
+            "removed": applied.removed,
+            "not_removed": applied.not_removed,
+            "kept_edited": applied.kept_edited_names(),
+            "device_key_locked": done.key_locked,
         }),
         t.finish(),
     ))

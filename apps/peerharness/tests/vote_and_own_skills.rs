@@ -1207,6 +1207,32 @@ fn within_reach(project_skills: &Path, elsewhere: &Path) {
     std::fs::rename(elsewhere, project_skills).unwrap();
 }
 
+/// The passphrase of no key in this file.
+const WRONG_PASSPHRASE: &str = "not the passphrase of this key";
+
+/// A command of `node` run by its owner with a passphrase that does not unlock the
+/// device key: its exit code, its JSON and what it printed for the person (in `--json`
+/// mode that goes to standard error). A command that succeeds this way signed nothing.
+fn with_a_passphrase_that_unlocks_nothing(node: &Node, args: &[&str]) -> (i32, Value, String) {
+    let out = node
+        .cmd(args)
+        .env("PEERHARNESS_PASSPHRASE", WRONG_PASSPHRASE)
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        serde_json::from_slice(&out.stdout).unwrap_or(Value::Null),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// How many RESULT events `node` holds for `proposal`.
+fn results_for(node: &Node, proposal: &str) -> usize {
+    let id: ph_core::EventId = proposal.parse().unwrap();
+    let store = ph_store::Store::open(node.home.join("peerharness.db")).unwrap();
+    store.results_for_proposal(&id).unwrap().len()
+}
+
 /// When a skill a vote installed cannot be removed (a repeal or an opt-out while its
 /// files cannot be changed), the record that a vote installed it is kept, so that the
 /// next settle tries again. The owner can also take the leftover out themselves once
@@ -1391,6 +1417,123 @@ fn a_copy_of_a_rule_that_no_longer_binds_its_owner_is_theirs_to_take_out() {
     let gone = bob.run(&["skills", "uninstall", name, "--scope", "user"]);
     assert_eq!(gone["skill_name"], name, "{gone}");
     assert!(!bob.skill_file(name).exists());
+    for node in [&alice, &bob, &carol] {
+        assert!(!node.windows_opened(), "{}", node.name);
+    }
+}
+
+/// An opt-out never waits for anyone, and not for a key either. A proposal can have
+/// passed on a node whose key did not unlock when its ballots arrived, so that the
+/// RESULT this node may publish is still to be signed. `rule opt-out` used to ask for
+/// the key first there: with a key that does not unlock (a mistyped passphrase, no
+/// terminal) the command failed, the opt-out was recorded and the rule stayed in the
+/// owner's agent. `proposal refuse` is the same step. Now the machine is changed
+/// first, with no key, and a key that does not unlock is one line of the report.
+///
+/// `rule opt-in` is the owner's confirmed step in the other direction, and what they
+/// confirmed is installed without a key in the same way.
+#[test]
+fn an_opt_out_changes_the_machine_before_any_key_is_asked_for() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let not_signed = "was not signed: the device key could not be unlocked";
+
+    // --- Two rules pass and are installed on Carol's machine.
+    let pass_for_all = |name: &str, text: &str| -> String {
+        let noted = alice.note(name, text);
+        let proposal =
+            id_of(&alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]));
+        alice.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        bob.import(&alice.export(root, name));
+        let voted = bob.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+        assert_eq!(voted["passed"], true, "{voted}");
+        let passed = bob.export(root, name);
+        alice.import(&passed);
+        carol.import(&passed);
+        assert!(carol.skill_file(name).is_file(), "{name}");
+        proposal
+    };
+    pass_for_all("style", "Indent with two spaces.");
+    let naming = pass_for_all("naming", "Names are lower case.");
+
+    // --- A third proposal passes on Carol's node first: Alice's and Bob's ballots
+    // meet there, while her key does not unlock. The second import fails when it is
+    // to sign the RESULT; the ballots are stored.
+    let noted = alice.note("commits", "Commit subjects are one word.");
+    let commits = id_of(&alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]));
+    let proposed = alice.export(root, "commits");
+    bob.import(&proposed);
+    carol.import(&proposed);
+    alice.run(&["proposal", "vote", &commits, "approve", "--yes"]);
+    bob.run(&["proposal", "vote", &commits, "approve", "--yes"]);
+    let from_alice = alice.export(root, "commits-ballot");
+    let from_bob = bob.export(root, "commits-ballot");
+    let (code, _, _) =
+        with_a_passphrase_that_unlocks_nothing(&carol, &["events", "import", &from_alice]);
+    assert_eq!(code, 0, "one ballot of three: nothing to sign yet");
+    let (code, _, _) =
+        with_a_passphrase_that_unlocks_nothing(&carol, &["events", "import", &from_bob]);
+    assert_eq!(code, 1, "the RESULT needs the key");
+    let passed_here = carol.run(&["proposal", "list"])["proposals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["proposal_id"] == commits.as_str() && p["passed"] == true);
+    assert!(passed_here);
+    assert_eq!(results_for(&carol, &commits), 0);
+
+    // --- `rule opt-out` with a key that does not unlock: done, and said.
+    let opt_out = ["rule", "opt-out", "style", "--circle", "team"];
+    let (code, out, _) = with_a_passphrase_that_unlocks_nothing(&carol, &opt_out);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(out["opted_out"], true, "{out}");
+    assert_eq!(out["removed"], json!(["style"]), "{out}");
+    assert_eq!(out["device_key_locked"], true, "{out}");
+    assert!(!carol.skill_file("style").exists());
+    assert_eq!(carol.rule("style")["opted_out"], true);
+    assert_eq!(carol.rule("style")["state"], "opted out");
+    assert_eq!(results_for(&carol, &commits), 0, "nothing was signed");
+
+    // --- `proposal refuse` is the same step, here as the person reads it.
+    let out = carol
+        .bare()
+        .args(["proposal", "refuse", &naming])
+        .env("PEERHARNESS_PASSPHRASE", WRONG_PASSPHRASE)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    assert!(said.contains("Opted out of naming in team."), "{said}");
+    assert!(
+        said.contains("removed it from your agent's skills"),
+        "{said}"
+    );
+    assert!(said.contains(not_signed), "{said}");
+    assert!(!carol.skill_file("naming").exists());
+    assert_eq!(carol.rule("naming")["opted_out"], true);
+    assert_eq!(results_for(&carol, &commits), 0, "nothing was signed");
+
+    // --- `rule opt-in`, confirmed in her terminal, with the same key: the rule she
+    // read is installed again, and nothing is signed.
+    let opt_in = ["rule", "opt-in", "style", "--circle", "team", "--yes"];
+    let (code, out, _) = with_a_passphrase_that_unlocks_nothing(&carol, &opt_in);
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(out["opted_out"], false, "{out}");
+    assert_eq!(out["installed"], json!(["style"]), "{out}");
+    assert_eq!(out["device_key_locked"], true, "{out}");
+    assert!(carol.skill_file("style").is_file());
+    assert_eq!(results_for(&carol, &commits), 0, "nothing was signed");
+
+    // --- With the key, the next settle signs what was left. An opt-out then has
+    // nothing to sign, and says nothing about a key.
+    carol.import(&from_bob);
+    assert_eq!(results_for(&carol, &commits), 1);
+    let out = carol.run(&opt_out);
+    assert_eq!(out["device_key_locked"], false, "{out}");
+    assert_eq!(out["removed"], json!(["style"]), "{out}");
+    let said = carol.reads(&opt_out);
+    assert!(!said.contains(not_signed), "{said}");
     for node in [&alice, &bob, &carol] {
         assert!(!node.windows_opened(), "{}", node.name);
     }

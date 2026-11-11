@@ -1212,6 +1212,32 @@ pub struct Applied {
 }
 
 impl Applied {
+    /// What two runs of [`apply_rules`] for one circle did together, `self` first and
+    /// `later` after it. What happened is added up (installed, removed, kept because it
+    /// was edited). What is a state is the later run's: it found it again, or no longer.
+    pub fn followed_by(self, later: Applied) -> Applied {
+        let mut all = later;
+        let first = |earlier: Vec<String>, later: &mut Vec<String>| {
+            let mut names = earlier;
+            for name in later.drain(..) {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            *later = names;
+        };
+        first(self.installed, &mut all.installed);
+        first(self.removed, &mut all.removed);
+        let mut kept = self.kept_edited;
+        for copy in all.kept_edited.drain(..) {
+            if !kept.contains(&copy) {
+                kept.push(copy);
+            }
+        }
+        all.kept_edited = kept;
+        all
+    }
+
     /// The names in [`Self::kept_edited`], for a command's JSON report.
     pub fn kept_edited_names(&self) -> Vec<&str> {
         self.kept_edited.iter().map(|k| k.name.as_str()).collect()
@@ -1850,33 +1876,8 @@ pub fn settle(
     let mut settled = Settled::default();
     let me = node.device_key();
 
-    let open_and_passed = |store: &Store| -> Result<Vec<(ProposalView, bool)>> {
-        let current = current_charter(store, &id)?.digest()?;
-        let mut out = Vec::new();
-        for ev in store.proposals(&id)? {
-            let Ok(p) = ev
-                .envelope()
-                .map_err(|_| ())
-                .and_then(|e| ProposalView::from_envelope(&e).map_err(|_| ()))
-            else {
-                continue;
-            };
-            if p.charter() != current {
-                continue;
-            }
-            let Ok((_, t)) = count(store, &p) else {
-                continue;
-            };
-            if t.passed() {
-                let has_result = !store.results_for_proposal(&p.event_id())?.is_empty();
-                out.push((p, has_result));
-            }
-        }
-        Ok(out)
-    };
-
     // 1. Results.
-    for (p, has_result) in open_and_passed(store)? {
+    for (p, has_result) in passed_now(store, &id)? {
         let charter = current_charter(store, &id)?;
         if has_result || charter.content.voter(&me, &p.electorate()).is_none() {
             continue;
@@ -1889,7 +1890,7 @@ pub fn settle(
 
     // 2. Notarization (founder only).
     if circle.is_founder {
-        for (p, _) in open_and_passed(store)? {
+        for (p, _) in passed_now(store, &id)? {
             if p.kind() != ProposalKind::Amend {
                 continue;
             }
@@ -1911,6 +1912,101 @@ pub fn settle(
     // 3. Rules.
     settled.applied = apply_on(node, circle, installer, confirmed)?;
     Ok(settled)
+}
+
+/// The proposals under the charter in force in `circle` that the ballots held here
+/// carry over their threshold, each with whether a RESULT for it is on record here.
+fn passed_now(store: &Store, circle: &CircleId) -> Result<Vec<(ProposalView, bool)>> {
+    let current = current_charter(store, circle)?.digest()?;
+    let mut out = Vec::new();
+    for ev in store.proposals(circle)? {
+        let Ok(p) = ev
+            .envelope()
+            .map_err(|_| ())
+            .and_then(|e| ProposalView::from_envelope(&e).map_err(|_| ()))
+        else {
+            continue;
+        };
+        if p.charter() != current {
+            continue;
+        }
+        let Ok((_, t)) = count(store, &p) else {
+            continue;
+        };
+        if t.passed() {
+            let has_result = !store.results_for_proposal(&p.event_id())?.is_empty();
+            out.push((p, has_result));
+        }
+    }
+    Ok(out)
+}
+
+/// Whether [`settle`] would use a key for `circle` now: a proposal passed here that
+/// this node may publish the RESULT of and that has none, or, on the founder's node, a
+/// passed amendment whose RESULT is here and whose charter is still to be issued.
+fn settle_signs(node: &crate::node::Node, circle: &CircleRow) -> Result<bool> {
+    let store = &node.store;
+    let id = circle.circle_id;
+    let me = node.device_key();
+    let charter = current_charter(store, &id)?;
+    Ok(passed_now(store, &id)?.iter().any(|(p, has_result)| {
+        if *has_result {
+            circle.is_founder && p.kind() == ProposalKind::Amend
+        } else {
+            charter.content.voter(&me, &p.electorate()).is_some()
+        }
+    }))
+}
+
+/// What [`settle_machine_first`] did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MachineFirst {
+    /// Changes to the agent's skills directory: those made before any key was asked
+    /// for, and those that followed from what was signed after.
+    pub applied: Applied,
+    /// The device key could not be unlocked, so what [`settle`] would have signed (a
+    /// RESULT, the founder's next charter) was not signed. The machine was changed all
+    /// the same.
+    pub key_locked: bool,
+}
+
+/// What a command prints when [`MachineFirst::key_locked`] is set. It names nothing.
+pub const NOT_SIGNED_KEY_LOCKED: &str =
+    "What this node could sign for the circle now (the result of a vote that passed, or \
+     on the founder's node the charter that follows from one) was not signed: the device \
+     key could not be unlocked. It is signed the next time this circle is settled with \
+     the key unlocked (an `events import`, a sync or a ballot).";
+
+/// [`settle`] for a step that never waits for a key: an opt-out, and what follows from
+/// the owner's confirmed opt-in. The machine comes first ([`apply_on`], which unlocks
+/// nothing). Only then, and only when [`settle`] has something to sign, the device key
+/// is unlocked and the circle is settled. A key that does not unlock leaves that
+/// unsigned and is no error: the step itself is done.
+pub fn settle_machine_first(
+    node: &crate::node::Node,
+    circle: &CircleRow,
+    installer: &ph_skills::Installer,
+    confirmed: &[EventId],
+) -> Result<MachineFirst> {
+    let applied = apply_on(node, circle, installer, confirmed)?;
+    if !settle_signs(node, circle)? {
+        return Ok(MachineFirst {
+            applied,
+            key_locked: false,
+        });
+    }
+    // One attempt: a passphrase is asked for once here, where the keystore has one.
+    if node.device().is_err() {
+        return Ok(MachineFirst {
+            applied,
+            key_locked: true,
+        });
+    }
+    let settled = settle(node, circle, installer, confirmed)?;
+    Ok(MachineFirst {
+        applied: applied.followed_by(settled.applied),
+        key_locked: false,
+    })
 }
 
 /// The third step of [`settle`] alone: brings the agent's skills directory in line with
@@ -3544,6 +3640,45 @@ pub(crate) mod tests {
             .line_for(false)
             .contains("--scope project --allow-modified"));
         let _ = adopt;
+    }
+
+    /// Two runs of `apply_rules` in one command (the machine first, then again after
+    /// something was signed) are reported as one: what happened in either, and the
+    /// states the later one found.
+    #[test]
+    fn what_two_runs_did_is_added_up_and_states_are_the_later_ones() {
+        let names = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let kept = |name: &str| KeptEdited {
+            name: name.to_owned(),
+            place: None,
+            uninstall_refused: false,
+        };
+        let first = Applied {
+            installed: names(&["a"]),
+            removed: names(&["b"]),
+            not_removed: names(&["c", "d"]),
+            kept_edited: vec![kept("e")],
+            opted_out: names(&["b"]),
+            ..Applied::default()
+        };
+        let later = Applied {
+            installed: names(&["f"]),
+            removed: names(&["b", "c"]),
+            not_removed: names(&["d"]),
+            kept_edited: vec![kept("e"), kept("g")],
+            opted_out: names(&["b", "c"]),
+            ..Applied::default()
+        };
+        let all = first.followed_by(later);
+        assert_eq!(all.installed, names(&["a", "f"]));
+        assert_eq!(all.removed, names(&["b", "c"]));
+        assert_eq!(
+            all.not_removed,
+            names(&["d"]),
+            "c was removed by the later run"
+        );
+        assert_eq!(all.kept_edited_names(), ["e", "g"]);
+        assert_eq!(all.opted_out, names(&["b", "c"]));
     }
 
     /// The name of PeerHarness's own skill: a rule that has it is never installed, and
