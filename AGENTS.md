@@ -114,8 +114,12 @@ stop, leave the feature disabled, and document the blocker.
   `governance::as_drafted` after the owner's answer, after the key is unlocked and
   before it signs, with no prompt in between: `as_drafted` takes the unlocked key as
   a parameter for that reason. It signs through `governance::propose_under`, which
-  names the charter that was shown; `governance::propose` is for `adopt` and `repeal`
-  proposals only and returns an error for an amendment. `proposal vote` unlocks the
+  names the charter that was shown. So do `proposal create` and `rule repeal`, with
+  the charter their preview counted the voters on (`governance::charter_as_shown`),
+  and `question send` refuses when the charter it counted its readers on changed.
+  `governance::propose_without_preview` signs under whatever charter is current: it
+  is for the demo and for tests, returns an error for an amendment, and no command
+  that asked its owner calls it. `proposal vote` unlocks the
   key, then reads `governance::amendment_changes` again
   (`proposal::approval_as_shown`, which takes the key in the same way) and signs an
   approval only when it says what was shown (`amendment::Changes::same_as`), and for
@@ -123,17 +127,25 @@ stop, leave the feature disabled, and document the blocker.
   same entry under the same charter. `rule repeal` and `--announce` look again in
   the same place at the proposal they name (`governance::rule_as_shown`). Do not move
   any of these checks before the prompt, the window or the unlocking of the key, and
-  do not sign a draft under a charter other than the one it was built from. The
+  do not sign a draft under a charter other than the one it was built from. Each
+  check and the signatures it allows are one write transaction of the store
+  (`governance::atomically`): another process cannot store a ballot or a charter
+  between them. The key is unlocked before the transaction begins, and nothing inside
+  it prompts, opens a window, reads standard input, touches the network or settles.
+  Do not take a check or a signature out of it, and do not put a prompt into it. The
   first run of `circle leave` decides before it asks what it does about the request
   (`circle::plan_request`) and says so in its preview. It signs the request only
   where the preview announced one and the node is still what the preview was built
   from, after the machine changed and after the key is unlocked: the removal that
   was drafted for the preview, never a new draft. It signs none either when exactly
-  that removal is on record by then (`circle::sign_removal` reads
-  `circle::removals_on_record` again with the key in hand). Otherwise it makes none.
+  that removal is on record by then (`circle::request_as_previewed` reads
+  `circle::removals_on_record` again with the key in hand, inside the transaction).
+  Otherwise it makes none.
   A second run first removes, with no key and never inside a session, what the
   circle installed and the first run could not remove (`governance::apply_on`). Then
-  it asks about the request alone and is checked like every other draft.
+  it asks about the request alone and signs through the same function as the first
+  run: it is checked like every other draft, and it makes no second request when
+  exactly that removal arrived meanwhile.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
   windows turned on before ADR-037 were allowed for three steps, and keeping a rule has
@@ -157,7 +169,10 @@ stop, leave the feature disabled, and document the blocker.
   file, and `init` refuses the plaintext keystore, whether a flag or an existing
   config file asks for it; a plain `init` stays allowed there (ADR-042). The
   `join_circle` tool takes a peer id or a multiaddr that names nothing on disk: a tool
-  never makes `circle join` read a file. No refusal of a consent step tells its reader
+  never makes `circle join` read a file. Inside a session `circle join` itself reads
+  no argument that parses as a peer id or as a multiaddr as a file, whatever is on
+  disk, so that rule does not rest on the tool's own look. No refusal of a consent step
+  tells its reader
   to pass `--yes` (`consent::no_terminal`).
 * Nothing is saved to the library, installed or signed before the confirmation it
   belongs to: build previews from drafts, and persist only after `confirm` returns.
