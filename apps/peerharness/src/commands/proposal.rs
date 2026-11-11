@@ -465,6 +465,10 @@ fn create(
         )?;
     }
 
+    // The key first: a key that does not unlock leaves the candidate and the library
+    // as they were, and nothing says "proposed" about a rule that was never signed.
+    let key = node.device()?.signing_key();
+
     // Confirmed: save exactly the previewed text to the library.
     let (_, bundle, _) = crate::library::create_local_skill(&node.home, &node.store, &cand, now)?;
     if bundle.digest() != draft.digest() {
@@ -497,7 +501,6 @@ fn create(
             .map(|row| row.event_id),
         None => None,
     };
-    let key = node.device()?.signing_key();
     let proposal = governance::propose(
         &node.store,
         key,

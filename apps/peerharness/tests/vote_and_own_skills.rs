@@ -1769,6 +1769,50 @@ fn an_announcement_that_cannot_be_signed_says_what_was_done_on_the_machine() {
     assert!(!alice.windows_opened());
 }
 
+/// `proposal create` saved the rule to the library and marked its candidate as
+/// proposed before it unlocked the key that signs the proposal. With a key that does
+/// not unlock, the node then said "proposed" about a rule that was never signed or
+/// shared. The key is unlocked directly after the confirmation now: when it does not
+/// unlock, the candidate and the library are as they were.
+#[test]
+fn a_proposal_that_could_not_be_signed_leaves_its_candidate_as_it_was() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    alice.run(&["circle", "create", "team"]);
+    let noted = alice.note("style", "Indent with two spaces.");
+    let candidates = |node: &Node| node.run(&["status"])["candidates"].clone();
+    let library = |node: &Node| node.run(&["skills", "list"])["skills"].clone();
+    let proposals = |node: &Node| node.run(&["proposal", "list"])["proposals"].clone();
+    let (noted_as, in_library, on_record) =
+        (candidates(&alice), library(&alice), proposals(&alice));
+    assert_eq!(noted_as, json!({ "detected": 1 }));
+
+    let create = ["proposal", "create", &noted, "--circle", "team", "--yes"];
+    let (code, out, _) = with_a_passphrase_that_unlocks_nothing(&alice, &create);
+    assert_eq!(code, 1, "{out}");
+    let msg = out["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("cannot unlock the device key"), "{msg}");
+    assert_eq!(
+        candidates(&alice),
+        noted_as,
+        "the candidate is not marked proposed"
+    );
+    assert_eq!(
+        library(&alice),
+        in_library,
+        "nothing was saved to the library"
+    );
+    assert_eq!(proposals(&alice), on_record, "nothing was proposed");
+
+    // With the key the same command proposes it, and only then is anything saved.
+    let proposed = alice.run(&create);
+    assert_eq!(proposed["skill_name"], "style", "{proposed}");
+    assert_eq!(candidates(&alice), json!({ "proposed": 1 }));
+    assert_eq!(library(&alice).as_array().map(Vec::len), Some(1));
+    assert!(!alice.windows_opened());
+}
+
 /// A yes is for the text that was shown. Carol is asked before a rule is installed. A
 /// rule passes, and her agent starts installing it: the window shows its text. While
 /// she reads, her node receives a second rule of the same name that the others passed,
