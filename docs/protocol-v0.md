@@ -547,7 +547,12 @@ error.
   proposal. A ballot is therefore bound to every byte of what was proposed, including
   the bundle digest of an `adopt` proposal; a ballot for proposal A never counts for a
   proposal B that differs in anything. There is no separate `bundle_digest` member.
-* `rationale`: 0 to 2000 code points, multi-line.
+* `rationale`: 0 to 2000 code points, multi-line. The reference client is stricter
+  about what it signs (non-normative): one line of at most 200 code points, without
+  control characters, invisible characters, blanks that are not spaces (U+2800 and a
+  few like it) or characters its preview would rewrite, because the rationale is shown
+  inside the preview its user decides on. It accepts the longer form from others and
+  prints it line by line behind a mark.
 * Only `approve` affects the count. `reject` and `revise` are the signed record of
   dissent and of requested changes (section 14.2).
 * Reference rule: `proposal_id` names a stored PROPOSAL in the same circle with the same
@@ -865,8 +870,9 @@ Semantics:
 * For voting (section 14), a revoked device's ballots are not counted in any count made
   after the node learns of the revocation, and new decision events from it are
   rejected. The member it voted for stays on the roll, and the electorate keeps its
-  size, until an amendment changes the roll: a revocation can block but never pass
-  anything.
+  size, until an amendment changes the roll: a revocation adds no approval to
+  anything. The reference implementation makes every count again, so the ballots that
+  stop counting include ballots on proposals that had passed (section 14.9).
 
 ### 9.6 Charter
 
@@ -1502,7 +1508,9 @@ and 14.5), where a ballot that is not held yet is again a retryable condition.
   effect on each node that learns of it, needs no vote, and cannot be undone. It can
   only deny: the revoked device is no longer answered and its ballots are no longer
   counted, while its member stays on the roll and in every electorate (section 14.2), so
-  a revocation can keep a proposal from passing and can never make one pass.
+  a revocation can keep a proposal from passing and adds no approval to any. Denying
+  ballots that were already counted has an effect of its own: a proposal that had
+  passed with them is open again, a repeal included (section 14.9).
 * MEMBERSHIP events: authored by the credential subject.
 * QUESTION and ANSWER events: authored by a device on the roll of the circle's current
   charter whose roll entry covers the event scope (section 12.3). The root key cannot
@@ -1917,7 +1925,9 @@ Reference: `crates/ph-governance/src/tally.rs`, `result.rs`, `ruleset.rs`,
 A circle governs itself by majority vote. Every node computes every outcome **locally**,
 from signed records it has verified. No peer's conclusion is trusted, and no step below
 reads a clock: two nodes holding the same records reach the same outcome, and an outcome
-never changes later.
+never changes later, except through a revocation the node learns of afterwards: the
+revoked device's ballots stop counting, whenever they were cast, so a proposal that had
+reached its threshold can fall below it again (sections 14.2 and 14.9).
 
 ### 14.1 The inputs
 
@@ -1961,9 +1971,11 @@ one voter.
   approving.
 
 The proposal **reaches its threshold** iff the number of members who have approved is at
-least `need`. Because approvals only accumulate, this never reverts, and it does not
-depend on the order in which ballots arrive. Envelope `created_at` and `expires_at` of
-ballots and proposals play no part.
+least `need`. No ballot makes this revert, since an approval cannot be withdrawn, and it
+does not depend on the order in which ballots arrive. Envelope `created_at` and
+`expires_at` of ballots and proposals play no part. One thing does make it revert: a
+revocation that the node learns of later fails rule 7 for every ballot of that device,
+so a count made afterwards can fall below `need` (section 14.9).
 
 ### 14.3 Verifying a RESULT
 
@@ -2024,6 +2036,36 @@ force when it is proposed; a voter's client SHOULD show which rules a proposed l
 drops and which it adds before the human votes (`carried_diff`), because approving an
 amendment also approves the rule set it carries forward.
 
+The title of an `amend` proposal is text its proposer wrote and binds nothing: what is
+voted on is `next`. The reference client therefore describes an amendment from `next`
+and the charter the proposal names, and shows the title afterwards as the proposer's
+words (non-normative; a ballot in its terminal, and `proposal show`). It lists the
+members admitted and removed with their device fingerprints and scopes, every device
+added to or taken from a member who stays, the thresholds old and new, and by skill
+name the rules the `carried` list drops and adds, an added rule with its exact text.
+It refuses to sign an approval of an amendment that would bring into force a rule
+whose text the node does not hold, that lists an id the node does not hold as an
+`adopt` proposal, or that leaves out or keeps a proposal the current charter carries
+and the node does not hold. Keeping one is what an exact list does, and it is also how
+a rule that was repealed under the current charter comes back, and such a node cannot
+tell which. A node can lack such a proposal after a join from an incomplete file, or
+because the proposal's scope is one it is not sent (section 13.3). On a node in that
+state the reference client drafts no amendment either, the request to leave included:
+a `carried` list drafted there would leave the proposal out, or would list it and
+bring back a rule that is no longer in force. Its owner still stops following the
+circle on their own machine at once (section 14.6).
+
+The reference client also signs an `amend` proposal only under the charter its owner
+was shown, the request to leave included: if the node's current charter, or its rules
+in force, changed after the preview was made, while the owner read it or unlocked
+the key, it signs nothing. It reads what an amendment changes again before it signs
+an approval, with the key already unlocked, and signs nothing when that differs from
+what was shown.
+
+None of this changes what a node accepts: the steps below are the whole rule, and a
+`carried` list that is not exact still becomes the rule set when the amendment
+passes.
+
 Once the amendment has reached its threshold, the holder of the circle root key signs
 the next charter and publishes it in a CHARTER event (section 8.6).
 
@@ -2063,11 +2105,12 @@ A node's **first** charter for a circle is its trust anchor and is not subject t
 steps: the founder creates charter 1, and a node that joins later starts from whatever
 charter it is given (in the reference implementation: the newest CHARTER event whose
 roll lists the joining device, in a file or directory of exported events or among the
-events fetched from a member's node, section 13.6) and takes that charter's `carried`
-list on the root's signature. From then on every charter it accepts must pass steps 1
-to 7. The founding charter of a circle has `seq` 1 and the founder as its only
-member, so the founder's single approval admits the second member, and the first two
-members together admit the third.
+events fetched from a member's node, section 13.6; among the charters of one circle,
+which is the one with the root fingerprint the owner expected when the source holds
+several) and takes that charter's `carried` list on the root's signature. From then
+on every charter it accepts must pass steps 1 to 7. The founding charter of a circle
+has `seq` 1 and the founder as its only member, so the founder's single approval
+admits the second member, and the first two members together admit the third.
 
 A node may also hold charters **older** than its anchor, as history. It accepts one only
 if the oldest charter it already holds names it in `previous` and has the next `seq`
@@ -2100,6 +2143,14 @@ order:
 A node starts in *follow* after its owner accepts a charter with `rules.binding = true`
 and in *ask* otherwise; the owner may choose *ask* at any time, and *follow* again with
 a confirmation. `rules.binding` has no other effect, and none on counting.
+
+Before these steps the reference implementation holds a rule back when installing it
+would replace something the vote did not put there: a skill of the same name with
+another text that the owner installed for themselves, or the client's own skill,
+whose name (`peerharness-notes`) no rule is installed under. A held rule is in force
+like any other; only this machine does not have it, and nothing is sent because of
+it. A proposal is not refused at intake for its `skill_name`, so that every node
+stores and counts the same.
 
 Opting out is local, takes effect at once and needs nobody's permission. Nothing is sent
 because of it. The owner may separately choose to put it on the circle's record with a
@@ -2170,7 +2221,30 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
 * **Revocation is unilateral.** The root key holder can revoke any device without a vote
   (section 12.6). A revocation can only deny: the device is no longer answered and its
   approvals stop counting, the electorate keeps its size, so it can keep something from
-  passing and can never pass anything.
+  passing and adds no approval to anything.
+* **A revocation reaches back.** The reference implementation counts the proposals of
+  the current charter again whenever it settles a circle, and rule 7 of section 14.2
+  ignores a revoked device's ballots whenever they were cast. A proposal that had
+  passed only with such a ballot is open again on every node that learns of the
+  revocation: an adopted rule leaves the rule set, and a repeal lapses, which puts its
+  target back in force. Proposals a charter lists in `carried` are not counted again
+  (section 14.4). The root key holder can therefore undo, alone, a result that passed
+  by a margin of one. Whether a revocation should reach back is an open decision
+  (`docs/decisions.md`, ADR-044); a second implementation should not rely on either
+  answer yet.
+* **A revocation can keep a node from following the charter chain.** A decision event
+  whose author is revoked locally is rejected, not deferred (section 12.4), and a
+  RESULT that lists a revoked device's ballot does not verify (section 14.3). A node
+  that learns of a revocation before it has accepted a charter justified by such a
+  RESULT cannot accept that charter or any later one. In the reference implementation
+  this was reproduced when importing a file or a shared directory, whose records are
+  not in the order they were made. It is a defect. No fix exists; what it should be
+  depends on the decision in ADR-044.
+* **An amendment replaces the rule set.** Nothing in section 14.5 requires `carried`
+  to equal the rules in force. An amendment proposed before a rule passed, or before
+  a repeal passed, undoes that vote when it passes, and a `carried` entry needs no
+  RESULT of its own. Showing the difference to the voter is left to clients (the
+  SHOULD in section 14.5).
 * **Questions follow the current roll at arrival.** A QUESTION or ANSWER is judged
   against the charter the receiving node holds when it arrives (section 12.4), so nodes
   that hold different charters at that moment can differ on whether they keep it.
@@ -2198,17 +2272,18 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   is therefore not understood by any node that predates it. Between released versions
   such a change needs a new schema version (and, for the wire, a new protocol id and
   `hello` version), and the golden vectors are regenerated.
-* `0.1` is a draft that has not been released, and three additions were made to it in
-  place, without a new version: the `STANCE` event type (section 8.9), the optional
-  `after` member of `fetch_events` (section 11.7) and the optional `circles` member of
-  `authenticated` (section 11.5). Every object that existed before is byte for byte what
-  it was: the golden vectors gained one entry and none changed, and a `fetch_events`
-  without a cursor and an `authenticated` without circles are encoded as before. A node
-  built before these additions rejects a STANCE as an unknown event type, without
+* `0.1` is a draft. Three additions were made to it in place, without a new version,
+  before the first release of the binary (v0.1.0), which already has all three: the
+  `STANCE` event type (section 8.9), the optional `after` member of `fetch_events`
+  (section 11.7) and the optional `circles` member of `authenticated` (section 11.5).
+  Every object that existed before is byte for byte what it was: the golden vectors
+  gained one entry and none changed, and a `fetch_events` without a cursor and an
+  `authenticated` without circles are encoded as before. A node built before these
+  additions, which no release is, rejects a STANCE as an unknown event type, without
   effect on anything else it holds or on the other events of the same batch; answers a
   `fetch_events` that carries `after` with `bad_request`; and fails to read an
-  `authenticated` that carries `circles`. A session between such a node and a current one
-  therefore fails as soon as one of these members is sent.
+  `authenticated` that carries `circles`. A session between such a node and a current
+  one therefore fails as soon as one of these members is sent.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.
@@ -2450,7 +2525,16 @@ or different:
   `{"bundle": {"digest": "sha256:…", "skill_md": "…"}}`. The same objects can be kept
   one per file in a directory, named `event-<64 hex of the event id>.json` and
   `bundle-<64 hex of the bundle digest>.json`; a name is a convenience and is not
-  trusted. The receiver applies sections 7, 12.4 and 14 to every record as it does to a
+  trusted. A record is parsed as strictly as a frame (section 3.1): at most 1,048,576
+  bytes for the line or file, checked first; nesting at most 9; integers only; no
+  member twice at any level. It has exactly one member: `event`, an object, or
+  `bundle`, an object with exactly the strings `digest` and `skill_md`. A `null` or
+  any other member beside them makes it no record. A line that is not a record is
+  skipped and counted, and the other lines are still read. The receiver applies
+  sections 7, 12.4 and 14 to every record as it does to a
   pushed event (there is no pusher to check), and accepts a bundle only if a stored
   `adopt` proposal names its digest. A new member can join from such a file or
-  directory, as well as from a member's node (section 13.6).
+  directory, as well as from a member's node (section 13.6). When the source holds
+  charters of more than one circle that list the joining device, the reference client
+  looks only at the circle with the root fingerprint its owner expected, and stops
+  when the owner gave none: a charter's `seq` never chooses between circles.

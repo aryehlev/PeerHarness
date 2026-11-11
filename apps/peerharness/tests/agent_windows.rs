@@ -466,9 +466,13 @@ fn every_other_decision_still_needs_the_terminal() {
         // Proposing a repeal, and everything about the circle itself.
         &["rule", "repeal", SKILL, "--circle", "team", "--yes"],
         &["circle", "mode", "follow", "--circle", "team", "--yes"],
+        // Following a rule again (opting out stays immediate, and is no consent step).
+        &["rule", "opt-in", SKILL, "--circle", "team"],
+        &["rule", "opt-in", SKILL, "--circle", "team", "--yes"],
         // The integration and the node.
         &["watch", "claude", "--remove", "--yes"],
         &["events", "export", "--circle", "team"],
+        &["export", "--local"],
         &["reset", "--confirm"],
     ];
     for args in refused {

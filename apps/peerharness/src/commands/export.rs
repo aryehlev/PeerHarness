@@ -3,6 +3,10 @@
 //! The export contains local observations and candidates, which are private. It goes to
 //! stdout, or to a file created with mode 0600. Private keys are never part of it: the
 //! database holds keystore references only.
+//!
+//! The document holds the circles' signed records as well as the owner's own notes, so
+//! writing it out is the person's step, like `events export`: it is refused inside a
+//! coding agent's session, on standard output too (that output is the session's).
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -18,6 +22,7 @@ pub fn run(ctx: &Ctx, args: ExportArgs) -> Result<Report> {
             "pass --local: the only export is this node's own local data",
         ));
     }
+    crate::consent::human_only("writing this node's data out")?;
     let node = ctx.open_node()?;
     let data = node
         .store

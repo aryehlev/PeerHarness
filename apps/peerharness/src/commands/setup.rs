@@ -3,7 +3,8 @@
 //!
 //! It runs what three commands ran, in this order, and nothing they did not do:
 //!
-//! 1. `init`, when this home has no node yet;
+//! 1. `init`, when this home has no node yet: no device identity in its database,
+//!    which includes a home that an interrupted `init` left half made;
 //! 2. `watch claude --install`, with the confirmation windows where this machine can
 //!    show one and the owner did not pass `--no-dialogs`. Its preview and its
 //!    confirmation are the ones of that command;
@@ -12,6 +13,22 @@
 //!
 //! Inside a coding agent's session it is refused as a whole: step 2 is where the owner
 //! allows what their agent may start, and no session takes that step for them.
+//!
+//! It ends by saying what the owner can do now, and that depends on the windows.
+//! Without them (a machine that can show none, or `--no-dialogs`) the agent's tools
+//! other than `note` run nothing (ADR-038), so it does not suggest asking the agent for
+//! anything: it says what works there and where the terminal's commands are.
+//!
+//! One state is in between: the settings allow windows (they were turned on where one
+//! could be shown, and came along with the home) and this machine can show none.
+//! `setup` turns nothing off by itself, and a tool runs at the level the settings
+//! allow. The steps that would ask in a window are refused there, and the ones that
+//! need none still run: the status, the inbox, founding a circle, the exchange and the
+//! daemon. The closing lines say so, and name the command that turns them off.
+//!
+//! For a node that is already there, step 1 names the keystore its private key is in.
+//! A plaintext keystore (`insecure-dev`) gets a warning: an earlier `init` may have
+//! chosen it where its own warning reached nobody.
 //!
 //! Step 3 runs a program that edits Claude Code's configuration. Debug builds never
 //! look for it on `PATH`: they run only the program named by
@@ -23,6 +40,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::Result;
+use ph_identity::KeystoreBackend;
 use serde_json::{json, Value};
 
 use super::Ctx;
@@ -34,6 +52,14 @@ use crate::window::Window;
 /// The name the server is registered under.
 const SERVER_NAME: &str = "peerharness";
 
+/// Claude Code's own command that takes the server out again. `reset` names it too:
+/// the registration is in Claude Code's configuration, which PeerHarness never edits.
+pub const UNREGISTER: &str = "claude mcp remove peerharness --scope user";
+
+/// The terminal guide: every step as a command, the ones without a window included.
+pub const TERMINAL_GUIDE: &str =
+    concat!(env!("CARGO_PKG_REPOSITORY"), "/blob/main/docs/terminal.md");
+
 /// Environment variable naming the stand-in for Claude Code's `claude` command (debug
 /// builds only).
 #[cfg(debug_assertions)]
@@ -43,8 +69,10 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
     human_only("setting PeerHarness up")?;
     let mut t = Text::new();
 
-    // 1. The node.
-    let created = !ctx.home.is_initialized();
+    // 1. The node. Whether there is one is asked of the database, not only of the
+    // files: an `init` that was interrupted leaves a config file and a database without
+    // an identity, and that home has no node yet. `init` completes it.
+    let created = !(ctx.home.is_initialized() && super::init::has_identity(&ctx.home));
     let node = if created {
         let made = super::init::run(ctx, a.init)?;
         t.line("1. Your node: created.");
@@ -53,6 +81,17 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
         t.line("1. Your node: already there.");
         Value::Null
     };
+    // Which keystore holds the node's key: read from the node, which is not unlocked.
+    let backend = ctx.open_node()?.backend()?;
+    if !created {
+        t.line(format!("  {}", keystore_says(backend)));
+        if backend == KeystoreBackend::InsecureDev {
+            // `init` warned whoever ran it, which may not have been the owner. On
+            // standard error as well, where `--json` does not hide it.
+            ctx.out.warn(PLAINTEXT_WARNING);
+            t.line(format!("  WARNING: {PLAINTEXT_WARNING}"));
+        }
+    }
 
     // 2. The agent: the hooks, the skill, and what it may ask in a window.
     let dialogs = !a.no_dialogs && Window::find().is_some();
@@ -91,20 +130,103 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
     let tools = register(ctx, a.yes)?;
     t.line(format!("3. The tools: {}", tools.says()));
 
+    // What the owner can do now. With the windows off, every tool but `note` answers
+    // that the step is the owner's. What a tool may run is read from the settings
+    // alone, so where they are on and no window can be shown, the tools that need no
+    // window still run.
+    let agent_can_ask = agent.json["windows"] == true && Window::find().is_some();
+    let allowed = crate::config::Config::load(&ctx.home)?.agent.asked();
     t.line("");
-    t.line("Start a new Claude Code session and ask it, for example:");
-    t.line("  \"What is my PeerHarness device key?\"");
-    t.line("  \"Create a PeerHarness team called acme.\"");
+    for line in next_steps(agent_can_ask, allowed) {
+        t.line(line);
+    }
     Ok(Report::new(
         json!({
             "node_created": created,
             "node": node,
+            "keystore": backend.as_str(),
             "agent": agent.json,
+            "agent_can_ask": agent_can_ask,
             "tools": tools.code(),
             "tools_command": command_line(&server_command(ctx)?),
         }),
         t.finish(),
     ))
+}
+
+/// What step 1 says about the keystore of a node that was already there.
+const fn keystore_says(backend: KeystoreBackend) -> &'static str {
+    match backend {
+        KeystoreBackend::Os => "Its private key is in the operating system's keychain.",
+        KeystoreBackend::File => {
+            "Its private key is in an encrypted file, protected by your passphrase."
+        }
+        KeystoreBackend::InsecureDev => {
+            "Its private key is in a plaintext file (the insecure-dev keystore)."
+        }
+    }
+}
+
+/// What the owner of a node with a plaintext keystore is told.
+const PLAINTEXT_WARNING: &str = "this node's private keys are stored in PLAINTEXT, in its home \
+    directory (the insecure-dev keystore, meant for development). Any program that runs as \
+    you can read them and sign your ballots. No command moves a key to another keystore: a \
+    node with a protected key is a new node, with a new device key (`peerharness reset` \
+    says what it deletes, then `peerharness setup`).";
+
+/// The closing lines: what to do next. It depends on whether the agent can put a
+/// decision in front of the owner (`agent_can_ask`), and on what the settings allow
+/// the agent's tools (`allowed`), which is what they run at whether or not this
+/// machine can show a window.
+fn next_steps(agent_can_ask: bool, allowed: crate::config::Asked) -> Vec<String> {
+    use crate::config::Asked;
+
+    if agent_can_ask {
+        return vec![
+            "Start a new Claude Code session and ask it, for example:".to_owned(),
+            "  \"What is my PeerHarness device key?\"".to_owned(),
+            "  \"Create a PeerHarness team called acme.\"".to_owned(),
+        ];
+    }
+    let mut lines = vec!["Without confirmation windows, this is what works from here:".to_owned()];
+    if allowed == Asked::Nothing {
+        lines.push(
+            "  Your agent notes a rule when you correct it or state one. That is all it does: \
+             asked for anything else, it answers that the step is yours."
+                .to_owned(),
+        );
+    } else {
+        // Windows are on in the settings and this machine can show none.
+        lines.push(
+            "  Your agent notes a rule when you correct it or state one. A step that would \
+             ask you in a window is refused on this machine."
+                .to_owned(),
+        );
+        let mut still = "this node's status and what waits for you".to_owned();
+        if allowed >= Asked::RulesAndCircle {
+            still.push_str(
+                ", founding a circle, exchanging with the members of your circles over the \
+                 public network, and keeping this node reachable there",
+            );
+        }
+        lines.push(format!(
+            "  This node's settings still allow your agent the steps that need no window, \
+             because windows were turned on for it (on a machine that could show one): \
+             {still}. To turn those off as well, so that your agent only notes rules: \
+             `peerharness setup --no-dialogs`."
+        ));
+    }
+    lines.extend([
+        "  At the end of a turn, at most once a day, Claude Code tells you how many noted \
+         rules and proposals wait for you."
+            .to_owned(),
+        "  Every decision is typed in your own terminal: `peerharness inbox` shows what \
+         waits, `peerharness keep <id>` keeps a rule for your own agent, and proposing, \
+         voting, inviting and joining are commands as well."
+            .to_owned(),
+        format!("  The commands, step by step: {TERMINAL_GUIDE}"),
+    ]);
+    lines
 }
 
 /// How registering the tools with Claude Code came out.
@@ -215,7 +337,7 @@ fn register(ctx: &Ctx, yes: bool) -> Result<Tools> {
          command for that:\n  {line}\n\
          Claude Code then starts that program in each session. The tools start steps for \
          you. They never decide: that stays your click in a window, or your own terminal.\n\
-         Take it out again with `claude mcp remove {SERVER_NAME} --scope user`."
+         Take it out again with `{UNREGISTER}`."
     );
     confirm(
         &ctx.out,
@@ -324,6 +446,64 @@ mod tests {
         // A relative entry, the current directory included, is never searched.
         let relative = std::env::join_paths([PathBuf::from("."), PathBuf::from("")]).unwrap();
         assert_eq!(on_path("claude", &relative), None);
+    }
+
+    #[test]
+    fn the_closing_lines_follow_what_the_agent_can_do() {
+        use crate::config::Asked;
+
+        // With windows: something to ask the agent.
+        let with = next_steps(true, Asked::All).join("\n");
+        assert!(with.contains("Start a new Claude Code session"));
+        assert!(!with.contains("terminal.md"));
+        // Without: what works, where the commands are, and no prompt for the agent.
+        let without = next_steps(false, Asked::Nothing).join("\n");
+        assert!(without.contains("Your agent notes a rule"));
+        assert!(without.contains("That is all it does"));
+        assert!(without.contains("typed in your own terminal"));
+        assert!(without.ends_with("/blob/main/docs/terminal.md"));
+        assert!(TERMINAL_GUIDE.starts_with("https://"));
+        assert!(!without.contains("ask it") && !without.contains("PeerHarness team called"));
+        // Windows on in the settings, on a machine that can show none: the agent's tools
+        // run at the level the settings allow, so "that is all it does" would be false.
+        // What still runs is named, per level, with the command that turns it off.
+        for allowed in [Asked::Rules, Asked::RulesAndCircle, Asked::All] {
+            let between = next_steps(false, allowed).join("\n");
+            assert!(!between.contains("That is all it does"), "{between}");
+            assert!(between.contains("is refused on this machine"), "{between}");
+            assert!(
+                between.contains("this node's status and what waits for you"),
+                "{between}"
+            );
+            assert_eq!(
+                between.contains("founding a circle")
+                    && between.contains("over the public network")
+                    && between.contains("keeping this node reachable"),
+                allowed >= Asked::RulesAndCircle,
+                "{allowed:?}: {between}"
+            );
+            assert!(
+                between.contains("`peerharness setup --no-dialogs`"),
+                "{between}"
+            );
+            assert!(between.contains("typed in your own terminal"));
+            assert!(!between.contains("ask it"), "{between}");
+        }
+        // The command `reset` names is the one that removes what `add` registered.
+        assert_eq!(
+            UNREGISTER,
+            format!("claude mcp remove {SERVER_NAME} --scope user")
+        );
+        // Every keystore is named, and only the plaintext one as plaintext.
+        for backend in KeystoreBackend::ALL {
+            let says = keystore_says(backend);
+            assert_eq!(
+                says.contains("plaintext"),
+                backend == KeystoreBackend::InsecureDev,
+                "{says}"
+            );
+        }
+        assert!(PLAINTEXT_WARNING.contains("PLAINTEXT"));
     }
 
     #[test]

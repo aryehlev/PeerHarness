@@ -143,8 +143,10 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             preview.line(
                 "Each one opens a window on your screen that shows exactly what would be shared, \
                  signed, installed or joined. Nothing happens unless you click Proceed in that \
-                 window. Your agent cannot answer it and --yes does not skip it. Every other \
-                 decision still needs your own terminal.",
+                 window. Inside its session your agent cannot answer the window, and --yes does \
+                 not skip it there. That guards against an agent that is trying to help, not \
+                 against a process that hides that it is one. Every other decision still needs \
+                 your own terminal.",
             );
             preview.line(
                 "When you ask it to, your agent may also found a circle, exchange with the \
@@ -184,12 +186,16 @@ pub fn claude(ctx: &Ctx, a: WatchClaudeArgs) -> Result<Report> {
             ));
             preview.line(if asked_after != Asked::Nothing {
                 "It asks your agent to write down a rule when you correct it, and tells it which \
-                 steps it may start when you ask. The agent cannot approve, share, install or \
-                 join anything: that is your click in the window. \
+                 steps it may start when you ask. Inside its session the agent cannot approve, \
+                 share, install or join anything: that is your click in the window. \
                  Skip it with --no-agent-notes. Its exact text:"
             } else {
-                "It asks your agent to write down a rule when you correct it. The agent can only \
-                 add a note to your inbox; it cannot approve, share or install anything. \
+                // What the skill asks of the agent, and then what the program enforces.
+                // The first is a request: a session can still found a circle or opt out
+                // of a rule, so nothing here says that a note is all it can do.
+                "It asks your agent to write down a rule when you correct it, and to run \
+                 nothing else. Inside its session the agent cannot approve, share or install \
+                 anything. \
                  Skip it with --no-agent-notes. Its exact text:"
             });
             preview.line("");

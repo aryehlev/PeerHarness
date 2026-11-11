@@ -2,7 +2,8 @@
 //! protocol on the server's standard input and output.
 //!
 //! What these tests show: the handshake and the tool list; that a tool does what the
-//! command does; and that the server is no way around consent. The server here runs
+//! command does; that where no window can be shown a refused tool says where the step
+//! is taken instead of naming `setup`; and that the server is no way around consent. The server here runs
 //! **without** the variables that mark an agent's session, as it would when a client
 //! other than Claude Code starts it, and every consent step is still refused or asked
 //! in a window, never answered.
@@ -133,8 +134,23 @@ impl Node {
     }
 
     fn serve(&self) -> Client {
+        self.serve_on(true)
+    }
+
+    /// The server on a machine that can show no window: neither it nor what it runs is
+    /// given the stand-in. Only for a node where no window is allowed either, so that
+    /// nothing here can open a real one.
+    #[cfg(not(target_os = "macos"))]
+    fn serve_without_a_window(&self) -> Client {
+        self.serve_on(false)
+    }
+
+    fn serve_on(&self, window: bool) -> Client {
         let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
         self.env(&mut cmd);
+        if !window {
+            cmd.env_remove("PEERHARNESS_TEST_WINDOW_BIN");
+        }
         let mut child = cmd
             .arg("mcp")
             .stdin(Stdio::piped())
@@ -441,6 +457,230 @@ fn a_tool_does_what_the_command_does_and_consent_stays_with_the_person() {
     );
 
     assert_eq!(client.close(), 0);
+}
+
+/// On a machine that can show no confirmation window (Linux, for now) every tool but
+/// `note` is refused, as ADR-038 has it. The refusal used to name `peerharness setup`
+/// as the way to allow the step, and running that changed nothing: the answer now says
+/// that the step is typed in a terminal, and where the commands are.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn where_no_window_can_be_shown_a_refused_tool_does_not_point_back_to_setup() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path());
+    node.init();
+    let mut client = node.serve_without_a_window();
+    client.handshake();
+
+    for (tool, arguments) in [
+        ("status", json!({})),
+        ("inbox", json!({})),
+        ("create_circle", json!({ "name": "team" })),
+        ("sync", json!({})),
+        (
+            "keep_rule",
+            json!({ "candidate_id": "cand_0123456789abcdef" }),
+        ),
+    ] {
+        let said = client.fails(tool, arguments);
+        assert!(
+            said.contains("cannot show a confirmation window"),
+            "{tool}: {said}"
+        );
+        // Not the loop: the owner ran `setup` already, and it has nothing to turn on.
+        assert!(!said.contains("setup"), "{tool}: {said}");
+        assert!(!said.contains("has not allowed"), "{tool}: {said}");
+        // Where the step is taken instead, and that the agent's part ends here.
+        assert!(said.contains("their own terminal"), "{tool}: {said}");
+        assert!(said.contains("docs/terminal.md"), "{tool}: {said}");
+        assert!(said.ends_with("Tell them so and stop."), "{tool}: {said}");
+    }
+    // The refusal is the same refusal: nothing ran and nothing was asked.
+    assert_eq!(node.run(&["status"])["circles"], json!([]));
+    assert!(node.shown().is_empty());
+
+    // What the answer says still works does.
+    let said = client.ok("note", json!({ "rule": RULE }));
+    assert!(said.contains("Noted for the user's review"), "{said}");
+
+    // Where a window can be shown and the owner has not allowed it, `setup` is still
+    // what allows it, and the answer still says so.
+    let mut with_window = node.serve();
+    with_window.handshake();
+    let said = with_window.fails("status", json!({}));
+    assert!(said.contains("has not allowed this"), "{said}");
+    assert!(said.contains("`peerharness setup`"), "{said}");
+
+    assert_eq!(client.close(), 0);
+}
+
+/// How much a hub has seen of anyone: peers that connected, identified themselves or
+/// asked it for a peer. Zero means that nothing reached it.
+fn seen_by(hub: &hub::Hub) -> usize {
+    let state = hub.state();
+    state.connected.len() + state.identified.len() + state.asked.len()
+}
+
+/// A child process that is stopped and reaped when the test is done with it, also when
+/// the test fails first.
+struct Reaped(Child);
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `circle join <peer id> --internet` gets the charter it then asks about from a
+/// member's node: it joins the public network, looks the peer id up and dials it.
+/// Inside a session it used to do all of that before the confirmation refused it, also
+/// where the refusal was certain. So an agent could make the node look up and dial a
+/// peer id of its choosing, a key on no roll, for a join nobody would be asked about.
+/// Now the refusal comes first, and nothing reaches the network.
+#[test]
+fn a_join_nobody_can_be_asked_about_goes_nowhere_near_the_network() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let hub = runtime.block_on(hub::Hub::start(201, hub::HubOptions::default()));
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path()).on(&hub);
+    node.init();
+    // A peer id to look for: a throwaway key that is on no roll here, and not the
+    // hub's own. A node that goes to the network has to ask the hub where that peer is,
+    // and the hub keeps every such question (`HubState::asked`). Looking for the hub
+    // itself would leave nothing lasting: the node knows that address already, so all
+    // the hub would see is a connection that comes and goes.
+    let sought = ph_network::peer_id_from_device_key(&common::device_key(77));
+    assert_ne!(sought, hub.peer_id);
+    let peer = sought.to_string();
+    let asked_for_it = |hub: &hub::Hub| -> bool {
+        hub.state()
+            .asked
+            .iter()
+            .any(|(_, key)| *key == sought.to_bytes())
+    };
+    let join = |session: bool| {
+        let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
+        node.env(&mut cmd);
+        cmd.args([
+            "circle",
+            "join",
+            &peer,
+            "--internet",
+            "--expect-fingerprint",
+            "0000-0000-0000-0000-0000",
+            "--yes",
+        ])
+        .stdin(Stdio::null());
+        if session {
+            cmd.env("CLAUDECODE", "1");
+        }
+        cmd
+    };
+
+    // --- Inside a session, with the circle's windows not allowed: refused with the
+    // words of the consent step, before the disclosure line of the internet mode.
+    let out = join(true).output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(
+        printed.contains("joining the circle is your decision"),
+        "{printed}"
+    );
+    assert!(printed.contains("your own terminal"), "{printed}");
+    assert!(!printed.contains("Internet mode:"), "{printed}");
+    assert_eq!(seen_by(&hub), 0, "the network saw the node: {printed}");
+    assert!(node.shown().is_empty());
+
+    // --- The control: the same command in the person's own terminal does go to the
+    // network, so the hub would have seen the session's. It asks the hub for the peer,
+    // which nobody knows; the command would go on looking for some seconds and then
+    // say so, and is stopped here once the hub has the question. Should it end before
+    // the hub was asked, the test fails at once with what the command printed.
+    let said = tmp.path().join("the-persons-join.out");
+    let to_file = || {
+        Stdio::from(
+            std::fs::File::options()
+                .create(true)
+                .append(true)
+                .open(&said)
+                .unwrap(),
+        )
+    };
+    let mut person = Reaped(
+        join(false)
+            .stdout(to_file())
+            .stderr(to_file())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !asked_for_it(&hub) {
+        if let Some(status) = person.0.try_wait().unwrap() {
+            // It has ended. The question may have arrived in the same moment.
+            assert!(
+                asked_for_it(&hub),
+                "the person's join ended ({status}) before the hub was asked for the peer:\n{}",
+                std::fs::read_to_string(&said).unwrap_or_default()
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the person's join never asked the network for the peer:\n{}",
+            std::fs::read_to_string(&said).unwrap_or_default()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    drop(person);
+    assert_eq!(node.run(&["status"])["circles"], json!([]));
+    runtime.block_on(hub.stop());
+}
+
+/// The same where the owner allowed the window and this machine can show none (a home
+/// that came from a Mac): the `join_circle` tool runs, because a tool runs at the level
+/// the settings allow, and the command it runs refuses before it goes anywhere.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn the_join_tool_goes_nowhere_where_no_window_can_be_shown() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let hub = runtime.block_on(hub::Hub::start(202, hub::HubOptions::default()));
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path()).on(&hub);
+    node.init();
+    // Allowed where a window could be shown (the stand-in), then used where none can.
+    let on = node.run(&["watch", "claude", "--install", "--dialogs", "--yes"]);
+    assert_eq!(on["circle_windows"], true);
+    let mut client = node.serve_without_a_window();
+    client.handshake();
+
+    let said = client.fails(
+        "join_circle",
+        json!({ "member": hub.peer_id.to_string(), "fingerprint": "0000-0000-0000-0000-0000" }),
+    );
+    assert!(
+        said.contains("this machine has no confirmation window that PeerHarness can show"),
+        "{said}"
+    );
+    assert!(said.contains("your own terminal"), "{said}");
+    assert!(!said.contains("Internet mode:"), "{said}");
+    assert!(!said.contains("cannot reach"), "{said}");
+    assert_eq!(seen_by(&hub), 0, "the network saw the node: {said}");
+    assert!(node.shown().is_empty());
+    assert_eq!(node.run(&["status"])["circles"], json!([]));
+
+    assert_eq!(client.close(), 0);
+    runtime.block_on(hub.stop());
 }
 
 #[test]

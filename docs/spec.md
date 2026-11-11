@@ -1,6 +1,24 @@
 # Original implementation specification (v2)
 
-Verbatim copy of the brief this repository implements. `docs/architecture.md` resolves its open choices.
+This is the original brief, kept for history. Below this note it is a verbatim copy of
+the text the first implementation was written from, by an AI coding agent, on 9 and 10
+November 2026. It describes a design, not the product. What the product does today is
+in the [README](../README.md). The contract the code follows is
+[`architecture.md`](architecture.md), which also resolves the brief's open choices, and
+[`decisions.md`](decisions.md) records each decision.
+
+Where the product departs from the brief:
+
+| The brief | The product | Recorded in |
+|---|---|---|
+| A rule is released with approvals from two distinct devices and no unresolved rejection (section 8) | A rule passes with a majority of the members on a signed roll, counted per person. Nobody has a veto | ADR-012, ADR-013 |
+| Peers are authorized by a membership credential (hard requirement 4) | The transport answers the roll of the current charter, which changes only by vote. Questions and answers are authorized by the roll as well | ADR-026, ADR-027 |
+| "Public DHT" is a non-goal, and cross-NAT discovery and relays are future milestones (section 15) | An internet mode, off unless asked for, finds members on the public libp2p DHT and reaches them through relays and hole punching, as a client only | ADR-032 |
+| "MCP-compatible agents" are a future milestone (section 15) | `peerharness mcp` gives an agent the steps as tools | ADR-038 |
+
+The ADRs record smaller differences as well, such as stricter input rules (ADR-011),
+and additions the brief does not have, such as the confirmation windows (ADR-033,
+ADR-037, ADR-040).
 
 ```text
 PeerHarness — Coding-Agent Implementation Specification (v2)

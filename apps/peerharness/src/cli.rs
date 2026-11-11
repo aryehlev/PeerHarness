@@ -1,7 +1,9 @@
 //! clap definitions: the complete command contract (spec section 4 plus ADR-008).
 //!
-//! Commands that belong to later build stages are defined here with their final
-//! arguments and currently return a "not yet implemented in this build" error.
+//! The first lines of `--help` are the project's one-line description, the same
+//! sentence the README opens with. `observe` and `hook` are left out of the list of
+//! commands: the first injects synthetic observations for tests, the second is what
+//! Claude Code runs. Both still parse and run.
 
 use std::path::PathBuf;
 
@@ -11,10 +13,12 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "peerharness",
     version,
-    about = "Local-first, peer-to-peer learning harness for AI coding agents",
-    long_about = "Local-first, peer-to-peer learning harness for AI coding agents.\n\n\
-                  Your AI learns from you. Your peers' AI learns from what you approve.\n\
-                  Nothing leaves this device without an explicit, previewed confirmation."
+    about = "Your team votes on how its AI coding agents behave",
+    long_about = "Your team votes on how its AI coding agents behave.\n\n\
+                  You correct your agent, the correction becomes a small rule, your team votes \
+                  on it, and every member's agent follows what a majority approved. There is \
+                  no server, and nothing leaves this device before you have seen it and \
+                  confirmed it."
 )]
 pub struct Cli {
     /// Node home directory (default ~/.peerharness).
@@ -56,12 +60,15 @@ pub enum Command {
     Daemon(DaemonArgs),
     /// Check who answers at an address and remember it.
     Connect(ConnectArgs),
-    /// Inject synthetic observations (demo and tests).
+    /// Inject synthetic observations (tests). Not in the list `--help` prints.
+    #[command(hide = true)]
     Observe {
         #[command(subcommand)]
         command: ObserveCommand,
     },
-    /// Claude Code hook entry point (always exits 0).
+    /// Claude Code hook entry point (always exits 0). Not in the list `--help` prints:
+    /// `watch claude --install` writes the command, and Claude Code runs it.
+    #[command(hide = true)]
     Hook(HookArgs),
     /// Serve the steps an agent may start as tools of an MCP server, on standard input
     /// and output. Register it with your agent, for Claude Code:
@@ -149,7 +156,7 @@ pub enum KdfProfileArg {
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    /// Where to keep private keys (default: os on macOS/Windows, file elsewhere).
+    /// Where to keep private keys (default: os on macOS, file on Linux).
     #[arg(long, value_enum)]
     pub keystore: Option<KeystoreArg>,
     /// Required with `--keystore insecure-dev`: keys are stored in PLAINTEXT.
@@ -456,7 +463,8 @@ pub enum CircleCommand {
 pub struct CircleLeaveArgs {
     #[arg(long, value_name = "NAME")]
     pub circle: String,
-    /// Follow the circle again on this machine (your request to leave stays on record).
+    /// Follow the circle again on this machine (a request to leave that is on record
+    /// stays there).
     #[arg(long)]
     pub undo: bool,
     /// Skip the confirmation prompt (after reviewing the preview).
@@ -560,6 +568,7 @@ pub struct CircleRemoveArgs {
 pub struct CircleInviteArgs {
     /// The invitee's `ed25519:` device key (they see it with `peerharness status`).
     pub invitee: String,
+    /// The circle to admit them to (`peerharness status` lists yours).
     #[arg(long, value_name = "NAME")]
     pub circle: String,
     /// The invitee's member handle on the roll (a-z, 0-9, '.', '_', '-').
@@ -571,23 +580,12 @@ pub struct CircleInviteArgs {
     /// Granted scope (repeatable; default `*`).
     #[arg(long = "scope", value_name = "SCOPE")]
     pub scopes: Vec<String>,
-    #[arg(long, value_enum, default_value = "member")]
-    pub role: RoleArg,
-    /// Address the invitee can dial (repeatable; default: the running daemon's).
-    #[arg(long = "addr", value_name = "MULTIADDR")]
-    pub addrs: Vec<String>,
-    /// Invite file to write (default ./peerharness-invite-<fingerprint>.json).
+    /// Where to write the circle's records for the invitee, once the admission has
+    /// passed (default ./peerharness-<circle>-events.jsonl, in the current directory).
+    /// The file holds the roll and the proposals: give it only to the invitee. Inside a
+    /// coding agent's session no file is written, and this option is refused.
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
-    /// Invite validity in hours (1-168, default 24).
-    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=168))]
-    pub ttl_hours: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum RoleArg {
-    Member,
-    Owner,
 }
 
 #[derive(Debug, Args)]
@@ -608,7 +606,9 @@ pub struct CircleJoinArgs {
     /// The circle root fingerprint the owner gave you out of band.
     #[arg(long, value_name = "FP")]
     pub expect_fingerprint: Option<String>,
-    /// Local name for the circle (default: the name in the invite).
+    /// The name this node gives the circle: what you pass to `--circle` afterwards
+    /// (default: `circle-` and the start of the root fingerprint; `peerharness status`
+    /// shows it). The founder's name for the circle does not travel with it.
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 }
@@ -681,46 +681,74 @@ pub enum QuestionCommand {
 pub enum ProposalCommand {
     /// Propose an approved candidate's skill to a circle.
     Create {
+        /// Candidate id (cand_…, or a unique prefix of at least 8 hex characters).
         candidate: String,
+        /// The circle to propose it to (`peerharness status` lists yours).
         #[arg(long, value_name = "NAME")]
         circle: String,
+        /// The scope the rule is for (default `*`: every member).
         #[arg(long, value_name = "SCOPE")]
         scope: Option<String>,
+        /// Skip the confirmation prompt (after reviewing the preview).
         #[arg(long)]
         yes: bool,
     },
     /// List proposals.
     List,
     /// Show a proposal.
-    Show { id: String },
+    Show {
+        /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters).
+        id: String,
+    },
     /// Evaluate a proposal locally.
-    Status { id: String },
+    Status {
+        /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters).
+        id: String,
+    },
     /// Cast a ballot. An approval cannot be withdrawn; reject and revise are recorded dissent.
     Vote {
+        /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters;
+        /// `inbox` and `proposal list` show them).
         id: String,
+        /// Your decision.
         #[arg(value_enum)]
         decision: DecisionArg,
-        #[arg(long)]
+        /// A reason, published with the ballot: one line of at most 200 characters.
+        #[arg(long, value_name = "TEXT")]
         rationale: Option<String>,
+        /// Skip the confirmation prompt (after reviewing the preview).
         #[arg(long)]
         yes: bool,
     },
     /// Publish the result certificate of a proposal that has passed.
     Release {
+        /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters).
         id: String,
+        /// Accepted and has no effect: this command asks nothing. A result states a
+        /// count that every node verifies for itself.
         #[arg(long)]
         yes: bool,
     },
     /// Confirm installing a passed rule that is waiting for your confirmation.
     Adopt {
+        /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters;
+        /// `rule list` shows it for each rule).
         id: String,
+        /// Skip the confirmation prompt (after reviewing the preview).
         #[arg(long)]
         yes: bool,
+        /// Accepted and has no effect today. A rule with a high-risk scanner finding is
+        /// shown with its findings and confirmed like any other rule, in your terminal
+        /// and never in a window, with or without this flag.
         #[arg(long)]
         accept_risk: bool,
     },
     /// Opt out of the rule a proposal adopts (same as `rule opt-out`).
-    Refuse { id: String },
+    Refuse {
+        /// Proposal id (sha256:…, or a unique prefix of at least 8 hex characters;
+        /// `rule list` shows it for each rule).
+        id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -794,8 +822,8 @@ pub enum RuleCommand {
         /// Also tell the circle that you follow the rule again.
         #[arg(long)]
         announce: bool,
-        /// With --announce: skip the confirmation prompt (after reviewing the preview).
-        #[arg(long, requires = "announce")]
+        /// Skip the confirmation prompts (after reviewing the previews).
+        #[arg(long)]
         yes: bool,
     },
     /// Propose repealing a rule in force. The members who adopted it vote on it.

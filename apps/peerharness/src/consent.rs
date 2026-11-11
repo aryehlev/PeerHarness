@@ -2,6 +2,8 @@
 //!
 //! `--yes` is the human's explicit scripting flag. Without a terminal and without
 //! `--yes` a command refuses (exit 3). Consent is never inferred from anything else.
+//! That refusal names the flag as the person's own, for a script they wrote: an agent
+//! that no variable marks reads the message too, and is told to stop and ask.
 //!
 //! Consent steps are never answered from inside a coding agent's session
 //! ([`in_agent_session`]). An agent may write a rule down for its user to review
@@ -144,6 +146,46 @@ fn confirm_or_window_for(
     ask_in_window(preview, what, window.as_ref().map(|w| w as &dyn Ask))
 }
 
+/// Refuses a step that goes through [`confirm_circle_or_window`] before it does
+/// anything else, when the refusal is certain: this is an agent's session and the step
+/// cannot be put in a window, because the owner did not allow that or because this
+/// machine can show none. The refusal is the one the consent step itself would give.
+///
+/// For a step with work before its preview that reaches outside the machine: `circle
+/// join <peer id>` looks a peer up and dials it to get the charter it then shows. A
+/// session must not make a node do that for a join nobody can be asked about.
+/// In the person's own terminal, and in a session that can show the window, this is
+/// `Ok` and the step goes on to its preview as before.
+pub fn circle_step_can_be_asked(what: &str, config: &Config) -> Result<()> {
+    if !in_agent_session() {
+        return Ok(());
+    }
+    cannot_be_asked(
+        what,
+        config.agent.asked() >= Asked::RulesAndCircle,
+        Window::find().is_some(),
+    )
+    .map_or(Ok(()), Err)
+}
+
+/// The refusal of a step inside a session that cannot be put in a window, if it cannot:
+/// `allowed` is whether the owner allowed windows for it, `has_window` whether this
+/// machine can show one.
+fn cannot_be_asked(what: &str, allowed: bool, has_window: bool) -> Option<anyhow::Error> {
+    if !allowed {
+        return Some(windows_off(what, has_window));
+    }
+    (!has_window).then(|| no_window(what))
+}
+
+/// The refusal where the owner allowed the window and this machine can show none.
+fn no_window(what: &str) -> anyhow::Error {
+    refused(format!(
+        "{what} is your decision, and this machine has no confirmation window that \
+         PeerHarness can show. Run it yourself in your own terminal."
+    ))
+}
+
 fn windows_off(what: &str, has_window: bool) -> anyhow::Error {
     if !has_window {
         return agent_refusal(what);
@@ -160,10 +202,7 @@ fn windows_off(what: &str, has_window: bool) -> anyhow::Error {
 fn ask_in_window(preview: &str, what: &str, window: Option<&dyn Ask>) -> Result<()> {
     let terminal = "Run it yourself in your own terminal.";
     let Some(window) = window else {
-        return Err(refused(format!(
-            "{what} is your decision, and this machine has no confirmation window that \
-             PeerHarness can show. {terminal}"
-        )));
+        return Err(no_window(what));
     };
     let preview = preview.trim_end();
     if preview.trim().is_empty() {
@@ -195,6 +234,19 @@ fn ask_in_window(preview: &str, what: &str, window: Option<&dyn Ask>) -> Result<
     }
 }
 
+/// The refusal when a consent step has no terminal to ask on and no `--yes`.
+///
+/// Whoever reads it may be a coding agent whose shell sets neither variable of
+/// [`AGENT_SESSION_ENV`], so it is not worded as an instruction to pass the flag: it
+/// says whose decision this is, and tells an agent to stop.
+fn no_terminal(what: &str) -> anyhow::Error {
+    refused(format!(
+        "{what} needs your confirmation, and no terminal is attached. It is the owner's \
+         decision: a person runs this command in their own terminal, or passes --yes in a \
+         script they wrote themselves. A coding agent stops here and asks the person."
+    ))
+}
+
 fn confirm_in(out: &Output, preview: &str, yes: bool, what: &str, agent: bool) -> Result<()> {
     if agent {
         return Err(agent_refusal(what));
@@ -206,10 +258,7 @@ fn confirm_in(out: &Output, preview: &str, yes: bool, what: &str, agent: bool) -
         return Ok(());
     }
     if !interactive() {
-        return Err(refused(format!(
-            "{what} needs your confirmation, but no terminal is attached: review the preview \
-             above and re-run with --yes"
-        )));
+        return Err(no_terminal(what));
     }
     let answer = prompt_line("Proceed? [y/N] ")?;
     if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
@@ -259,6 +308,24 @@ mod tests {
         assert!(require_accept_risk(true, true).is_ok());
         let e = require_accept_risk(true, false).unwrap_err();
         assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+    }
+
+    #[test]
+    fn without_a_terminal_the_refusal_tells_nobody_to_pass_yes() {
+        let e = no_terminal("the ballot");
+        assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+        let said = e.to_string();
+        assert!(
+            said.starts_with("the ballot needs your confirmation, and no terminal is attached.")
+        );
+        // Whose decision it is, and what an agent that reads this does.
+        assert!(said.contains("the owner's decision"));
+        assert!(said.contains("a person runs this command in their own terminal"));
+        assert!(said.ends_with("A coding agent stops here and asks the person."));
+        // The flag is named as the person's, in a script of theirs: never as the next
+        // thing to try.
+        assert!(said.contains("passes --yes in a script they wrote themselves"));
+        assert!(!said.contains("re-run") && !said.contains("review the preview"));
     }
 
     #[test]
@@ -334,6 +401,38 @@ mod tests {
                 .contains("your own terminal")
         );
         assert!(w.1.borrow().is_empty(), "the window was never opened");
+    }
+
+    /// What `circle join <peer id>` asks before it goes to the network: inside a
+    /// session, a step that cannot be put in a window is refused with the words the
+    /// consent step itself has for that case.
+    #[test]
+    fn a_step_that_cannot_be_asked_is_refused_with_the_consent_steps_own_words() {
+        let said = |allowed, has_window| {
+            cannot_be_asked("joining the circle", allowed, has_window).map(|e| {
+                assert_eq!(crate::error::exit_kind(&e), crate::error::ExitKind::Refused);
+                e.to_string()
+            })
+        };
+        // Allowed, and a window to show it in: nothing is refused here.
+        assert_eq!(said(true, true), None);
+        // Not allowed: what `confirm_circle_or_window` says with windows off.
+        assert_eq!(
+            said(false, true),
+            Some(windows_off("joining the circle", true).to_string())
+        );
+        assert_eq!(
+            said(false, false),
+            Some(windows_off("joining the circle", false).to_string())
+        );
+        // Allowed, and no window on this machine: what `ask_in_window` says then.
+        assert_eq!(
+            said(true, false),
+            Some(refusal(ask_in_window("p", "joining the circle", None)))
+        );
+        assert!(said(true, false)
+            .unwrap()
+            .contains("this machine has no confirmation window"));
     }
 
     #[test]

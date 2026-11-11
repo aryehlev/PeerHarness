@@ -77,6 +77,75 @@ stop, leave the feature disabled, and document the blocker.
 * A noted rule is never installed without its owner's yes. A note comes from an agent,
   and an agent repeats what it read. Do not add a setting, a mode or a default that
   keeps a rule by itself, and do not let `note` or a hook install anything.
+* Inside a session a note is always an agent's note, whatever flags were passed
+  (ADR-042): its label and the cap on waiting notes follow
+  `consent::in_agent_session()`, never `--from-agent` alone.
+* `rule opt-in` is a consent step in the terminal (ADR-042). It puts a rule's text
+  back into the owner's agent, so it goes through `consent::human_only` and
+  `consent::confirm` with the rule's exact text and the install directory in the
+  preview. It has no window and no MCP tool: do not add either without a setting of
+  its own that the owner allowed. `rule opt-out` stays immediate and unasked.
+* A ballot on an amendment is shown from the signed content in the terminal as in a
+  window (ADR-041). `proposal vote` and `proposal show` describe the proposal's `next`
+  against the charter it names (`amendment::changes`), with the rules it would drop or
+  bring back by name, and show the title afterwards as the proposer's words. Never
+  build that description from a title, and never sign an approval of an amendment
+  whose effects this node cannot show (`amendment::Changes::unread`): `--yes` does not
+  override it, and `reject` and `revise` are not refused. A rule with a high-risk
+  finding is asked in the terminal when it is proposed too (`proposal create`). A
+  rationale typed for `proposal vote` is one line, checked before any preview or
+  window. Where `proposal show` or an amendment's description prints several lines
+  that a member wrote, every line goes behind a mark (`output::quoted`).
+* An amendment is drafted only on a node that holds every rule the charter in force
+  carries (ADR-041). `circle invite`, `remove`, `amend` and `device` fill `carried`
+  from the rules in force on the node, so they refuse while
+  `RuleSet::missing_carried` is not empty (`circle::holds_every_carried_rule`), and
+  no ballot on an amendment is put in a window on such a node
+  (`proposal::sole_admission`). `circle leave` is never refused for it, because
+  leaving never waits: it changes the owner's machine at once, before any key is used
+  (`governance::apply_on`), and on a node that lacks a carried rule it puts no request
+  to the circle (`circle::plan_request`). Never copy an id the node does not hold
+  into `carried`: a rule that was repealed since would come back into force. And never
+  let a draft leave a carried rule out because the node cannot name it.
+* A request to change the charter and an approval of an amendment are signed only if
+  the charter and the rules in force are still what the preview was built from
+  (ADR-041). A sync or an import can change the node while its owner reads, and while
+  they type a passphrase. A command that drafts an amendment calls
+  `governance::as_drafted` after the owner's answer, after the key is unlocked and
+  before it signs, with no prompt in between: `as_drafted` takes the unlocked key as
+  a parameter for that reason. It signs through `governance::propose_under`, which
+  names the charter that was shown. So do `proposal create` and `rule repeal`, with
+  the charter their preview counted the voters on (`governance::charter_as_shown`),
+  and `question send` refuses when the charter it counted its readers on changed.
+  `governance::propose_without_preview` signs under whatever charter is current: it
+  is for the demo and for tests, returns an error for an amendment, and no command
+  that asked its owner calls it. `proposal vote` unlocks the
+  key, then reads `governance::amendment_changes` again
+  (`proposal::approval_as_shown`, which takes the key in the same way) and signs an
+  approval only when it says what was shown (`amendment::Changes::same_as`), and for
+  a ballot asked in a window only while `proposal::sole_admission` still gives the
+  same entry under the same charter. `rule repeal` and `--announce` look again in
+  the same place at the proposal they name (`governance::rule_as_shown`). Do not move
+  any of these checks before the prompt, the window or the unlocking of the key, and
+  do not sign a draft under a charter other than the one it was built from. Each
+  check and the signatures it allows are one write transaction of the store
+  (`governance::atomically`): another process cannot store a ballot or a charter
+  between them. The key is unlocked before the transaction begins, and nothing inside
+  it prompts, opens a window, reads standard input, touches the network or settles.
+  Do not take a check or a signature out of it, and do not put a prompt into it. The
+  first run of `circle leave` decides before it asks what it does about the request
+  (`circle::plan_request`) and says so in its preview. It signs the request only
+  where the preview announced one and the node is still what the preview was built
+  from, after the machine changed and after the key is unlocked: the removal that
+  was drafted for the preview, never a new draft. It signs none either when exactly
+  that removal is on record by then (`circle::request_as_previewed` reads
+  `circle::removals_on_record` again with the key in hand, inside the transaction).
+  Otherwise it makes none.
+  A second run first removes, with no key and never inside a session, what the
+  circle installed and the first run could not remove (`governance::apply_on`). Then
+  it asks about the request alone and signs through the same function as the first
+  run: it is checked like every other draft, and it makes no second request when
+  exactly that removal arrived meanwhile.
 * What the owner allowed is what they read when they allowed it. The steps about a
   circle have their own setting (`[agent] circle_windows`, `config::Asked`), because
   windows turned on before ADR-037 were allowed for three steps, and keeping a rule has
@@ -96,11 +165,34 @@ stop, leave the feature disabled, and document the blocker.
   export`, in the person's terminal. A window that asks about a device or a circle
   takes what it shows from the signed content (the amendment, the charter), never from
   a title or any other text a member wrote.
+* Inside a session `export --local` is refused as well, on standard output as to a
+  file, and `init` refuses the plaintext keystore, whether a flag or an existing
+  config file asks for it; a plain `init` stays allowed there (ADR-042). The
+  `join_circle` tool takes a peer id or a multiaddr that names nothing on disk: a tool
+  never makes `circle join` read a file. Inside a session `circle join` itself reads
+  no argument that parses as a peer id or as a multiaddr as a file, whatever is on
+  disk, so that rule does not rest on the tool's own look. No refusal of a consent step
+  tells its reader
+  to pass `--yes` (`consent::no_terminal`).
 * Nothing is saved to the library, installed or signed before the confirmation it
   belongs to: build previews from drafts, and persist only after `confirm` returns.
+* A confirmation counts for what was shown (ADR-042). The owner's yes to an install
+  (`rule opt-in`, `proposal adopt`) is passed on as the id of the proposal that was
+  shown (`governance::Owner::confirmed`), and `apply_rules` counts it for that
+  proposal only. Never confirm an install by a rule's name: another proposal can take
+  the name while the owner reads. Inside a session, what is said about a held rule
+  does not name the commands that take a skill out or install the rule
+  (`HeldRule::explain_to`), and neither does the line for a voted copy that was left
+  in place because its owner edited it (`KeptEdited::line_for`).
 * The reverse holds for an opt-out: it never waits for anyone. `rule opt-out --announce`
   and `circle leave` change the owner's machine first and ask about what is published
   after.
+* An opt-out waits for no key either (ADR-041). `rule opt-out`, `proposal refuse` and
+  the install that `rule opt-in` confirmed change the machine first and unlock the
+  device key only afterwards, and only where something is to be signed
+  (`governance::settle_machine_first`). A key that does not unlock is a line in the
+  report there, not a failure. Do not put `governance::settle` or any other use of a
+  key in front of the machine change in these three.
 * Observation text, prompts, transcripts, tool output, skill text, circle names,
   revocation reasons and passphrases never appear in logs, error `Display` strings,
   panic messages or network payloads. Log ids and counts only. The same holds for
@@ -167,6 +259,11 @@ stop, leave the feature disabled, and document the blocker.
 * Strict parsing: integer-only JCS, duplicate keys rejected, unknown members rejected at
   every level, explicit `null` rejected, size and depth limits enforced before parsing
   further.
+* Imports go through the strict parser too (ADR-043). A line of an imported file and a
+  record file of a directory are parsed by `carrier::parse_record` and by nothing
+  else: never read one with plain `serde_json`. A join from a file or a directory
+  looks only at charters of one circle, the one with the fingerprint its owner gave
+  when the source holds several: never pick a charter across root keys by its number.
 * Signing input is exactly `context || 0x00 || JCS(unsigned)`; verification uses
   `verify_strict` and recomputes the canonical form. Do not change the bytes that are
   signed without a new schema version, regenerated vectors and a protocol doc update.
@@ -178,6 +275,9 @@ stop, leave the feature disabled, and document the blocker.
   devices. Nobody has a veto: `reject` and `revise` are recorded dissent.
 * An approval is never withdrawn and "passed" never reverts. A ballot counts only for
   the exact proposal id it signs.
+  The code diverges from this in one known case that is not decided: a REVOCATION
+  stops counting every ballot of the revoked device, on proposals that had passed
+  too, and ADR-044 holds the facts and the options.
 * Counting, result verification, the rule set and charter succession never read a clock
   and never depend on arrival order. Do not add `now`, expiry or "latest wins" to them.
   PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION and STANCE never expire, and a revocation
@@ -199,6 +299,20 @@ stop, leave the feature disabled, and document the blocker.
   installed personally because of a vote (ADR-023). Where a rule is installed
   (`circle place`) comes from the owner's command line only, never from a hook payload
   or a peer (ADR-030).
+* A vote never replaces or removes a skill it did not install (ADR-042). `apply_rules`
+  installs over a managed skill only when `rule_installs` records that a vote of the
+  same circle put exactly that text at that place. Otherwise the rule is held
+  (`governance::held`) and nothing is written: do not add a mode, a flag or a
+  confirmation that installs a held rule. The name of PeerHarness's own skill
+  (`agent_notes::SKILL_NAME`) is reserved: `note`, `review`, `keep` and `proposal
+  create` refuse it, and no vote installs a rule under it. Do not refuse such a
+  proposal at `ingest`: what is stored and counted must not differ between nodes. A
+  hold is local and never changes whether a rule passed. A record in `rule_installs`
+  never outlives the copy it stands for: `skills uninstall` clears the row of a copy
+  it removes, or the next settle would remove a copy its owner installed since. A
+  voted copy that its owner edited is never deleted. It is left, its row is cleared,
+  and the run that finds it names it (`Applied::left_in_place_lines`): every command
+  that settles a circle prints those lines.
 * Rights no vote overrides (10.10): no vote widens read access; a bundle that fails its
   digest or validity check is never installed; a high-risk finding always asks the
   owner; an opt-out always wins. `LocalPolicy` can hold a rule back on one node and can
@@ -265,6 +379,15 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
   only. Tests of the MCP server (`apps/peerharness/tests/mcp_server.rs`) set both, run
   the server without `CLAUDECODE` and `PEERHARNESS_AGENT_SESSION` (it has to set the
   mark itself), and point its daemon at the hub, never at the public network.
+  The tests of what a session is refused and of what a ballot shows there
+  (`apps/peerharness/tests/session_gates.rs`, `ballot_previews.rs`) set the stand-in
+  window on every command too, and are compiled for debug builds only.
+* No test waits for a person at a prompt. A step that asks is answered with `--yes`,
+  as in a script the person wrote. A test that needs `init` to fail must not count on
+  a missing passphrase: the prompt reads the controlling terminal, so a developer who
+  runs `cargo test` from one would be asked. Give it an empty `PEERHARNESS_PASSPHRASE`
+  (see `apps/peerharness/tests/first_run.rs`). No command may refuse because the build
+  is a debug build: the suite and the demo script run debug builds.
 * No test runs the developer's own `claude` command. `setup` registers an MCP server by
   running it, so debug builds never look for it on `PATH`: they run only the stand-in
   named by `PEERHARNESS_TEST_CLAUDE_BIN` (see `apps/peerharness/tests/setup.rs`). Do

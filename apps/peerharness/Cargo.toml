@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Local-first, peer-to-peer learning harness for AI coding agents"
+description = "Your team votes on how its AI coding agents behave"
 
 [lints]
 workspace = true

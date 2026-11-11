@@ -7,7 +7,8 @@
 //! `PEERHARNESS_RELEASE_URL`. Nothing is downloaded from the network and nothing is
 //! installed outside the temporary folder.
 //!
-//! What it shows: a release that matches its checksum is installed and runs; an archive
+//! What it shows: a release that matches its checksum is installed and runs, and the
+//! closing lines name the next step for this system; an archive
 //! that was changed, a release without a checksum for the archive, and a version that
 //! is not a tag install nothing. Finding the latest release is GitHub's redirect and is
 //! not covered here.
@@ -138,6 +139,43 @@ fn a_release_that_matches_its_checksum_is_installed_and_runs() {
     // Installing again replaces the file and leaves nothing else behind.
     assert!(release.install(TAG).status.success());
     assert_eq!(std::fs::read_dir(&release.bin).unwrap().count(), 1);
+}
+
+/// What the script says to do next depends on the system. On Linux no confirmation
+/// window can be shown, so a coding agent's tools other than `note` are refused there:
+/// the next step is the terminal guide, not "ask your agent".
+#[test]
+fn the_closing_lines_say_what_comes_next_on_this_system() {
+    let release = Release::new();
+    let out = release.install(TAG);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let said = String::from_utf8_lossy(&out.stdout);
+    let guide = concat!(env!("CARGO_PKG_REPOSITORY"), "/blob/main/docs/terminal.md");
+    if std::env::consts::OS == "linux" {
+        assert!(
+            said.contains("on Linux every decision is typed in your own terminal"),
+            "{said}"
+        );
+        assert!(said.contains("starts nothing else"), "{said}");
+        // The same address the binary gives where no window can be shown.
+        assert!(
+            said.contains(&format!(
+                "  {guide}
+"
+            )),
+            "{said}"
+        );
+        assert!(!said.contains("set it up for Claude Code."), "{said}");
+    } else {
+        assert!(
+            said.contains("Next, once, in this terminal: set it up for Claude Code."),
+            "{said}"
+        );
+        assert!(!said.contains("docs/terminal.md"), "{said}");
+    }
+    // On every system: the one command that sets it up, and the demo.
+    assert!(said.contains("  peerharness setup\n"), "{said}");
+    assert!(said.contains("  peerharness demo\n"), "{said}");
 }
 
 #[test]

@@ -94,10 +94,8 @@ impl Worker {
                         return;
                     }
                 };
-                let unlocked = node
-                    .device()
-                    .map(|d| (d.libp2p_seed(), d.public()))
-                    .context("cannot unlock the device key");
+                // `Node::device` says what failed ("cannot unlock the device key: ...").
+                let unlocked = node.device().map(|d| (d.libp2p_seed(), d.public()));
                 let ok = unlocked.is_ok();
                 let _ = ready_tx.send(unlocked);
                 if !ok {
@@ -131,6 +129,26 @@ impl Worker {
     }
 }
 
+/// The rules a settle found held on this node, each with the name of its circle on
+/// this machine.
+pub type HeldRules = Vec<(governance::HeldRule, String)>;
+
+/// How many settles' worth of changes wait for a daemon to read them before further
+/// ones are dropped. A hold, a rule that waits and a skill that cannot be removed are
+/// states: one that was dropped is found again by the next settle of its circle. A
+/// rule that was installed or removed is said once, and with a dropped batch it is not
+/// said: `peerharness rule list` shows what is installed.
+const CHANGES_QUEUE: usize = 64;
+
+/// A queue from the request handler to the daemon that started the transport: what
+/// each settle after a peer's push changed for the owner ([`Changes`]).
+pub fn changes_queue() -> (
+    tokio::sync::mpsc::Sender<Changes>,
+    tokio::sync::mpsc::Receiver<Changes>,
+) {
+    tokio::sync::mpsc::channel(CHANGES_QUEUE)
+}
+
 /// State shared between the request handler and a running sync.
 #[derive(Default)]
 struct Shared {
@@ -140,34 +158,151 @@ struct Shared {
     pulls: tokio::sync::Mutex<HashMap<PeerId, JoinHandle<()>>>,
     /// The transport, once started (the handler needs it to fetch bundles back).
     net: OnceLock<NetworkHandle>,
+    /// Where the request handler puts what it changed for the owner when it settles
+    /// after a peer's push: a running daemon, which tells its owner
+    /// ([`Running::start_telling`]). `None` for every other command, whose handler
+    /// settles and says nothing.
+    told: Option<tokio::sync::mpsc::Sender<Changes>>,
+}
+
+impl Shared {
+    /// Hands what a settle the request handler ran changed for the owner to the
+    /// daemon, if one listens: rules installed and removed, a skill that could not be
+    /// removed or was left because it was edited, rules that wait for the owner or are
+    /// held, a charter that was issued. A settle that has none of these is not passed
+    /// on. Nothing of this reaches a notification.
+    fn tell(&self, changes: Changes) {
+        if let Some(queue) = &self.told {
+            if changes.says_something() {
+                // A full queue drops the batch (see `CHANGES_QUEUE`).
+                let _ = queue.try_send(changes);
+            }
+        }
+    }
 }
 
 /// What settling circles on the node thread changed, for the report.
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct Changes {
     pub installed: Vec<String>,
     pub removed: Vec<String>,
-    pub asking: Vec<String>,
+    /// Skills a vote installed that were to be removed and could not be
+    /// (`governance::Applied::not_removed`).
+    pub not_removed: Vec<String>,
+    /// The entries of `removed` and of `not_removed`, each with the circle whose settle
+    /// found it. A name alone does not say which copy is meant: two circles can each
+    /// have installed a rule of one name, in two places. [`Changes::absorb`] reads
+    /// these to take a failure back only when the same circle removed that skill
+    /// later. Reports print the names.
+    pub removed_in: Vec<(CircleId, String)>,
+    pub not_removed_in: Vec<(CircleId, String)>,
+    /// Copies a vote installed that were to be removed and were left in place because
+    /// they were edited on this machine (`governance::Applied::kept_edited`).
+    pub kept_edited: Vec<governance::KeptEdited>,
+    /// Rules in force that wait for the owner's confirmation.
+    pub asking: Vec<governance::Waiting>,
+    /// Rules in force that this node holds back (`governance::Held`), each with the
+    /// name of its circle on this machine.
+    pub held: HeldRules,
     pub charters_issued: Vec<u64>,
     /// Events this node signed while settling (results and charters).
     pub signed: usize,
 }
 
+/// A held rule comes with the name of its circle, which is no text for a log: `Debug`
+/// prints how many there are. A copy that was kept comes with the path of a project,
+/// and is counted too.
+impl std::fmt::Debug for Changes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Changes")
+            .field("installed", &self.installed)
+            .field("removed", &self.removed)
+            .field("not_removed", &self.not_removed)
+            .field("kept_edited", &self.kept_edited.len())
+            .field("asking", &self.asking)
+            .field("held", &self.held.len())
+            .field("charters_issued", &self.charters_issued)
+            .field("signed", &self.signed)
+            .finish()
+    }
+}
+
 impl Changes {
+    /// Adds what a later settle (`other`) changed to what earlier ones in the same
+    /// exchange did.
     fn absorb(&mut self, other: Changes) {
         self.installed.extend(other.installed);
+        // A circle is settled more than once in one exchange, and a rule that waits, is
+        // held or cannot be removed is found each time: it is reported once. A skill
+        // that an earlier settle could not remove and a later settle of the same circle
+        // did remove is not reported as left behind.
+        //
+        // Only the same circle takes a failure back. Two circles can each have
+        // installed a rule of one name, in two places: when one circle's copy goes and
+        // the other's cannot be removed, both are said, whichever was settled first.
+        // An entry that names no circle (`not_removed_in` has none for it) is never
+        // taken back.
+        let had_a_circle: Vec<String> = self
+            .not_removed_in
+            .iter()
+            .map(|(_, skill)| skill.clone())
+            .collect();
+        self.not_removed_in
+            .retain(|copy| !other.removed_in.contains(copy));
+        for copy in other.not_removed_in {
+            if !self.not_removed_in.contains(&copy) {
+                self.not_removed_in.push(copy);
+            }
+        }
+        let still_stuck = |skill: &String| self.not_removed_in.iter().any(|(_, s)| s == skill);
+        self.not_removed
+            .retain(|skill| !had_a_circle.contains(skill) || still_stuck(skill));
+        for skill in other.not_removed {
+            if !self.not_removed.contains(&skill) {
+                self.not_removed.push(skill);
+            }
+        }
+        self.removed_in.extend(other.removed_in);
         self.removed.extend(other.removed);
-        self.asking.extend(other.asking);
+        for kept in other.kept_edited {
+            if !self.kept_edited.contains(&kept) {
+                self.kept_edited.push(kept);
+            }
+        }
+        for waiting in other.asking {
+            if !self.asking.contains(&waiting) {
+                self.asking.push(waiting);
+            }
+        }
+        for held in other.held {
+            if !self.held.contains(&held) {
+                self.held.push(held);
+            }
+        }
         self.charters_issued.extend(other.charters_issued);
         self.signed += other.signed;
     }
 
-    /// Whether anything visible to the owner happened.
+    /// Whether anything visible to the owner happened. A rule that is held is a state,
+    /// not something that happened: a sync that exchanged nothing does not report it
+    /// again, tick after tick (`rule list` shows it at any time). The same goes for a
+    /// skill that cannot be removed: every settle finds it again until it can.
+    ///
+    /// A copy that was left because it was edited did happen: its record is cleared
+    /// when it is found, so no later settle finds it again.
     pub fn is_empty(&self) -> bool {
         self.installed.is_empty()
             && self.removed.is_empty()
+            && self.kept_edited.is_empty()
             && self.asking.is_empty()
             && self.charters_issued.is_empty()
+    }
+
+    /// Whether a settle that nobody on this machine started (the request handler's,
+    /// after a peer's push) has anything a daemon would tell its owner: something that
+    /// happened ([`Self::is_empty`] is false), or a state it may not have said yet.
+    fn says_something(&self) -> bool {
+        !self.is_empty() || !self.held.is_empty() || !self.not_removed.is_empty()
     }
 }
 
@@ -188,10 +323,23 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                     changes.signed += 1;
                 }
                 changes.installed.extend(settled.applied.installed);
+                for skill in &settled.applied.removed {
+                    changes.removed_in.push((*id, skill.clone()));
+                }
+                for skill in &settled.applied.not_removed {
+                    changes.not_removed_in.push((*id, skill.clone()));
+                }
                 changes.removed.extend(settled.applied.removed);
-                changes
-                    .asking
-                    .extend(settled.applied.asking.into_iter().map(|(name, _)| name));
+                changes.not_removed.extend(settled.applied.not_removed);
+                changes.kept_edited.extend(settled.applied.kept_edited);
+                changes.asking.extend(settled.applied.asking);
+                changes.held.extend(
+                    settled
+                        .applied
+                        .held
+                        .into_iter()
+                        .map(|rule| (rule, circle.name.clone())),
+                );
             }
             Err(e) => tracing::warn!(error = %e, "could not settle a circle after a sync"),
         }
@@ -215,6 +363,7 @@ fn handler(worker: Worker, shared: Arc<Shared>) -> Arc<dyn ph_network::RequestHa
                     let _ = tokio::time::timeout(PULL_WAIT, task).await;
                 }
             }
+            let tells = shared.clone();
             let answered = worker
                 .call(move |node| {
                     let bundles = crate::library::bundle_store(&node.home);
@@ -228,7 +377,7 @@ fn handler(worker: Worker, shared: Arc<Shared>) -> Arc<dyn ph_network::RequestHa
                     )?;
                     // With bundles still to fetch, settling waits until they are here.
                     if answer.pulls.is_empty() && !answer.touched.is_empty() {
-                        settle_circles(node, &answer.touched)?;
+                        tells.tell(settle_circles(node, &answer.touched)?);
                     }
                     Ok(answer)
                 })
@@ -270,9 +419,12 @@ async fn pull_then_settle(
             let _ = fetch_bundle(&worker, net, peer, circle, digest).await;
         }
     }
-    let _ = worker
+    if let Ok(changes) = worker
         .call(move |node| settle_circles(node, &touched))
-        .await;
+        .await
+    {
+        shared.tell(changes);
+    }
 }
 
 /// Asks `peer` for one bundle and stores it if it is the one a proposal names.
@@ -324,8 +476,32 @@ impl Running {
     /// Starts the node thread and the transport. Must be called inside a Tokio runtime.
     /// With no `listen` addresses the node only dials.
     pub fn start(home: Home, config: NetworkConfig) -> Result<Self> {
+        Self::start_with(home, config, None)
+    }
+
+    /// [`Self::start`] for a daemon: what the request handler changes for the owner
+    /// when it settles after a peer's push is put on `told` ([`changes_queue`]), so
+    /// that the daemon can tell its owner. A daemon that only answers, and syncs with
+    /// nobody by itself, would otherwise never say that a rule a peer brought was
+    /// installed here, waits for its owner or is held.
+    pub fn start_telling(
+        home: Home,
+        config: NetworkConfig,
+        told: tokio::sync::mpsc::Sender<Changes>,
+    ) -> Result<Self> {
+        Self::start_with(home, config, Some(told))
+    }
+
+    fn start_with(
+        home: Home,
+        config: NetworkConfig,
+        told: Option<tokio::sync::mpsc::Sender<Changes>>,
+    ) -> Result<Self> {
         let (worker, seed, device_key) = Worker::spawn(home)?;
-        let shared = Arc::new(Shared::default());
+        let shared = Arc::new(Shared {
+            told,
+            ..Shared::default()
+        });
         let (net, join) = ph_network::start(seed, config, handler(worker.clone(), shared.clone()))
             .map_err(|e| anyhow!("cannot start the transport: {e}"))?;
         let _ = shared.net.set(net.clone());
@@ -1332,4 +1508,183 @@ pub async fn internet_info(run: &Running) -> Option<crate::daemon_info::Internet
             .map(Multiaddr::to_string)
             .collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ph_core::{Digest, EventId};
+
+    fn held(name: &str, circle: &str) -> (governance::HeldRule, String) {
+        (
+            governance::HeldRule {
+                name: name.to_owned(),
+                proposal_id: EventId::from_digest(Digest::sha256(name.as_bytes())),
+                why: governance::Held::OwnSkill,
+                place: None,
+            },
+            circle.to_owned(),
+        )
+    }
+
+    /// One exchange settles a circle twice. A rule that is held, or that waits, is
+    /// found both times and reported once.
+    #[test]
+    fn a_rule_that_is_held_or_waits_is_reported_once_per_exchange() {
+        let waiting = governance::Waiting {
+            name: "small-commits".to_owned(),
+            proposal_id: EventId::from_digest(Digest::sha256(b"small-commits")),
+            why: "ask_mode",
+        };
+        let settled = || Changes {
+            asking: vec![waiting.clone()],
+            held: vec![held("style", "team")],
+            ..Changes::default()
+        };
+        let mut report = Changes::default();
+        report.absorb(settled());
+        report.absorb(settled());
+        assert_eq!(report.asking, std::slice::from_ref(&waiting));
+        assert_eq!(report.held, [held("style", "team")]);
+        // The same name in another circle is another rule.
+        report.absorb(Changes {
+            held: vec![held("style", "other")],
+            ..Changes::default()
+        });
+        assert_eq!(report.held.len(), 2);
+    }
+
+    /// A daemon prints a peer's report when something happened. A hold alone is not
+    /// something that happened, so a tick that exchanged nothing stays silent.
+    #[test]
+    fn a_hold_alone_is_no_news() {
+        let only_held = Changes {
+            held: vec![held("style", "team")],
+            ..Changes::default()
+        };
+        assert!(only_held.is_empty());
+        let installed = Changes {
+            installed: vec!["style".to_owned()],
+            ..Changes::default()
+        };
+        assert!(!installed.is_empty());
+        // A copy that was left because it was edited is found once, so it is news.
+        let kept = Changes {
+            kept_edited: vec![governance::KeptEdited {
+                name: "style".to_owned(),
+                place: None,
+                uninstall_refused: false,
+            }],
+            ..Changes::default()
+        };
+        assert!(!kept.is_empty());
+        // What the request handler passes on to a daemon is wider: a hold and a skill
+        // that cannot be removed go too, and the daemon says each once. A settle that
+        // changed nothing and found nothing is not passed on.
+        let stuck = Changes {
+            not_removed: vec!["style".to_owned()],
+            ..Changes::default()
+        };
+        assert!(stuck.is_empty());
+        for told in [&only_held, &installed, &kept, &stuck] {
+            assert!(told.says_something());
+        }
+        assert!(!Changes::default().says_something());
+    }
+
+    /// A skill that could not be removed is said, unless a later settle of the same
+    /// circle removed it. Two circles can each have installed a rule of one name, in
+    /// two places. When one circle's copy goes and the other's cannot be removed, both
+    /// are said, in either order of the two settles: the failure used to be dropped
+    /// when the circle whose copy stayed was settled first, and a daemon then never
+    /// said it.
+    #[test]
+    fn a_failed_removal_is_taken_back_only_by_the_same_circle() {
+        let circle = |seed: u8| {
+            let root = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+            CircleId::derive(&DeviceKey::from_signing_key(&root))
+        };
+        let (team, other) = (circle(1), circle(2));
+        let settled = |circle: CircleId, removed: &[&str], not_removed: &[&str]| {
+            let names =
+                |list: &[&str]| -> Vec<String> { list.iter().map(|s| (*s).to_owned()).collect() };
+            let of = |list: &[&str]| -> Vec<(CircleId, String)> {
+                list.iter().map(|s| (circle, (*s).to_owned())).collect()
+            };
+            Changes {
+                removed: names(removed),
+                not_removed: names(not_removed),
+                removed_in: of(removed),
+                not_removed_in: of(not_removed),
+                ..Changes::default()
+            }
+        };
+
+        // The circle whose copy stays is settled first, the other removes its own.
+        let mut report = Changes::default();
+        report.absorb(settled(team, &[], &["style"]));
+        report.absorb(settled(other, &["style"], &[]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["style"]);
+        assert!(report.says_something());
+        // The other order.
+        let mut report = Changes::default();
+        report.absorb(settled(other, &["style"], &[]));
+        report.absorb(settled(team, &[], &["style"]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["style"]);
+        // The next settle of the exchange finds the copy again: it is said once.
+        report.absorb(settled(team, &[], &["style"]));
+        assert_eq!(report.not_removed, ["style"]);
+
+        // A later settle of the same circle that removed the skill takes the failure
+        // back, and leaves a failure about another name alone.
+        let mut report = Changes::default();
+        report.absorb(settled(team, &[], &["style", "naming"]));
+        report.absorb(settled(team, &["style"], &[]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["naming"]);
+
+        // An earlier removal takes back nothing that failed after it.
+        let mut report = Changes::default();
+        report.absorb(settled(team, &["style"], &[]));
+        report.absorb(settled(team, &[], &["style"]));
+        assert_eq!(report.removed, ["style"]);
+        assert_eq!(report.not_removed, ["style"]);
+
+        // Both circles fail on the name and one of them removes it later: the other's
+        // failure stays.
+        let mut report = Changes::default();
+        report.absorb(settled(team, &[], &["style"]));
+        report.absorb(settled(other, &[], &["style"]));
+        report.absorb(settled(team, &["style"], &[]));
+        assert_eq!(report.not_removed, ["style"]);
+        report.absorb(settled(other, &["style"], &[]));
+        assert!(report.not_removed.is_empty());
+
+        // An entry that names no circle is never taken back.
+        let mut report = Changes {
+            not_removed: vec!["style".to_owned()],
+            ..Changes::default()
+        };
+        report.absorb(settled(team, &["style"], &[]));
+        assert_eq!(report.not_removed, ["style"]);
+    }
+
+    /// A circle's name is no text for a log.
+    #[test]
+    fn debug_of_changes_names_no_circle() {
+        let changes = Changes {
+            held: vec![held("style", "skunkworks-7")],
+            ..Changes::default()
+        };
+        let printed = format!("{changes:?}");
+        assert!(!printed.contains("skunkworks-7"), "{printed}");
+        assert!(printed.contains("held: 1"), "{printed}");
+        let report = SyncReport {
+            changes,
+            ..SyncReport::default()
+        };
+        assert!(!format!("{report:?}").contains("skunkworks-7"));
+    }
 }

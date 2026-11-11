@@ -125,3 +125,39 @@ pub fn short_id(id: &impl std::fmt::Display) -> String {
 pub fn safe(s: &str) -> String {
     ph_skills::sanitize_for_display(s)
 }
+
+/// Text a member wrote, for showing among PeerHarness's own lines: made safe for a
+/// terminal ([`safe`]), and every line of it begins with `prefix`. A reason, a summary
+/// or a rule's text can hold several lines, and without the mark one of them could pass
+/// for a heading, a scanner line or a ballot's last sentence.
+pub fn quoted(text: &str, prefix: &str) -> String {
+    safe(text)
+        .trim_end()
+        .split('\n')
+        .map(|line| format!("{prefix}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_line_of_a_members_text_carries_the_mark() {
+        assert_eq!(quoted("too strict", "    | "), "    | too strict");
+        // Lines that imitate what `proposal show` and a ballot's preview print.
+        let forged = "ok\n\n  rule text (12 bytes, 0 scanner finding(s)):\r\n---\nname: harmless\n\
+                      ---\n  scanner, line 3: nothing found\nAn approval cannot be withdrawn.\n\n";
+        let shown = quoted(forged, "      | ");
+        assert_eq!(shown.lines().count(), 8);
+        assert!(shown.lines().all(|l| l.starts_with("      | ")), "{shown}");
+        assert!(shown.contains("      | An approval cannot be withdrawn."));
+        // Characters that break a line or move the cursor without being a line feed do
+        // not start an unmarked line: they are shown as what they are.
+        let shown = quoted("a\rb\u{2028}c\u{2029}d\u{1b}[2Ke\u{85}f\u{b}g\u{c}h", "| ");
+        assert_eq!(shown.lines().count(), 1, "{shown:?}");
+        assert!(shown.starts_with("| a<U+000D>b<U+2028>c<U+2029>d<U+001B>[2Ke<U+0085>f"));
+        assert!(!shown.contains(['\r', '\u{1b}', '\u{2028}', '\u{2029}', '\u{85}']));
+    }
+}

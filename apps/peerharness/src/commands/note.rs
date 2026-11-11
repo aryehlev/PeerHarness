@@ -5,6 +5,11 @@
 //! (`--from-agent`). Either way the result is a **candidate** in the inbox and nothing
 //! more: nothing is installed, shared or approved here, and no step that needs consent is
 //! reachable from this command. `--from-agent` is a label for the inbox, not a privilege.
+//!
+//! The label does not depend on the flag alone. A note written inside a coding agent's
+//! session (`consent::in_agent_session`) is an agent's note whatever was passed: it is
+//! labelled as reported by the agent and counts against the cap on waiting agent notes.
+//! Otherwise an agent could present its text as the owner's own and bury the inbox.
 
 use anyhow::Result;
 use ph_core::CandidateStatus;
@@ -32,7 +37,9 @@ fn current_repo_key() -> String {
 pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
     let node = ctx.open_node()?;
     let now = node.now();
-    let origin = if a.from_agent {
+    // Who wrote it is decided by where the command runs, not by what it was told.
+    let from_agent = a.from_agent || crate::consent::in_agent_session();
+    let origin = if from_agent {
         NoteOrigin::AgentReported
     } else {
         NoteOrigin::Written
@@ -51,6 +58,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
 
     // Refuse now what could never become a skill, instead of at review time.
     let draft = draft_note_skill(&cand);
+    crate::agent_notes::refuse_reserved_name(&draft.name)?;
     ph_skills::render_skill_md(&draft.name, &draft.description, &draft.body, None)
         .map_err(|e| e.to_string())
         .and_then(|md| ph_skills::build_bundle(&md, Some(&draft.name)).map_err(|e| e.to_string()))
@@ -61,7 +69,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
         .candidate_by_concept(&cand.concept_key, &cand.repo_key)?
     {
         let mut t = Text::new();
-        if a.from_agent {
+        if from_agent {
             t.line("Already noted. Nothing else to do.");
         } else {
             t.line(format!(
@@ -69,7 +77,11 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
                 existing.id, existing.status
             ));
             if !existing.status.is_terminal() {
-                t.line(format!("Next: `peerharness review {}`.", existing.id));
+                t.line(format!(
+                    "Next: `peerharness keep {id}` keeps it for your own agent; \
+                     `peerharness review {id}` shows it.",
+                    id = existing.id
+                ));
             }
         }
         return Ok(Report::new(
@@ -83,7 +95,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
         ));
     }
 
-    if a.from_agent {
+    if from_agent {
         let pending = node
             .store
             .candidates(&[CandidateStatus::Detected, CandidateStatus::LocalReview])?
@@ -103,7 +115,7 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
 
     let (id, created) = node.store.insert_or_merge_candidate(&cand, now)?;
     let mut t = Text::new();
-    if a.from_agent {
+    if from_agent {
         // Read by the agent: say what happened and where its part ends.
         t.line(match node.config.agent.asked() {
             crate::config::Asked::Nothing => {
@@ -127,7 +139,12 @@ pub fn run(ctx: &Ctx, a: NoteArgs) -> Result<Report> {
             draft.name
         ));
         t.line(format!(
-            "Next: `peerharness review {id} --approve` saves it to your library."
+            "Next: `peerharness keep {id}` shows the exact text, asks once, and installs it \
+             for your own agent."
+        ));
+        t.line(format!(
+            "  To change it or drop it first: `peerharness review {id} --edit \"...\"`, or \
+             `--reject`."
         ));
     }
     Ok(Report::new(

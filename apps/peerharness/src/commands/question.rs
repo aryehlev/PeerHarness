@@ -126,6 +126,13 @@ fn count(list: &[Answer], c: AnswerChoice) -> usize {
     list.iter().filter(|a| a.choice == c).count()
 }
 
+/// The refusal of `question send` when the charter its preview counted the readers on
+/// is no longer the one in force. Names nothing a member wrote.
+const READERS_CHANGED: &str =
+    "the circle's charter changed on this node while this was being confirmed, so the \
+     members who can read the question may no longer be the ones you were shown. Nothing \
+     was shared and nothing was signed. Run the command again to see who would read it now.";
+
 fn send(
     ctx: &Ctx,
     candidate: &str,
@@ -177,7 +184,10 @@ fn send(
             "that question was already asked in this circle: `peerharness question list`",
         ));
     }
+    // The charter the preview is built from: the members who can read the question
+    // are counted on its roll, and the preview states that number.
     let charter = governance::current_charter(&node.store, &circle.circle_id)?;
+    let shown = charter.digest()?;
     let readers = charter
         .content
         .roll
@@ -199,18 +209,27 @@ fn send(
 
     let now = node.now();
     let key = node.device()?.signing_key();
-    let env = governance::submit(
-        &node.store,
-        key,
-        &circle.circle_id,
-        &scope,
-        EventBody::Question(QuestionBody {
-            question,
-            topic,
-            related_candidate: None,
-        }),
-        now,
-    )?;
+    // The owner confirmed sending their text to the members they were shown. A sync or
+    // an import can have stored a newer charter while they read or typed a passphrase,
+    // with another roll: then nothing is sent on that yes. The look and the signature
+    // are one transaction, like every check after a yes (`governance::atomically`).
+    let env = governance::atomically(&node.store, key, |store| {
+        if !governance::charter_as_shown(store, key, &circle.circle_id, &shown)? {
+            return Err(refused(READERS_CHANGED));
+        }
+        governance::submit(
+            store,
+            key,
+            &circle.circle_id,
+            &scope,
+            EventBody::Question(QuestionBody {
+                question,
+                topic,
+                related_candidate: None,
+            }),
+            now,
+        )
+    })?;
     // The human confirmed the exact text: walk the candidate to `Questioned`.
     let mut status = cand.status;
     for next in [

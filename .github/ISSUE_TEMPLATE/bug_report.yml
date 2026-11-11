@@ -1,0 +1,61 @@
+name: Bug report
+description: PeerHarness did something it should not have, or did not do what the docs say.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a vulnerability here: SECURITY.md says how to report one.
+
+        Leave out passphrases, private keys and any text of a rule or a prompt that is
+        private. Use a throwaway home (`PEERHARNESS_HOME=$(mktemp -d)`) to reproduce
+        where you can.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `peerharness --version`.
+      placeholder: peerharness 0.4.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system and its version, the processor, and how you installed (install.sh, or built from source at which commit).
+      placeholder: macOS 15.1, Apple Silicon, install.sh
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where the command ran
+      options:
+        - My own terminal
+        - Inside Claude Code (a command it ran, or a tool of `peerharness mcp`)
+        - Inside another coding agent
+        - A script or CI
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `peerharness doctor`
+      description: It prints paths and your device's fingerprint. Remove what you would rather not post.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you ran
+      description: The exact commands, in order, or what you asked your agent.
+      render: sh
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened, and what you expected
+      description: Paste the output or the error as it was printed.
+    validations:
+      required: true

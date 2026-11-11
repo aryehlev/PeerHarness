@@ -108,6 +108,9 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
     let installer = governance::user_installer()?;
     let mut installed = Vec::new();
     let mut removed = Vec::new();
+    let mut not_removed = Vec::new();
+    let mut kept_edited = Vec::new();
+    let mut held = Vec::new();
     let mut charters = Vec::new();
     for circle in node.store.circles()? {
         let settled = governance::settle(node, &circle, &installer, &[])?;
@@ -134,11 +137,19 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
         for skill in &settled.applied.removed {
             t.line(format!("  {}: removed rule {skill}", safe(&circle.name)));
         }
-        for (skill, why) in &settled.applied.asking {
+        for skill in &settled.applied.not_removed {
             t.line(format!(
-                "  {}: rule {skill} is in force and waits for your confirmation ({why})",
-                safe(&circle.name)
+                "  {}: {}",
+                safe(&circle.name),
+                governance::not_removed_line(skill)
             ));
+        }
+        for kept in &settled.applied.kept_edited {
+            t.line(format!("  {}: {}", safe(&circle.name), kept.line()));
+            kept_edited.push(kept.name.clone());
+        }
+        for waiting in &settled.applied.asking {
+            t.line(format!("  {}: {}", safe(&circle.name), waiting.line()));
         }
         for skill in &settled.applied.conflicts {
             t.line(format!(
@@ -146,8 +157,17 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
                 safe(&circle.name)
             ));
         }
+        for rule in &settled.applied.held {
+            t.line(format!(
+                "  {}: {}",
+                safe(&circle.name),
+                rule.line(&circle.name)
+            ));
+            held.push(rule.json());
+        }
         installed.extend(settled.applied.installed);
         removed.extend(settled.applied.removed);
+        not_removed.extend(settled.applied.not_removed);
     }
     if source.ignored > 0 {
         t.line(format!(
@@ -171,6 +191,9 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             "ignored": source.ignored,
             "installed": installed,
             "removed": removed,
+            "not_removed": not_removed,
+            "kept_edited": kept_edited,
+            "held": held,
             "charters_issued": charters,
         }),
         t,

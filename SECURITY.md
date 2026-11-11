@@ -5,8 +5,8 @@ their coding agents, so we take reports seriously. Please read this before repor
 
 ## Status
 
-* **No security audit has been done.** PeerHarness v0.1 is a demo-grade release with
-  automated tests but no independent review. Do not rely on it for sensitive or
+* **No security audit has been done.** PeerHarness is a demo-grade, pre-1.0 project
+  with automated tests but no independent review. Do not rely on it for sensitive or
   production use.
 * The threat model, including the limits we know about, is in
   [`docs/security-model.md`](docs/security-model.md). Limits documented there (for
@@ -28,14 +28,19 @@ older minor versions.
 
 ## Reporting a vulnerability
 
-**Please report vulnerabilities privately. Do not open a public issue, pull request or
-discussion for a vulnerability.**
+**Please report vulnerabilities privately. Do not put the details of a vulnerability in
+a public issue, pull request or discussion.**
 
-Use GitHub's private vulnerability reporting: open the repository's **Security** tab and
-choose **Report a vulnerability**
-(<https://github.com/aryehlev/peerharness/security/advisories/new>). This creates a
-private advisory visible only to you and the maintainers. (Maintainers: private
-vulnerability reporting must be enabled in the repository settings.)
+Open an issue that says only that you have a security report and asks for a private
+contact. Give no details in it: no description, no affected command and no steps to
+reproduce. Wait for an answer there that gives a private contact, and send the details
+through that.
+
+When the repository's **Security** tab offers **Report a vulnerability**
+(<https://github.com/aryehlev/peerharness/security/advisories/new>), use that form
+instead of an issue. It creates a private advisory visible only to you and the
+maintainers. The form is a setting of the repository and was not switched on when
+this was written (2026-11-11).
 
 Please include:
 

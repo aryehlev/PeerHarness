@@ -124,10 +124,12 @@ fn admit(
     let (current, rules, _) = governance::rule_set(&founder.store, circle)?;
     let next = admit_member(&current.content, &rules, newcomer.entry())
         .map_err(|e| anyhow!("cannot draft the amendment: {e}"))?;
-    let proposal = governance::propose(
+    // Under the charter the draft was built from, like every change to a charter.
+    let proposal = governance::propose_under(
         &founder.store,
         &founder.key,
         circle,
+        &current.digest()?,
         NewProposal {
             scope: &Scope::all(),
             title: &format!("Admit {}", newcomer.name),
@@ -300,7 +302,7 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
         bundle.size()
     ));
 
-    let proposal = governance::propose(
+    let proposal = governance::propose_without_preview(
         &alice.store,
         &alice.key,
         &circle,

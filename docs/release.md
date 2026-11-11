@@ -19,8 +19,10 @@ PeerHarness follows [Semantic Versioning 2.0.0](https://semver.org/).
   0.1.1) contain only fixes and never change the protocol or migrate the database in an
   incompatible way.
 * The protocol has its own version, independent of the binary's
-  (`docs/protocol-v0.md`, section 15). Release notes say which protocol versions a
-  release speaks and whether its database migration is one-way.
+  (`docs/protocol-v0.md`, section 15). `CHANGELOG.md` says for each version which
+  protocol version it speaks, which database schema it writes, and whether a
+  migration is one-way. The release page itself is published by the workflow with a
+  fixed text and generated notes, and does not say it.
 
 ## Supported platforms
 
@@ -42,8 +44,7 @@ does not use it. If a future dependency makes the musl build infeasible, the fal
 the minimum glibc version.
 
 **Windows is not supported yet**, and no Windows binaries are published. The code has
-not been built or tested on Windows. (Some design choices, such as the loopback TCP
-control endpoint, were made with a future Windows port in mind.)
+not been built or tested on Windows.
 
 ## What a release contains
 
@@ -51,9 +52,17 @@ For each target, `peerharness-<tag>-<target>.tar.gz` containing:
 
 * `peerharness-<tag>-<target>/peerharness` (the binary),
 * `LICENSE-MIT`, `LICENSE-APACHE`,
-* `README.md`, `security-model.md` and `release.md` when present.
+* `README.md`, `security-model.md`, `release.md` and `checked.md` when present.
 
 Plus one `SHA256SUMS` file covering every archive, and auto-generated release notes.
+
+The three documents sit next to the README in the archive, not in a `docs/` folder,
+and no other document is packed. So the README's links to `docs/…`, `CHANGELOG.md`,
+`SECURITY.md` and `CONTRIBUTING.md` do not resolve
+inside the archive, and neither do the links of the three documents to
+`../README.md`, `../SECURITY.md` and `decisions.md`. Every link works in the
+repository at the release's tag: read the documents there when you need to follow
+one.
 
 ## What is not provided
 
@@ -121,31 +130,44 @@ For Linux musl targets, install `cross` 0.2.5 (`cargo install cross --version 0.
    release workflow or to native dependencies, run the Release workflow manually
    (**Actions > Release > Run workflow**). A manual run builds every target and uploads
    the archives as workflow artifacts named `peerharness-dev-<commit>-<target>`, but
-   publishes nothing.
+   publishes nothing. Before a release is announced, check that private vulnerability
+   reporting is switched on for the repository (**Settings > Code security**):
+   `gh api repos/aryehlev/peerharness/private-vulnerability-reporting` prints
+   `{"enabled":true}` when it is. `SECURITY.md` and `CODE_OF_CONDUCT.md` name that
+   form, and `SECURITY.md` says that it was off when it was written: correct that
+   sentence once it is on.
 2. Update the version in the root `Cargo.toml` (`[workspace.package] version` and the
    `version` of the internal path dependencies under `[workspace.dependencies]`), run
    `cargo build` so `Cargo.lock` is updated, and commit both.
 3. Update `README.md` in the same pull request, every time. Its status line names the
-   version being released. Read "What works today" and "Known limits" again against
-   what this release contains, and check each command the README shows against the
-   binary. The README is packed into every archive, so what is tagged is what people
-   read.
-4. Note in the release notes draft: user-visible changes, protocol version, database
-   migrations, and any change to `RELEASE_TOOLCHAIN`.
-5. Tag and push:
+   version being released. While that version is not released, the status block also
+   says which version the install line installs and what that version does
+   differently, and `docs/terminal.md` has a short note of the same before its first
+   use of `keep`. Both notes come out in this pull request. Read "What works today",
+   `docs/checked.md` and "Known limits" again against what this release contains, and
+   check each command the README shows against the binary. The README is packed into
+   every archive, so what is tagged is what people read, and `docs/checked.md` is
+   packed next to it.
+4. Write into `CHANGELOG.md`: user-visible changes, protocol version, database
+   migrations, and any change to `RELEASE_TOOLCHAIN`. Move its "Unreleased" entries
+   under the new version in the same pull request. The workflow publishes the
+   release page at once, with a fixed text and generated notes: there is no draft to
+   edit before it is public, and the page can be edited afterwards.
+5. Tag and push, with the version you set in step 2 in place of `<version>`:
 
    ```sh
-   git tag -a v0.1.0 -m "PeerHarness v0.1.0"
-   git push origin v0.1.0
+   git tag -a v<version> -m "PeerHarness v<version>"
+   git push origin v<version>
    ```
 
 6. Watch the Release workflow. When it finishes, download one archive and verify it as
    below before announcing the release. Then run the install script once on a clean
    machine or with `PEERHARNESS_INSTALL_DIR=$(mktemp -d)`: it only works for a
    published release of a public repository.
-7. Say in the README what was checked on the published release ("What works today",
-   the row about the install script and the release binaries), and what was not. Open
-   that pull request right away: it is part of the release, not a follow-up.
+7. Say what was checked on the published release, and what was not: in the README
+   ("What works today") and in `docs/checked.md` (the row about the install script
+   and the release binaries). Open that pull request right away: it is part of the
+   release, not a follow-up.
 8. If a build job fails, fix the problem on `main`, delete the tag locally and on GitHub,
    and tag again. Never replace the assets of a published release; publish a new patch
    version instead.

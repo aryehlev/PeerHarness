@@ -101,6 +101,7 @@ fn reload(node: &Node, cand: &CandidateRow) -> Result<CandidateRow> {
 /// The draft SKILL.md, or why there is none.
 fn draft(cand: &CandidateRow) -> Result<(String, String)> {
     let (name, md) = library::render_candidate_skill(cand)?;
+    crate::agent_notes::refuse_reserved_name(&name)?;
     ph_skills::build_bundle(&md, Some(&name))
         .map_err(|e| usage(format!("this text cannot become a rule: {e}")))?;
     Ok((name, md))
@@ -200,6 +201,8 @@ fn approve(node: &Node, cand: &CandidateRow) -> Result<Report> {
     if cand.status.is_terminal() {
         return Err(usage(format!("this candidate is {}", cand.status)));
     }
+    // Before anything moves: a rule that could not be saved is not approved either.
+    draft(cand)?;
     let now = node.now();
     if cand.status == CandidateStatus::LocalReview {
         node.store.update_candidate_status(

@@ -130,6 +130,86 @@ fn transaction_rolls_back_everything_on_error() {
     assert_eq!(s.memberships_for_circle(&circle()).unwrap().len(), 1);
 }
 
+/// What a caller of `transaction_with` returns from its closure: this crate's error,
+/// or one of its own.
+#[derive(Debug)]
+enum CallerError {
+    Store(StoreError),
+    Refused(&'static str),
+}
+
+impl From<StoreError> for CallerError {
+    fn from(e: StoreError) -> Self {
+        CallerError::Store(e)
+    }
+}
+
+/// `transaction_with` is `transaction` for a closure whose error is the caller's. An
+/// error that is not this crate's rolls back what the closure wrote, like one that is,
+/// and comes back as it was returned.
+#[test]
+fn transaction_with_rolls_back_on_the_callers_own_error() {
+    let s = Store::open_in_memory().unwrap();
+    let res: Result<(), CallerError> = s.transaction_with(|s| {
+        s.insert_circle(&circle_row())?;
+        s.record_notification("t", now())?;
+        assert_eq!(s.circles()?.len(), 1, "written inside the transaction");
+        Err(CallerError::Refused("the caller's own check failed"))
+    });
+    assert!(
+        matches!(
+            res,
+            Err(CallerError::Refused("the caller's own check failed"))
+        ),
+        "{res:?}"
+    );
+    assert!(s.circles().unwrap().is_empty());
+    assert_eq!(
+        s.count_notifications_since(now().minus_secs(10)).unwrap(),
+        0
+    );
+
+    // An error of this crate inside it is carried in the caller's type, and rolls back.
+    let res: Result<(), CallerError> = s.transaction_with(|s| {
+        s.insert_circle(&circle_row())?;
+        s.insert_circle(&circle_row())?;
+        Ok(())
+    });
+    assert!(
+        matches!(
+            res,
+            Err(CallerError::Store(StoreError::AlreadyExists { .. }))
+        ),
+        "{res:?}"
+    );
+    assert!(s.circles().unwrap().is_empty());
+
+    // Without an error it commits, and its value comes back.
+    let n: Result<usize, CallerError> = s.transaction_with(|s| {
+        s.insert_circle(&circle_row())?;
+        Ok(s.circles()?.len())
+    });
+    assert!(matches!(n, Ok(1)), "{n:?}");
+    assert_eq!(s.circles().unwrap().len(), 1);
+
+    // Nested in a transaction it is a savepoint: its own failure takes back its own
+    // writes, and the outer transaction goes on and commits.
+    s.transaction(|s| {
+        s.record_notification("outer", now())?;
+        let inner: Result<(), CallerError> = s.transaction_with(|s| {
+            s.record_notification("inner", now())?;
+            Err(CallerError::Refused("inner"))
+        });
+        assert!(matches!(inner, Err(CallerError::Refused("inner"))));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        s.count_notifications_since(now().minus_secs(10)).unwrap(),
+        1
+    );
+}
+
 #[test]
 fn inner_failure_rolls_back_only_its_savepoint_when_caught() {
     let s = store_with_circle();

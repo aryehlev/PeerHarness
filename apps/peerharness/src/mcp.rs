@@ -87,6 +87,8 @@ enum Kind {
     Word,
     /// A sentence the user said.
     Sentence,
+    /// A sentence the user said, of at most this many characters.
+    Line(usize),
     /// One of a fixed list of words.
     OneOf(&'static [&'static str]),
 }
@@ -231,10 +233,12 @@ const TOOLS: &[Tool] = &[
             },
             Param {
                 name: "rationale",
-                description: "A reason, in the user's own words, published with the ballot. \
-                    Leave it out unless the user gave one.",
+                description: "A reason, in the user's own words, published with the ballot: \
+                    one line of at most 200 characters. Leave it out unless the user gave one.",
                 required: false,
-                kind: Kind::Sentence,
+                // What `proposal vote` accepts, and no more: a longer one is refused
+                // here, before a command runs.
+                kind: Kind::Line(crate::commands::proposal::MAX_RATIONALE_CHARS),
             },
         ],
         needs: Asked::Rules,
@@ -357,18 +361,39 @@ const TOOLS: &[Tool] = &[
     },
 ];
 
+/// How `join_circle` reaches the member's node.
+#[derive(Debug, PartialEq, Eq)]
+enum Member {
+    /// A peer id, to be found over the public network.
+    PeerId,
+    /// An address, dialled as it is.
+    Address,
+}
+
+/// Reads the `member` argument of `join_circle`: it has to parse as a peer id or as a
+/// multiaddr. `circle join` also takes a file, and reads a path that exists as one; a
+/// tool never does, so everything else is refused here, an absolute path included, and
+/// so is a value that names something on disk. What the agent wrote into a file is not
+/// where a circle comes from.
+fn member_of(value: &str) -> Option<Member> {
+    let member = if crate::internet::peer_id_of(value).is_some() {
+        Member::PeerId
+    } else if value.parse::<ph_network::Multiaddr>().is_ok() {
+        Member::Address
+    } else {
+        return None;
+    };
+    (!std::path::Path::new(value).exists()).then_some(member)
+}
+
 fn join_circle(server: &Server, a: &Args) -> Outcome {
     let member = a["member"].as_str();
-    // An address is dialled as it is. Anything else has to read as a peer id, so that a
-    // word that happens to name a file is never taken for one.
-    let address = member.starts_with('/');
-    let peer_id = member.len() >= 32 && member.chars().all(|c| c.is_ascii_alphanumeric());
-    if !address && !peer_id {
+    let Some(kind) = member_of(member) else {
         return Outcome::failed(
             "`member` is neither a peer id nor an address. Ask the user for the peer id the \
              member's node printed.",
         );
-    }
+    };
     let mut args = vec![
         "circle",
         "join",
@@ -376,7 +401,7 @@ fn join_circle(server: &Server, a: &Args) -> Outcome {
         "--expect-fingerprint",
         &a["fingerprint"],
     ];
-    if !address {
+    if kind == Member::PeerId {
         args.push("--internet");
     }
     if let Some(name) = a.get("name") {
@@ -525,19 +550,33 @@ impl Server {
     fn call(&self, tool: &Tool, args: &Args) -> Outcome {
         let asked = self.asked();
         if asked < tool.needs {
-            return Outcome::failed(not_allowed(self.home.is_initialized(), asked));
+            let window = crate::window::Window::find().is_some();
+            return Outcome::failed(not_allowed(self.home.is_initialized(), asked, window));
         }
         (tool.run)(self, args)
     }
 }
 
-/// What the agent is told when the owner has not allowed a tool.
-fn not_allowed(initialized: bool, asked: Asked) -> String {
+/// What the agent is told when the owner has not allowed a tool. `window` is whether
+/// this machine can show a confirmation window at all. Where it cannot, `setup` has
+/// nothing to turn on, so the answer does not send the owner back to it: it says that
+/// the step is typed in a terminal, and where the commands are.
+fn not_allowed(initialized: bool, asked: Asked, window: bool) -> String {
     let how = "peerharness setup";
     if !initialized {
         return format!(
             "PeerHarness is not set up on this machine. The user sets it up in their own \
              terminal with `{how}`. Tell them so and stop."
+        );
+    }
+    if !window {
+        return format!(
+            "This machine cannot show a confirmation window, so this step cannot be started \
+             from a coding agent here, and no setting changes that. Nothing was done. Noting \
+             a rule (`note`) still works. This step is the user's to type in their own \
+             terminal: `peerharness --help` lists the commands, and docs/terminal.md has \
+             them step by step ({guide}). Tell them so and stop.",
+            guide = crate::commands::setup::TERMINAL_GUIDE,
         );
     }
     match asked {
@@ -624,6 +663,11 @@ fn checked(tool: &Tool, arguments: Option<&Value>) -> Result<Args, String> {
         }
         match p.kind {
             Kind::Sentence => {}
+            Kind::Line(max) => {
+                if value.chars().count() > max {
+                    return Err(format!("`{name}` is at most {max} characters"));
+                }
+            }
             Kind::Word => {
                 // A value is never a flag, and never more than one argument.
                 if value.starts_with('-') || value.chars().any(char::is_whitespace) {
@@ -1014,6 +1058,36 @@ mod tests {
     }
 
     #[test]
+    fn joining_takes_a_peer_id_or_an_address_and_never_a_path() {
+        let key = ph_protocol::SigningKey::from_bytes(&[7; 32]);
+        let peer = ph_network::peer_id_from_device_key(&ph_core::DeviceKey::from_signing_key(&key))
+            .to_string();
+        assert_eq!(member_of(&peer), Some(Member::PeerId));
+        assert_eq!(member_of(&format!("/p2p/{peer}")), Some(Member::PeerId));
+        let address = "/ip4/203.0.113.5/udp/4001/quic-v1";
+        assert_eq!(member_of(address), Some(Member::Address));
+        assert_eq!(
+            member_of(&format!("{address}/p2p/{peer}")),
+            Some(Member::Address)
+        );
+        // A path is not an address because it begins with a slash, and a long word is
+        // not a peer id because it is long.
+        let word = "a".repeat(40);
+        for not_one in [
+            "/tmp/xfer/4.jsonl",
+            "/etc/hosts",
+            "/",
+            "/home/alice/project/invite.jsonl",
+            "records.jsonl",
+            "../invite.jsonl",
+            "invite",
+            word.as_str(),
+        ] {
+            assert_eq!(member_of(not_one), None, "{not_one}");
+        }
+    }
+
+    #[test]
     fn an_argument_is_a_value_and_never_a_flag() {
         let ok = call(
             r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"vote","arguments":{"proposal_id":"abc123","decision":"approve","rationale":" --yes is what I say "}}}"#,
@@ -1045,6 +1119,27 @@ mod tests {
                 .contains("single line")
         );
         assert!(refused(r#"["abc","approve"]"#).contains("object"));
+        // A rationale is as long as `proposal vote` signs one, and the tool says so.
+        let max = crate::commands::proposal::MAX_RATIONALE_CHARS;
+        let longest = "é".repeat(max);
+        let ok = call(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"vote","arguments":{{"proposal_id":"abc","decision":"revise","rationale":"{longest}"}}}}}}"#
+        ));
+        assert_eq!(ok.args["rationale"], longest);
+        let said = refused(&format!(
+            r#"{{"proposal_id":"abc","decision":"revise","rationale":"{longest}x"}}"#
+        ));
+        assert_eq!(said, format!("`rationale` is at most {max} characters"));
+        let described = tool("vote")
+            .params
+            .iter()
+            .find(|p| p.name == "rationale")
+            .unwrap()
+            .description;
+        assert!(
+            described.contains(&format!("one line of at most {max} characters")),
+            "{described}"
+        );
         let long = "x".repeat(MAX_ARGUMENT_CHARS + 1);
         assert!(refused(&format!(
             r#"{{"proposal_id":"{long}","decision":"approve"}}"#
@@ -1081,11 +1176,31 @@ mod tests {
             (true, Asked::Rules),
             (true, Asked::RulesAndCircle),
         ] {
-            let said = not_allowed(initialized, asked);
+            let said = not_allowed(initialized, asked, true);
             assert!(said.contains("`peerharness setup`"));
             assert!(said.contains("their own terminal") && said.ends_with("and stop."));
         }
-        assert!(not_allowed(false, Asked::Nothing).contains("is not set up"));
+        assert!(not_allowed(false, Asked::Nothing, true).contains("is not set up"));
+        // No node at all: setting it up is the next step, window or not.
+        assert!(not_allowed(false, Asked::Nothing, false).contains("`peerharness setup`"));
+    }
+
+    #[test]
+    fn where_no_window_can_be_shown_the_answer_does_not_send_the_owner_back_to_setup() {
+        // Whatever the settings say: windows that were turned on elsewhere and came
+        // along with a copied home open nothing here either.
+        for asked in [Asked::Nothing, Asked::Rules, Asked::RulesAndCircle] {
+            let said = not_allowed(true, asked, false);
+            assert!(said.contains("cannot show a confirmation window"), "{said}");
+            assert!(!said.contains("setup"), "{said}");
+            assert!(!said.contains("has not allowed"), "{said}");
+            // It says where the step is taken instead, and still tells the agent to stop.
+            assert!(said.contains("their own terminal"), "{said}");
+            assert!(said.contains("docs/terminal.md"), "{said}");
+            assert!(said.ends_with("Tell them so and stop."), "{said}");
+        }
+        // With a window the owner is told what they can allow, as before.
+        assert!(not_allowed(true, Asked::Nothing, true).contains("has not allowed this"));
     }
 
     #[test]

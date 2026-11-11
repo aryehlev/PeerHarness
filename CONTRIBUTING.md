@@ -1,17 +1,26 @@
 # Contributing to PeerHarness
 
-Thanks for your interest. PeerHarness is a local-first, peer-to-peer learning harness for
-AI coding agents, written in Rust. This file covers the development setup, the checks
-every change must pass, how we work in phases, how to write a protocol client in another
-language, and how to report security problems.
+Thanks for your interest. PeerHarness lets a team vote on how its AI coding agents
+behave: a correction becomes a small rule, the members vote on it, and every node
+counts the votes for itself. It is written in Rust. This file covers the development
+setup, the checks every change must pass, how a change is made, how to write a protocol
+client in another language, and how to report security problems.
+
+The first versions were written with an AI coding agent from the brief in
+[`docs/spec.md`](docs/spec.md), and [`AGENTS.md`](AGENTS.md) is addressed to such
+agents. The same rules apply to a person and to an agent.
 
 By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Read first
 
-* [`docs/spec.md`](docs/spec.md): the original specification this repository implements.
+* [`README.md`](README.md): what the product does today, how each part was checked,
+  and its known limits.
 * [`docs/architecture.md`](docs/architecture.md): the internal contract between crates.
 * [`docs/decisions.md`](docs/decisions.md): ADRs and deviations from the specification.
+* [`docs/spec.md`](docs/spec.md): the original brief, kept for history. Its first
+  lines list where the product departs from it. Where the two differ, the architecture
+  and the ADRs are what holds.
 * [`docs/protocol-v0.md`](docs/protocol-v0.md): the wire and signing protocol.
 * [`docs/security-model.md`](docs/security-model.md): the threat model.
 * [`AGENTS.md`](AGENTS.md): crate boundaries and invariants (written for AI coding agents,
@@ -64,6 +73,14 @@ cargo run -p peerharness -- init --keystore file
 `init --kdf-profile fast-insecure-test` makes key derivation fast for tests and demos. It
 is test-only, prints a warning, and must never be used for real keys.
 
+`cargo run` and `cargo build` make a debug build. A debug build obeys the
+`PEERHARNESS_TEST_*` stand-ins that the tests use in place of a confirmation window, a
+notification and Claude Code's `claude` command, so it is for development and tests and
+not for daily use. `peerharness doctor` says so in a `build` line and `peerharness
+status` in a shorter one. A release build does not read those variables. No command
+may refuse because the build is a debug build: the test suite and `demo/two-peers.sh`
+run debug builds.
+
 ## Checks every change must pass
 
 These are exactly what CI runs (`.github/workflows/ci.yml`):
@@ -98,42 +115,34 @@ would use the real OS keychain are `#[ignore]`d.
 **Never claim a test passed without running it.** In pull requests, paste the actual
 command output or say plainly what you did not run.
 
-## How we work: phases and discipline
+## How a change is made
 
-The project is built in phases (specification section 12): A (skeleton and local
-identity), B (direct P2P and invitation-only circles), C (local learning and human
-questions), D (signed questions, votes and decisions), E (immutable skill sharing, sync
-and rollback), F (launch). Each phase has an acceptance gate described in the
-specification.
+1. **Read first.** The documents above, and the crate-level docs (`//!` in each
+   `src/lib.rs`) of the crates you touch. `AGENTS.md` has the crate boundaries and the
+   invariants that must never be loosened. Check the current official documentation of
+   a library before you change how it is used.
+2. **Add tests where they belong.** Unit tests sit next to the code. Tests of one crate
+   are in `crates/<crate>/tests/`. Tests that run the binary, the multi-node ones
+   included, are in `apps/peerharness/tests/` (ADR-007), with shared fixtures in
+   `tests/fixtures/`. Security behaviour needs a negative test: show the forged,
+   expired, revoked, out-of-scope, replayed or oversized input being rejected. The
+   testing rules in `AGENTS.md` say what every test has to set so that it never touches
+   your real `~/.claude`, your keychain or the public network.
+3. **Run the checks** above and report what they printed.
+4. **Update the docs in the same change**: the README, `docs/`, the exact CLI examples,
+   `CHANGELOG.md`, and an ADR in `docs/decisions.md` for every decision or deviation.
+5. **Keep commits to one logical increment each.**
+6. **Say what you did not do.** Known limitations go in the pull request and, if they
+   concern users, in the README's "Known limits".
 
-For every phase and every non-trivial change, follow the discipline of specification
-section 14:
-
-1. **Read the existing code and the current official library documentation** before
-   changing a core interface.
-2. **Write a short plan, then implement it.** Ship running code, not documentation-only
-   scaffolding.
-3. **Add tests**: unit tests, integration tests, negative authorization tests and
-   failure handling. Security-relevant behaviour needs a test that shows the attack
-   failing.
-4. **Run** `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-   warnings` and `cargo test --workspace` (CI adds `--locked`).
-5. **Update the docs**: README, `docs/`, exact CLI examples, and an ADR in
-   `docs/decisions.md` for every decision or deviation from the specification.
-6. **Keep features behind stable CLI boundaries** and commit logically separate
-   increments.
-7. **Show actual results and known limitations.** Never report a test as passing
-   without running it.
-
-Prioritize a working, safe two-node network and the local learning loop over feature
-breadth. **Do not loosen a security requirement to finish a feature.** If a requirement
-cannot be met safely, leave the feature disabled, document the blocker, and continue with
-the safe scope.
+**Do not loosen a security requirement to finish a feature.** If a requirement cannot
+be met safely, leave the feature disabled, document the blocker, and continue with the
+safe scope.
 
 ### Pull requests
 
 * Keep pull requests focused. Explain what changed and why, how you tested it, and any
-  limitation.
+  limitation. The pull-request template asks for the same.
 * Changes to the protocol (anything in `crates/ph-protocol` that changes bytes on the
   wire or what is signed) need an update to `docs/protocol-v0.md`, regenerated vectors
   (below) and, if incompatible, a new schema version (protocol section 15).
@@ -182,8 +191,9 @@ specification was ambiguous.
 
 ## Reporting security issues
 
-**Do not open public issues for vulnerabilities.** Follow [`SECURITY.md`](SECURITY.md)
-to report privately. PeerHarness has not had a security audit.
+**Do not put the details of a vulnerability in a public issue.** Follow
+[`SECURITY.md`](SECURITY.md) to report privately. PeerHarness has not had a security
+audit.
 
 ## License
 
