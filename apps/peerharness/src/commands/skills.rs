@@ -400,11 +400,30 @@ fn uninstall(node: &Node, a: &SkillsUninstallArgs) -> Result<Report> {
     };
     for circle in node.store.circles()? {
         let id = &circle.circle_id;
-        let (_, rules, _) = crate::governance::rule_set(&node.store, id)?;
+        // A circle the owner left on this machine installs nothing here, whatever its
+        // rules say (`circle leave`): no rule of it is one they follow.
+        if node.store.circle_left_at(id)?.is_some() {
+            continue;
+        }
+        let (charter, rules, _) = crate::governance::rule_set(&node.store, id)?;
         let Some(rule) = rules.get(&s.name).filter(|r| r.bundle_digest() == digest) else {
             continue;
         };
         if node.store.is_rule_opted_out(id, &s.name)? {
+            continue;
+        }
+        // A rule that does not bind this node is not one its owner follows either: they
+        // are not in its electorate (they were taken off the roll, or it is another
+        // team's scope), so no settle installs it here (`governance::apply_rules` asks
+        // the same).
+        let binds_me = charter
+            .content
+            .voter(
+                &node.device_key(),
+                &ph_protocol::Electorate::Scope(rule.scope()),
+            )
+            .is_some();
+        if !binds_me {
             continue;
         }
         // Where this machine puts that rule (`circle place`).
@@ -467,6 +486,19 @@ fn uninstall(node: &Node, a: &SkillsUninstallArgs) -> Result<Report> {
         &gone.path,
         node.now(),
     )?;
+    // The copy is gone. Where a circle's record says that a vote installed exactly this
+    // text in this place, the record goes with it: it stood for the copy that was just
+    // removed. Such a record outlives its rule when a removal failed (a repeal or an
+    // opt-out whose files could not be changed keeps it, to try again). Left behind, it
+    // would let the next settle remove a skill the owner installs here themselves
+    // later, with the same text, on the strength of a vote that never put it there.
+    for circle in node.store.circles()? {
+        let id = &circle.circle_id;
+        let voted = crate::governance::voted_install(&node.store, id, &s.name)?;
+        if voted.is_some_and(|(voted, at)| voted == gone.removed_digest && at == here) {
+            node.store.clear_rule_install(id, &s.name)?;
+        }
+    }
     Ok(Report::new(
         json!({
             "skill_name": s.name,

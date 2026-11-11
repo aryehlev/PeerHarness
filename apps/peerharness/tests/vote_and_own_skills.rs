@@ -1184,6 +1184,218 @@ fn the_way_out_of_a_hold_does_not_take_out_another_circles_rule_unasked() {
     assert!(!alice.windows_opened());
 }
 
+/// Makes the skills directory of a project one that nothing can be removed from, in a
+/// way that does not depend on file permissions (the suite may run as root): the
+/// directory moves out of the project and a link takes its place. A project installer
+/// does not follow a link that leads out of the project. Returns where the directory
+/// went.
+fn out_of_reach(project_skills: &Path) -> PathBuf {
+    let elsewhere = project_skills
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("skills-moved-out");
+    std::fs::rename(project_skills, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, project_skills).unwrap();
+    elsewhere
+}
+
+/// Undoes [`out_of_reach`]: the directory is a directory of the project again.
+fn within_reach(project_skills: &Path, elsewhere: &Path) {
+    std::fs::remove_file(project_skills).unwrap();
+    std::fs::rename(elsewhere, project_skills).unwrap();
+}
+
+/// When a skill a vote installed cannot be removed (a repeal or an opt-out while its
+/// files cannot be changed), the record that a vote installed it is kept, so that the
+/// next settle tries again. The owner can also take the leftover out themselves once
+/// the files can be changed: `skills uninstall`. That used to leave the record behind.
+/// When the owner then installed the same text for themselves, the next settle removed
+/// it, on the strength of a vote that had not put that copy there. Now the record goes
+/// with the copy it stood for.
+#[test]
+fn a_record_of_a_vote_goes_with_the_copy_its_owner_takes_out() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let alice = Node::new(root, "alice");
+    alice.run(&["circle", "create", "team"]);
+    let project = std::fs::canonicalize(&alice.cwd).unwrap();
+    let place = project.to_str().unwrap().to_owned();
+    let skills = project.join(".claude").join("skills");
+    alice.run(&[
+        "circle",
+        "place",
+        "*",
+        "--circle",
+        "team",
+        "--project",
+        &place,
+        "--yes",
+    ]);
+
+    for (name, text, repealed) in [
+        ("style", "Indent with two spaces.", true),
+        ("commits", "Commit subjects are one word.", false),
+    ] {
+        let on_record = (name.to_owned(), Some(place.clone()));
+        let installed = skills.join(name).join("SKILL.md");
+        pass_alone(&alice, "team", name, text);
+        assert!(installed.is_file(), "{name}");
+        assert!(voted_installs(&alice, "team").contains(&on_record));
+
+        // --- The rule is to go while its files cannot be changed: it is repealed, or
+        // she opts out. It is reported, it stays, and so does its record.
+        let elsewhere = out_of_reach(&skills);
+        if repealed {
+            let repeal = id_of(&alice.run(&["rule", "repeal", name, "--circle", "team", "--yes"]));
+            let said = alice.reads(&["proposal", "vote", &repeal, "approve", "--yes"]);
+            assert!(
+                said.contains(&format!("rule {name} could not be removed")),
+                "{said}"
+            );
+        } else {
+            let out = alice.run(&["rule", "opt-out", name, "--circle", "team"]);
+            assert_eq!(out["not_removed"], json!([name]), "{out}");
+        }
+        assert!(elsewhere.join(name).join("SKILL.md").is_file(), "{name}");
+        assert!(voted_installs(&alice, "team").contains(&on_record));
+        within_reach(&skills, &elsewhere);
+
+        // --- The files can be changed again, and she takes the leftover out herself.
+        // The record that a vote installed it goes with it.
+        let (code, said) = in_project(&alice, &["skills", "uninstall", name, "--scope", "project"]);
+        assert_eq!(code, 0, "{said}");
+        assert!(!installed.exists());
+        assert!(
+            !voted_installs(&alice, "team").contains(&on_record),
+            "the record stood for the copy that is gone"
+        );
+
+        // --- She installs the same text for herself, and the circle is settled again.
+        // Her copy is hers: nothing removes it, and nothing says it did.
+        let (code, said) = in_project(
+            &alice,
+            &["skills", "install", name, "--scope", "project", "--yes"],
+        );
+        assert_eq!(code, 0, "{said}");
+        let hers = std::fs::read_to_string(&installed).unwrap();
+        let own = alice.export(root, name);
+        let settled = alice.import(&own);
+        assert_eq!(settled["removed"], json!([]), "{settled}");
+        assert_eq!(settled["not_removed"], json!([]), "{settled}");
+        let said = alice.reads(&["events", "import", &own]);
+        assert!(!said.contains("removed rule"), "{said}");
+        assert_eq!(
+            std::fs::read_to_string(&installed).unwrap(),
+            hers,
+            "{name}: what she installed herself is still there"
+        );
+    }
+    assert!(!alice.windows_opened());
+}
+
+/// `skills uninstall` refuses a copy of a rule in force that its owner follows, and
+/// names the opt-out. It used to say that to an owner the rule no longer concerns: one
+/// who was voted off the roll, and one who left the circle on this machine. Nothing of
+/// that circle is installed for them again, so a copy of its text that they installed
+/// for themselves afterwards is theirs to take out, in a project and in their user
+/// directory.
+#[test]
+fn a_copy_of_a_rule_that_no_longer_binds_its_owner_is_theirs_to_take_out() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let name = "style";
+    let refusal = format!("{name} is a rule in force in team");
+
+    // --- Bob places the circle's rules in his project. A rule passes: it is installed
+    // there for Bob, and in Carol's user directory.
+    let project = std::fs::canonicalize(&bob.cwd).unwrap();
+    let in_bobs_project = project
+        .join(".claude")
+        .join("skills")
+        .join(name)
+        .join("SKILL.md");
+    bob.run(&[
+        "circle",
+        "place",
+        "*",
+        "--circle",
+        "team",
+        "--project",
+        project.to_str().unwrap(),
+        "--yes",
+    ]);
+    let noted = alice.note(name, "Indent with two spaces.");
+    let proposal = id_of(&alice.run(&["proposal", "create", &noted, "--circle", "team", "--yes"]));
+    alice.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+    bob.import(&alice.export(root, "rule"));
+    let voted = bob.run(&["proposal", "vote", &proposal, "approve", "--yes"]);
+    assert_eq!(voted["passed"], true, "{voted}");
+    let passed = bob.export(root, "rule");
+    alice.import(&passed);
+    carol.import(&passed);
+    assert!(in_bobs_project.is_file());
+    assert!(carol.skill_file(name).is_file());
+
+    // --- While they follow it, the copy a vote installed is not theirs to take out.
+    let (code, said) = in_project(&bob, &["skills", "uninstall", name, "--scope", "project"]);
+    assert_eq!(code, 2, "{said}");
+    assert!(said.contains(&refusal), "{said}");
+    let (code, msg) = carol.fail(&["skills", "uninstall", name, "--scope", "user"]);
+    assert_eq!(code, 2, "{msg}");
+    assert!(msg.contains(&refusal), "{msg}");
+
+    // --- Carol is voted off the roll. The rule stays in force and no longer binds
+    // her: her node removes the copy the vote installed.
+    let removal = id_of(&alice.run(&["circle", "remove", "carol", "--circle", "team", "--yes"]));
+    bob.import(&alice.export(root, "removal"));
+    let voted = bob.run(&["proposal", "vote", &removal, "approve", "--yes"]);
+    assert_eq!(voted["passed"], true, "{voted}");
+    let issued = alice.import(&bob.export(root, "removal"));
+    assert_eq!(issued["charters_issued"], json!([4]));
+    let charter = alice.export(root, "charter-4");
+    bob.import(&charter);
+    let told = carol.import(&charter);
+    assert_eq!(told["removed"], json!([name]), "{told}");
+    assert_eq!(carol.rule(name)["binds_you"], false);
+    // She keeps the text for herself, and later takes it out again: not refused.
+    carol.run(&["skills", "install", name, "--scope", "user", "--yes"]);
+    assert!(carol.skill_file(name).is_file());
+    let gone = carol.run(&["skills", "uninstall", name, "--scope", "user"]);
+    assert_eq!(gone["skill_name"], name, "{gone}");
+    assert!(!carol.skill_file(name).exists());
+
+    // --- Bob leaves the circle on his machine. The vote's copy goes from his project.
+    let left = bob.run(&["circle", "leave", "--circle", "team", "--yes"]);
+    assert_eq!(left["removed_rules"], json!([name]), "{left}");
+    assert!(!in_bobs_project.exists());
+    assert_eq!(voted_installs(&bob, "team"), []);
+    assert_eq!(bob.rule(name)["opted_out"], false, "he did not opt out");
+    // He keeps the text for himself, in the project and in his user directory, and
+    // takes both out again. Neither is refused, and he is not told to opt out of a
+    // rule of a circle he left.
+    let (code, said) = in_project(
+        &bob,
+        &["skills", "install", name, "--scope", "project", "--yes"],
+    );
+    assert_eq!(code, 0, "{said}");
+    assert!(in_bobs_project.is_file());
+    bob.run(&["skills", "install", name, "--scope", "user", "--yes"]);
+    assert!(bob.skill_file(name).is_file());
+    let (code, said) = in_project(&bob, &["skills", "uninstall", name, "--scope", "project"]);
+    assert_eq!(code, 0, "{said}");
+    assert!(!said.contains("opt out"), "{said}");
+    assert!(!in_bobs_project.exists());
+    let gone = bob.run(&["skills", "uninstall", name, "--scope", "user"]);
+    assert_eq!(gone["skill_name"], name, "{gone}");
+    assert!(!bob.skill_file(name).exists());
+    for node in [&alice, &bob, &carol] {
+        assert!(!node.windows_opened(), "{}", node.name);
+    }
+}
+
 /// A yes is for the text that was shown. Carol is asked before a rule is installed. A
 /// rule passes, and her agent starts installing it: the window shows its text. While
 /// she reads, her node receives a second rule of the same name that the others passed,

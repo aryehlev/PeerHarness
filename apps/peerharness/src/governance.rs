@@ -1657,8 +1657,9 @@ pub fn apply_rules(
 
 /// The line a command prints for a skill that a vote installed and that could not be
 /// removed when it was to go ([`Applied::not_removed`]). It names no command that
-/// removes the skill by itself: `skills uninstall` refuses a copy a vote installed
-/// while that rule is in force, which it still is after `circle leave`.
+/// removes the skill by itself: what could not be changed here cannot be changed by
+/// `skills uninstall` either, and that command refuses a copy a vote installed while
+/// its owner still follows the rule (a scope that was moved).
 pub fn not_removed_line(name: &str) -> String {
     format!(
         "rule {name} could not be removed: its files could not be changed. It is still \
