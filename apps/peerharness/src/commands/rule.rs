@@ -590,7 +590,11 @@ fn repeal(
     use ph_protocol::{Electorate, ProposalAction};
 
     let id = &circle.circle_id;
+    // The charter the preview is built from: it fixes who votes on the repeal and how
+    // many approvals it takes, which the preview states. The proposal is signed under
+    // this charter or not at all.
     let (charter, rules, _) = governance::rule_set(&node.store, id)?;
+    let shown = charter.digest()?;
     let rule = rules.get(name).ok_or_else(|| {
         usage(format!(
             "no rule named {name:?} is in force in {}: see `peerharness rule list`",
@@ -638,8 +642,10 @@ fn repeal(
     // A repeal names the proposal it repeals, which was read before the preview. The
     // key first, then a look at whether that proposal is still the rule of this name:
     // one that took the name while the owner read or typed a passphrase is another
-    // text, which this repeal would leave in force. The look and the signature are one
-    // transaction, so no other process stores a rule of this name between them.
+    // text, which this repeal would leave in force. Then the charter: the preview
+    // stated its electorate and count, and under a newer one nothing is signed
+    // (`propose_under`). Both looks and the signature are one transaction, so no
+    // other process stores a rule or a charter between them.
     let key = node.device()?.signing_key();
     let proposal = governance::atomically(&node.store, key, |store| {
         if !governance::rule_as_shown(store, key, id, name, &target)? {
@@ -649,10 +655,11 @@ fn repeal(
                  Run the command again to see the rule as it is now.",
             ));
         }
-        governance::propose(
+        governance::propose_under(
             store,
             key,
             id,
+            &shown,
             governance::NewProposal {
                 scope: &scope,
                 title: &title,

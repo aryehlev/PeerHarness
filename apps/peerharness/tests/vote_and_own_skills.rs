@@ -13,10 +13,12 @@
 //! signs its proposal the way a member's modified client could, or a version from
 //! before the name was reserved.
 //!
-//! The last test is about the owner's own yes to a rule that passed: it counts for the
-//! text they were shown, and not for another rule that takes the same name while they
-//! read. That test turns confirmation windows on and gives its node a stand-in window
-//! of its own, so it is compiled for debug builds only.
+//! The last two tests are about a yes that was given while the node changed. The
+//! owner's yes to a rule that passed counts for the text they were shown, and not for
+//! another rule that takes the same name while they read. And a rule is put to the vote
+//! under the charter its preview counted the voters on, and not under a successor that
+//! arrived while its proposer read. Each turns confirmation windows on and gives its
+//! node a stand-in window of its own, so both are compiled for debug builds only.
 #![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
@@ -2054,4 +2056,155 @@ fn a_yes_to_one_text_does_not_install_another_that_took_its_name_meanwhile() {
     assert!(read.contains("HIGH RISK findings above."), "{read}");
     assert!(read.contains(&format!("Installed rule {name}.")), "{read}");
     assert!(carol.skill_text(name).contains("rules.txt"));
+}
+
+/// The preview of `proposal create` says who votes on the rule and how many approvals
+/// it takes, counted on the charter in force when it is built. Bob's agent starts the
+/// proposal, and the window shows "2 of 3". While he reads, his node receives charter
+/// 4, which admits Dave (here an import; a running daemon's sync does the same). Then
+/// he clicks Proceed. The command used to sign under whatever charter was current by
+/// then: four voters and three approvals, which nobody had shown him. It is refused
+/// now, before anything is saved, and running it again shows the count as it is.
+///
+/// (`rule repeal` and `question send` check the same after their owner's answer. They
+/// are asked in the terminal only, and a test cannot make something arrive while a
+/// terminal prompt waits: the unit tests of `governance::propose_under` and
+/// `governance::charter_as_shown` stand for them.)
+#[cfg(debug_assertions)]
+#[test]
+fn a_rule_is_not_proposed_under_a_charter_that_arrived_while_its_proposer_read() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol) = trio(root);
+    let dave = Node::new(root, "dave");
+    bob.run(&["watch", "claude", "--install", "--dialogs", "--yes"]);
+    let noted = bob.note("style", "Indent with two spaces.");
+
+    // --- Dave's admission passes with Alice's and Carol's approvals, and Alice's node,
+    // which founded the circle, issues charter 4. Bob's node has seen none of it.
+    let admission = id_of(&alice.run(&[
+        "circle",
+        "invite",
+        &dave.device_key(),
+        "--circle",
+        "team",
+        "--member",
+        "dave",
+        "--yes",
+    ]));
+    carol.import(&alice.export(root, "dave"));
+    carol.run(&["proposal", "vote", &admission, "approve", "--yes"]);
+    let issued = alice.import(&carol.export(root, "dave-approved"));
+    assert_eq!(issued["charters_issued"], json!([4]));
+    let newer = alice.export(root, "charter-4");
+    let charter = |node: &Node| node.run(&["circle", "members"])["charter"]["seq"].clone();
+    assert_eq!(charter(&bob), 3);
+
+    let candidates = |node: &Node| node.run(&["status"])["candidates"].clone();
+    let library = |node: &Node| node.run(&["skills", "list"])["skills"].clone();
+    // The bundle files of the library, by name.
+    let bundles = |node: &Node| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(node.home.join("bundles"))
+            .map(|dir| {
+                dir.map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let rule_proposals = |node: &Node| -> usize {
+        node.run(&["proposal", "list"])["proposals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["kind"] == "adopt")
+            .count()
+    };
+    let (noted_as, in_library, on_disk) = (candidates(&bob), library(&bob), bundles(&bob));
+    assert_eq!(noted_as, json!({ "detected": 1 }));
+    assert_eq!(rule_proposals(&bob), 0);
+
+    // --- His agent starts the proposal. The window gets the preview, and before it
+    // answers Proceed the newer charter arrives on his node.
+    let saw = root.join("bob-window-saw");
+    let log = root.join("bob-import-during-the-window");
+    let script = format!(
+        "#!/bin/sh\ncat > '{saw}'\n\
+         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION '{bin}' events import '{newer}' \
+         > '{log}' 2>&1 || {{ echo declined; exit 0; }}\necho proceed\n",
+        saw = saw.display(),
+        bin = assert_cmd::cargo::cargo_bin("peerharness").display(),
+        log = log.display(),
+    );
+    std::fs::write(&bob.window, script).unwrap();
+    let create = ["proposal", "create", &noted, "--circle", "team"];
+    let out = bob.cmd(&create).env("CLAUDECODE", "1").output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The window showed the count of charter 3, and the import happened while it was
+    // open.
+    let shown = std::fs::read_to_string(&saw).unwrap_or_default();
+    assert!(
+        shown.contains("It passes with 2 of 3 member approval(s)."),
+        "{shown}\n{printed}"
+    );
+    let during = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(during.contains("Imported"), "{during}\n{printed}");
+    assert_eq!(charter(&bob), 4);
+
+    // His click was for a vote of three members. Nothing is proposed under charter 4:
+    // the command is refused, with the refusal a change to the charter gets.
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["error"]["kind"], "refused", "{report}");
+    assert_eq!(
+        report["error"]["message"],
+        "the circle's charter or the rules in force changed on this node while this was \
+         being confirmed. Nothing was proposed and nothing was signed. Run the command again \
+         to see what it would do now.",
+        "{report}"
+    );
+    assert_eq!(rule_proposals(&bob), 0, "no proposal was stored");
+    assert_eq!(
+        candidates(&bob),
+        noted_as,
+        "the candidate is not marked proposed"
+    );
+    assert_eq!(
+        library(&bob),
+        in_library,
+        "nothing was saved to the library"
+    );
+    assert_eq!(bundles(&bob), on_disk, "and no file of it either");
+
+    // --- The control: the same command with a window during which nothing arrives.
+    // It shows the count as it is now, and proposes.
+    let script = format!("#!/bin/sh\ncat > '{}'\necho proceed\n", saw.display());
+    std::fs::write(&bob.window, script).unwrap();
+    let out = bob.cmd(&create).env("CLAUDECODE", "1").output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{printed}");
+    let shown = std::fs::read_to_string(&saw).unwrap_or_default();
+    assert!(
+        shown.contains("It passes with 3 of 4 member approval(s)."),
+        "{shown}"
+    );
+    let proposed: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(proposed["skill_name"], "style", "{proposed}");
+    assert_eq!(candidates(&bob), json!({ "proposed": 1 }));
+    assert_eq!(library(&bob).as_array().map(Vec::len), Some(1));
+    assert_eq!(bundles(&bob).len(), on_disk.len() + 1);
+    assert_eq!(rule_proposals(&bob), 1);
+    let stands = bob.run(&["proposal", "show", &id_of(&proposed)]);
+    assert_eq!(stands["standing"], "open", "{stands}");
+    assert_eq!(stands["need"], 3, "{stands}");
+    assert_eq!(stands["electorate"].as_array().map(Vec::len), Some(4));
 }

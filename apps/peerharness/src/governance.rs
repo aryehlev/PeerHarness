@@ -690,12 +690,16 @@ pub fn atomically<T>(
     store.transaction_with(f)
 }
 
-/// Puts an `adopt` or a `repeal` proposal to the vote under the circle's current
-/// charter.
+/// Puts an `adopt` or a `repeal` proposal to the vote under whatever charter is current
+/// when it is signed.
 ///
-/// A change to the charter is not put this way, and an `amend` action is an error here:
-/// an amendment is a complete next charter drafted from one charter, and it is signed
-/// under that one and no other ([`propose_under`]).
+/// This is for a caller that showed nobody a preview: the demo, which plays every
+/// member itself, and tests. A command that asked its owner first signs through
+/// [`propose_under`], with the charter its preview was built from.
+///
+/// A change to the charter is never put this way, and an `amend` action is an error
+/// here: an amendment is a complete next charter drafted from one charter, and it is
+/// signed under that one and no other.
 pub fn propose(
     store: &Store,
     key: &SigningKey,
@@ -711,24 +715,31 @@ pub fn propose(
     sign_proposal(store, key, circle, charter, new, now)
 }
 
-/// The refusal of a change to the charter whose draft is no longer what this node
-/// would draft: the charter, or the rules the draft carries, changed while the owner
-/// read the preview. Names nothing a member wrote.
+/// The refusal of a proposal whose preview no longer holds. For a change to the
+/// charter: the draft is no longer what this node would draft, because the charter, or
+/// the rules the draft carries, changed while the owner read the preview. For a rule
+/// or a repeal: the charter that was read for the preview, which fixed who votes and
+/// how many approvals it takes, is no longer the one in force. Names nothing a member
+/// wrote.
 pub const CHARTER_CHANGED: &str =
     "the circle's charter or the rules in force changed on this node while this was being \
      confirmed. Nothing was proposed and nothing was signed. Run the command again to see \
      what it would do now.";
 
-/// Puts a change to the charter to the vote under the charter it was drafted from.
+/// Puts a proposal to the vote under the charter its preview was built from: a change
+/// to the charter, a rule (`adopt`) or a repeal.
 ///
-/// An amendment is a complete next charter, built from the charter that was current
-/// when its preview was made. The owner's yes is for that preview. A sync or an import
-/// can store a newer charter while they read, and a draft of the older one signed under
-/// the newer one would undo whatever that one changed. So `drafted` is the digest of
-/// the charter the draft was built from: when the circle's current charter is another
-/// one, nothing is signed, and otherwise the proposal names `drafted` itself.
+/// The owner's yes is for the preview, and every preview is built from one charter. An
+/// amendment is a complete next charter drafted from it: signed under a newer one, it
+/// would undo whatever that one changed. The preview of a rule or of a repeal states
+/// who votes and how many approvals it takes, both read from it: a newer charter is
+/// another electorate and another count. A sync or an import can store a newer charter
+/// while the owner reads. So `drafted` is the digest of the charter that was read for
+/// the preview: when the circle's current charter is another one, nothing is signed
+/// and the refusal is [`CHARTER_CHANGED`], and otherwise the proposal names `drafted`
+/// itself.
 ///
-/// A command calls this inside [`atomically`], after [`as_drafted`], so that no
+/// A command calls this inside [`atomically`], after its other checks, so that no
 /// charter arrives between the check here and the signature. Called outside of one, a
 /// charter that arrives in that instant leaves a proposal that names the earlier
 /// charter, which can no longer pass.
@@ -740,10 +751,28 @@ pub fn propose_under(
     new: NewProposal<'_>,
     now: Timestamp,
 ) -> Result<ProposalView> {
-    if current_charter(store, circle)?.digest()? != *drafted {
+    if !charter_as_shown(store, key, circle, drafted)? {
         return Err(crate::error::refused(CHARTER_CHANGED));
     }
     sign_proposal(store, key, circle, *drafted, new, now)
+}
+
+/// Whether the circle's charter in force is still the one with the digest `shown`: the
+/// charter a preview was built from, read before its owner was asked.
+///
+/// Like [`as_drafted`], this takes the unlocked key it is checked for, so that it runs
+/// after a passphrase prompt and not before one. [`propose_under`] asks it for every
+/// proposal. `proposal create` asks it once more before it saves anything, and
+/// `question send` before it sends: its preview says how many members can read the
+/// question, counted on that charter's roll.
+pub fn charter_as_shown(
+    store: &Store,
+    unlocked: &SigningKey,
+    circle: &CircleId,
+    shown: &Digest,
+) -> Result<bool> {
+    let _ = unlocked;
+    Ok(current_charter(store, circle)?.digest()? == *shown)
 }
 
 /// Checks, after the owner confirmed a change to the charter, that this node would
@@ -4342,6 +4371,102 @@ pub(crate) mod tests {
         // and no stance to record about a rule that is not in force.
         repeal(&store, &circle, &second, later);
         assert!(!shown(&second));
+    }
+
+    /// The preview of `proposal create` and of `rule repeal` states who votes and how
+    /// many approvals it takes, read from the charter in force then. Both used to sign
+    /// under whatever charter was current after the owner's answer: with a successor
+    /// that arrived while they read, under an electorate and a count they were not
+    /// shown. `propose_under` signs a rule and a repeal as it signs an amendment: under
+    /// the charter that was shown, or not at all.
+    #[test]
+    fn a_rule_and_a_repeal_are_signed_only_under_the_charter_that_was_shown() {
+        let (store, circle, now) = node();
+        let first = current_charter(&store, &circle).unwrap();
+        let shown = first.digest().unwrap();
+        let proposals = |store: &Store| store.proposals(&circle).unwrap().len();
+        let rule = |title: &'static str| NewProposal {
+            scope: &ALL,
+            title,
+            summary: "",
+            action: ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+                skill_name: "pnpm".into(),
+                description: "Use pnpm, not npm.".into(),
+                bundle_digest: Digest::sha256(b"bundle"),
+                bundle_size: 10,
+                related_question: None,
+                supersedes: None,
+            }),
+        };
+        let repeal_of = |target: EventId| NewProposal {
+            scope: &ALL,
+            title: "Repeal pnpm",
+            summary: "",
+            action: ph_protocol::ProposalAction::Repeal { target },
+        };
+
+        // The charter is the one the preview was built from: each is signed, and names
+        // that charter.
+        assert!(charter_as_shown(&store, &key(1), &circle, &shown).unwrap());
+        let adopted = propose_under(&store, &key(1), &circle, &shown, rule("Use pnpm"), now)
+            .expect("an adopt proposal under the charter that was shown");
+        assert_eq!(adopted.charter(), shown);
+        let repealed = propose_under(
+            &store,
+            &key(1),
+            &circle,
+            &shown,
+            repeal_of(adopted.event_id()),
+            now,
+        )
+        .expect("a repeal under the charter that was shown");
+        assert_eq!(repealed.charter(), shown);
+        assert_eq!(proposals(&store), 2);
+
+        // A successor arrives while the owner reads: it admits dave, so the electorate
+        // of scope `*` is three members and no longer two.
+        let mut content = first.content.clone();
+        content
+            .roll
+            .push(RollEntry::new("dave", vec![device(4)], vec![Scope::all()]));
+        content.normalize();
+        next_charter(&store, &first, content, now);
+        let second = current_charter(&store, &circle).unwrap();
+        assert_eq!(second.seq, 2);
+        assert!(!charter_as_shown(&store, &key(1), &circle, &shown).unwrap());
+
+        for new in [rule("Use pnpm everywhere"), repeal_of(adopted.event_id())] {
+            let refused = propose_under(&store, &key(1), &circle, &shown, new, now).unwrap_err();
+            assert_eq!(
+                crate::error::exit_kind(&refused),
+                crate::error::ExitKind::Refused
+            );
+            assert_eq!(refused.to_string(), CHARTER_CHANGED);
+        }
+        assert_eq!(proposals(&store), 2, "nothing was signed or stored");
+
+        // Read again, as a second run of the command does: signed under charter 2.
+        let now_shown = second.digest().unwrap();
+        let again = propose_under(
+            &store,
+            &key(1),
+            &circle,
+            &now_shown,
+            rule("Use pnpm everywhere"),
+            now,
+        )
+        .unwrap();
+        assert_eq!(again.charter(), now_shown);
+        let again = propose_under(
+            &store,
+            &key(1),
+            &circle,
+            &now_shown,
+            repeal_of(again.event_id()),
+            now,
+        )
+        .unwrap();
+        assert_eq!(again.charter(), now_shown);
     }
 
     /// A ballot signed by `seed`'s device on `proposal`, as raw bytes: what a peer

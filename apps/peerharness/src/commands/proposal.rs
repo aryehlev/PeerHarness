@@ -431,7 +431,11 @@ fn create(
             cand.id
         )));
     }
+    // The charter the preview is built from: it fixes who votes on the rule and how
+    // many approvals it takes, which the preview states. The proposal is signed under
+    // this charter or not at all.
     let charter = governance::current_charter(&node.store, &circle.circle_id)?;
+    let shown = charter.digest()?;
     let electorate = charter
         .content
         .electorate(&ph_protocol::Electorate::Scope(&scope))
@@ -479,12 +483,21 @@ fn create(
     // error in any of them takes back all of them, so no state says "proposed" unless
     // a proposal was signed.
     let (bundle, proposal, related_question) = governance::atomically(&node.store, key, |store| {
+        // The yes was for the electorate and the count the preview stated. A sync or
+        // an import can have stored a newer charter while the owner read or typed a
+        // passphrase: then nothing is saved, the candidate stays as it was and
+        // nothing is signed. Inside the transaction no charter arrives after this
+        // look, so `propose_under` below finds the same one.
+        if !governance::charter_as_shown(store, key, &circle.circle_id, &shown)? {
+            return Err(refused(governance::CHARTER_CHANGED));
+        }
+
         // Confirmed: save exactly the previewed text to the library. This is inside
-        // the transaction, so that the rows of the library stand or fall with the
-        // proposal. It also writes the bundle's file, which no rollback takes back: a
-        // later error here leaves a content-addressed file with the text the owner
-        // confirmed and no row that names it, and the next run stores the same file
-        // again without effect.
+        // the transaction, after the check, so that a refusal saves nothing and the
+        // rows of the library stand or fall with the proposal. It also writes the
+        // bundle's file, which no rollback takes back: a later error here leaves a
+        // content-addressed file with the text the owner confirmed and no row that
+        // names it, and the next run stores the same file again without effect.
         let (_, bundle, _) = crate::library::create_local_skill(&node.home, store, &cand, now)?;
         if bundle.digest() != draft.digest() {
             return Err(anyhow!(
@@ -514,10 +527,11 @@ fn create(
                 .map(|row| row.event_id),
             None => None,
         };
-        let proposal = governance::propose(
+        let proposal = governance::propose_under(
             store,
             key,
             &circle.circle_id,
+            &shown,
             NewProposal {
                 scope: &scope,
                 title: &title,
