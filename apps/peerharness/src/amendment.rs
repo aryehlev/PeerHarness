@@ -14,7 +14,11 @@
 //!   it lists that are not in force here, with the text of each such rule;
 //! * the rules the charter in force carries that this node does not hold and that
 //!   `next.carried` leaves out. Such a rule goes out of force as well, and this node
-//!   cannot name it: it says so, and no approval is signed here.
+//!   cannot name it: it says so, and no approval is signed here;
+//! * the rules the charter in force carries that this node does not hold and that
+//!   `next.carried` keeps. Keeping one is what an honest amendment does, and it is also
+//!   how a rule that was repealed since comes back. This node cannot tell which: it
+//!   says so, and no approval is signed here either.
 //!
 //! [`changes`] is a pure function of the two contents and of what this node knows about
 //! the rules ([`Rules`], which `governance::amendment_changes` reads from the store).
@@ -64,6 +68,12 @@ pub struct Added {
     pub proposal_id: EventId,
     /// The rule, when this node holds that id as an `adopt` proposal of the circle.
     pub rule: Option<AddedRule>,
+    /// Whether the charter in force carries this id already and this node does not
+    /// hold it as a rule (`RuleSet::missing_carried`). The amendment keeps it then; it
+    /// does not bring in a proposal from nowhere. Whether keeping it changes anything
+    /// is more than this node knows: a rule repealed or replaced under the charter in
+    /// force is out of force, and listing it again would bring it back.
+    pub kept_unheld: bool,
 }
 
 /// A rule the amendment would put in force without a vote of its own.
@@ -123,6 +133,9 @@ pub enum Unread {
     /// The amendment leaves out a rule that the charter in force carries and this node
     /// does not hold: it would take a rule out of force that this node cannot name.
     Dropped,
+    /// The amendment keeps a rule that the charter in force carries and this node does
+    /// not hold: this node cannot say whether that changes anything.
+    Kept,
 }
 
 impl Unread {
@@ -145,6 +158,13 @@ impl Unread {
                  force and you cannot have read what you would approve. Import the events \
                  file of a member who holds that rule first (`peerharness events import`)."
             }
+            Unread::Kept => {
+                "that amendment keeps a rule that the charter in force carries and this node \
+                 does not hold, so this node cannot show whether keeping it changes anything \
+                 (a rule repealed since would come back into force) and you cannot have read \
+                 what you would approve. Import the events file of a member who holds that \
+                 rule first (`peerharness events import`)."
+            }
         }
     }
 
@@ -156,6 +176,9 @@ impl Unread {
             Unread::Dropped => {
                 "it leaves out a rule the charter in force carries, which this node does not \
                  hold"
+            }
+            Unread::Kept => {
+                "it keeps a rule the charter in force carries, which this node does not hold"
             }
         }
     }
@@ -329,7 +352,7 @@ impl Changes {
         let Rules::Compared { added, dropped, .. } = &self.rules else {
             return None;
         };
-        if added.iter().any(|a| a.rule.is_none()) {
+        if added.iter().any(|a| a.rule.is_none() && !a.kept_unheld) {
             return Some(Unread::Proposal);
         }
         // A listed proposal that stays behind a later rule of its name puts nothing in
@@ -343,10 +366,12 @@ impl Changes {
         }
         // Losing a rule this node can name is something its owner may approve. Losing
         // one it cannot name is not something they can have read.
-        dropped
-            .iter()
-            .any(|d| d.skill_name.is_none())
-            .then_some(Unread::Dropped)
+        if dropped.iter().any(|d| d.skill_name.is_none()) {
+            return Some(Unread::Dropped);
+        }
+        // Nor is keeping one it does not hold: that changes nothing, or brings back a
+        // rule that was repealed since, and this node cannot show which.
+        added.iter().any(|a| a.kept_unheld).then_some(Unread::Kept)
     }
 
     /// Whether `other` says the same as this: the same lines for a person, a rule's
@@ -521,6 +546,18 @@ impl Changes {
                 }
                 for listed in added {
                     let id = short_id(&listed.proposal_id);
+                    if listed.kept_unheld {
+                        out.line(
+                            1,
+                            format!(
+                                "a rule the charter in force carries, which this node does \
+                                 not hold, is kept: the amendment carries it (proposal {id}). \
+                                 This node cannot say whether that changes anything: a rule \
+                                 repealed since would come back into force"
+                            ),
+                        );
+                        continue;
+                    }
                     let Some(rule) = &listed.rule else {
                         out.line(
                             1,
@@ -633,6 +670,9 @@ impl Changes {
                             Some(SameName::Behind(id)) => json!(id),
                             _ => Value::Null,
                         },
+                        // The charter in force carries it already and this node does
+                        // not hold it: kept, not brought in.
+                        "carried_by_charter_in_force": a.kept_unheld,
                     })
                 }).collect::<Vec<_>>(),
             }),
@@ -804,6 +844,7 @@ mod tests {
                     text,
                     same_name: None,
                 }),
+                kept_unheld: false,
             }],
         };
 
@@ -857,6 +898,7 @@ mod tests {
             added: vec![Added {
                 proposal_id: id(7),
                 rule: None,
+                kept_unheld: false,
             }],
         };
         let c = changes(3, &named, &named.clone(), unknown, None);
@@ -944,6 +986,109 @@ mod tests {
         assert!(!Unread::Dropped.missing().is_empty());
     }
 
+    /// A listed id that the charter in force carries already, on a node that does not
+    /// hold it. The amendment does not "put it in force": for all this node knows the
+    /// rule is in force and stays. Or it was repealed since, and keeping it brings it
+    /// back. The node says that it cannot tell, signs no approval, and sends its owner
+    /// to a member who holds the rule, not to the proposer, whose node may lack it too.
+    #[test]
+    fn a_kept_rule_this_node_does_not_hold_is_said_and_blocks_an_approval() {
+        let named = trio();
+        let rules = Rules::Compared {
+            in_force: 0,
+            dropped: Vec::new(),
+            added: vec![Added {
+                proposal_id: id(6),
+                rule: None,
+                kept_unheld: true,
+            }],
+        };
+        let c = changes(4, &named, &named.clone(), rules, None);
+        assert_eq!(c.unread(), Some(Unread::Kept));
+        let said = c.describe("");
+        assert!(!said.contains("stay as they are (0 in force)"), "{said}");
+        assert!(
+            said.contains(&format!(
+                "  a rule the charter in force carries, which this node does not hold, is \
+                 kept: the amendment carries it (proposal {}). This node cannot say whether \
+                 that changes anything: a rule repealed since would come back into force",
+                short_id(&id(6))
+            )),
+            "{said}"
+        );
+        // Not the words for an id from nowhere, and nothing "comes into force".
+        assert!(!said.contains("which is not a rule proposal this node holds"));
+        assert!(!said.contains("would put in force"), "{said}");
+        let json = c.json();
+        assert_eq!(json["can_be_approved_here"], false);
+        let added = &json["rules_in_force"]["added"][0];
+        assert_eq!(added["proposal_id"], json!(id(6)));
+        assert_eq!(added["carried_by_charter_in_force"], true);
+        assert_eq!(added["skill_name"], Value::Null);
+        assert_eq!(added["text_on_this_node"], false);
+        let refusal = Unread::Kept.refusal();
+        assert!(refusal.contains("you cannot have read what you would approve"));
+        assert!(
+            refusal.contains("a member who holds that rule"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("`peerharness events import`"));
+        assert!(!refusal.contains("the proposer's"), "{refusal}");
+        assert_eq!(
+            Unread::Kept.missing(),
+            "it keeps a rule the charter in force carries, which this node does not hold"
+        );
+
+        // An id from nowhere next to it is the first thing to settle; a dropped one
+        // comes before a kept one.
+        let both = |dropped: Vec<Dropped>, stranger: bool| {
+            let mut added = vec![Added {
+                proposal_id: id(6),
+                rule: None,
+                kept_unheld: true,
+            }];
+            if stranger {
+                added.push(Added {
+                    proposal_id: id(7),
+                    rule: None,
+                    kept_unheld: false,
+                });
+            }
+            let rules = Rules::Compared {
+                in_force: 0,
+                dropped,
+                added,
+            };
+            changes(4, &named, &named.clone(), rules, None).unread()
+        };
+        assert_eq!(both(Vec::new(), true), Some(Unread::Proposal));
+        let unnamed = vec![Dropped {
+            skill_name: None,
+            proposal_id: id(8),
+        }];
+        assert_eq!(both(unnamed, false), Some(Unread::Dropped));
+        // Every other listed proposal says that it is not such a one.
+        let c = changes(
+            4,
+            &named,
+            &named.clone(),
+            Rules::Compared {
+                in_force: 0,
+                dropped: Vec::new(),
+                added: vec![Added {
+                    proposal_id: id(7),
+                    rule: None,
+                    kept_unheld: false,
+                }],
+            },
+            None,
+        );
+        assert_eq!(
+            c.json()["rules_in_force"]["added"][0]["carried_by_charter_in_force"],
+            false
+        );
+    }
+
     /// One rule per name is in force: the later proposal. An amendment that carries a
     /// rule in force and also another proposal of the same name does not add a rule. It
     /// replaces the text of the one in force, or changes nothing, and says which.
@@ -960,6 +1105,7 @@ mod tests {
                     text,
                     same_name: Some(same_name),
                 }),
+                kept_unheld: false,
             }],
         };
 
@@ -1041,6 +1187,7 @@ mod tests {
                     text,
                     same_name: None,
                 }),
+                kept_unheld: false,
             }],
         };
         let dropped = || Rules::Compared {
@@ -1193,6 +1340,7 @@ mod tests {
                     text: Some(rule_text("harmless", body)),
                     same_name: None,
                 }),
+                kept_unheld: false,
             }],
         };
         let said = changes(3, &named, &named.clone(), rules, None).describe("  ");

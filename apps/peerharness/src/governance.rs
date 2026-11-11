@@ -209,7 +209,9 @@ pub fn rule_set(
 /// current charter carries can be missing from this node (a join that did not finish,
 /// a rule in a scope this node is not sent). The rule set leaves such a proposal out
 /// ([`RuleSet::missing_carried`]). An amendment that leaves it out as well drops that
-/// rule for the circle, so it is listed as dropped, without a name.
+/// rule for the circle, so it is listed as dropped, without a name. An amendment that
+/// lists it keeps it, and is marked so (`Added::kept_unheld`): it is not a proposal
+/// from nowhere, and this node cannot say whether keeping it changes anything.
 ///
 /// `Ok(None)` when `proposal` is not an amendment, or when this node does not hold the
 /// charter it names: then nothing can be said about what it changes.
@@ -257,6 +259,9 @@ pub fn amendment_changes(
             .iter()
             .map(|id| amendment::Added {
                 proposal_id: *id,
+                // The charter in force carries it and this node does not hold it: the
+                // amendment keeps a rule this node cannot name.
+                kept_unheld: in_force.missing_carried().contains(id),
                 rule: proposal_view(store, id)
                     .ok()
                     .filter(|p| p.circle_id() == circle)
@@ -2162,17 +2167,55 @@ mod tests {
         assert_eq!(json["rules_in_force"]["added"], json!([]));
         assert_eq!(json["can_be_approved_here"], false);
 
-        // An admission that keeps the rule lists an id this node cannot place, and is
-        // held back for that reason, as before: nothing is dropped.
+        // An admission that keeps the rule lists an id the charter in force carries
+        // already. It is held back too, and for what it is: this node cannot say
+        // whether keeping that rule changes anything. It is not described as a proposal
+        // from nowhere that the amendment "would put in force".
         let raw = amend(vec![unheld]);
+        let changes = shown(&store, &bundles, &raw, 1);
+        assert_eq!(changes.unread(), Some(Unread::Kept));
+        let json = changes.json();
+        assert_eq!(json["rules_in_force"]["dropped"], json!([]));
+        let added = &json["rules_in_force"]["added"];
+        assert_eq!(added.as_array().map(Vec::len), Some(1));
+        assert_eq!(added[0]["proposal_id"], json!(unheld));
+        assert_eq!(added[0]["carried_by_charter_in_force"], true);
+        assert_eq!(json["can_be_approved_here"], false);
+        let said = changes.describe("");
+        assert!(!said.contains("the rules in force stay as they are"));
+        assert!(
+            said.contains(&format!(
+                "a rule the charter in force carries, which this node does not hold, is \
+                 kept: the amendment carries it (proposal {})",
+                crate::output::short_id(&unheld)
+            )),
+            "{said}"
+        );
+        assert!(!said.contains("which is not a rule proposal this node holds"));
+
+        // Next to it, an id that the charter in force does not carry is still what it
+        // was: a proposal this node does not hold, from the proposer's side.
+        let stranger = EventId::from_digest(Digest::sha256(b"nowhere"));
+        let raw = amend(vec![unheld, stranger]);
         let changes = shown(&store, &bundles, &raw, 1);
         assert_eq!(changes.unread(), Some(Unread::Proposal));
         let json = changes.json();
-        assert_eq!(json["rules_in_force"]["dropped"], json!([]));
-        assert_eq!(json["can_be_approved_here"], false);
-        assert!(!changes
-            .describe("")
-            .contains("the rules in force stay as they are"));
+        let flags: Vec<(Value, Value)> = json["rules_in_force"]["added"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a["proposal_id"].clone(),
+                    a["carried_by_charter_in_force"].clone(),
+                )
+            })
+            .collect();
+        assert!(flags.contains(&(json!(unheld), json!(true))), "{flags:?}");
+        assert!(
+            flags.contains(&(json!(stranger), json!(false))),
+            "{flags:?}"
+        );
     }
 
     #[test]

@@ -684,16 +684,7 @@ fn a_node_that_lacks_a_carried_rule(root: &Path) -> Incomplete {
 
     // What reaches Dave: everything but the rule.
     let all = std::fs::read_to_string(alice.export(&root.join("all.jsonl"))).unwrap();
-    let without: Vec<&str> = all
-        .lines()
-        .filter(|raw| {
-            let record = line(raw);
-            let event = &record["event"];
-            record.get("bundle").is_none()
-                && event["event_id"] != rule.as_str()
-                && event["body"]["proposal_id"] != rule.as_str()
-        })
-        .collect();
+    let without = without_the_rule(&all, &rule);
     assert_eq!(all.lines().count() - without.len(), 5, "the rule's records");
     let partial = root.join("without-the-rule.jsonl");
     std::fs::write(&partial, without.join("\n") + "\n").unwrap();
@@ -757,6 +748,20 @@ fn a_node_that_lacks_a_carried_rule(root: &Path) -> Incomplete {
         drops_the_rule: proposal.event_id.to_string(),
         file,
     }
+}
+
+/// The lines of an events file without the records of the rule `rule` adopts: its
+/// proposal, the ballots and the result on it, and every rule text.
+fn without_the_rule<'a>(all: &'a str, rule: &str) -> Vec<&'a str> {
+    all.lines()
+        .filter(|raw| {
+            let record = line(raw);
+            let event = &record["event"];
+            record.get("bundle").is_none()
+                && event["event_id"] != rule
+                && event["body"]["proposal_id"] != rule
+        })
+        .collect()
 }
 
 /// The start of an id, as the commands print it (`sha256:` and twelve characters).
@@ -839,6 +844,79 @@ fn a_node_that_lacks_a_carried_rule_says_so_and_approves_no_amendment_that_drops
     );
     assert_eq!(dave.approvals(id), serde_json::json!([]));
 
+    // --- An honest admission, drafted on Alice's complete node: it carries the rule.
+    // What reaches Dave is the admission without the rule's records, as before. His
+    // node does not call that id a proposal from nowhere that the amendment "would put
+    // in force": the charter in force carries it. It says that the amendment keeps a
+    // rule it does not hold, and that it cannot tell whether that changes anything.
+    let honest = invite(alice, &c.erin, "erin");
+    let all = std::fs::read_to_string(alice.export(&tmp.path().join("an-honest-admission.jsonl")))
+        .unwrap();
+    let partial = tmp
+        .path()
+        .join("an-honest-admission-without-the-rule.jsonl");
+    std::fs::write(&partial, without_the_rule(&all, &c.rule).join("\n") + "\n").unwrap();
+    dave.run(&["events", "import", partial.to_str().unwrap()]);
+    let kept = format!(
+        "a rule the charter in force carries, which this node does not hold, is kept: the \
+         amendment carries it (proposal {}). This node cannot say whether that changes \
+         anything: a rule repealed since would come back into force",
+        short(&c.rule)
+    );
+    let (code, shown) = dave.reads(&["proposal", "show", &honest]);
+    assert_eq!(code, 0, "{shown}");
+    assert!(shown.contains(&kept), "{shown}");
+    assert!(!shown.contains("would put in force"), "{shown}");
+    assert!(!shown.contains("comes into force"), "{shown}");
+    assert!(
+        !shown.contains("the rules in force stay as they are"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(
+            "it cannot be approved on this node: it keeps a rule the charter in force \
+             carries, which this node does not hold"
+        ),
+        "{shown}"
+    );
+    let json = dave.run(&["proposal", "show", &honest]);
+    let rules = &json["amendment"]["rules_in_force"];
+    assert_eq!(rules["dropped"], serde_json::json!([]));
+    assert_eq!(rules["added"].as_array().unwrap().len(), 1, "{rules}");
+    assert_eq!(rules["added"][0]["proposal_id"], c.rule.as_str());
+    assert_eq!(rules["added"][0]["carried_by_charter_in_force"], true);
+    assert_eq!(rules["added"][0]["skill_name"], Value::Null);
+    assert_eq!(json["amendment"]["can_be_approved_here"], false);
+    // On Alice's node, which holds the rule, the same amendment changes no rule, and
+    // nothing in its JSON is marked.
+    let on_alice = alice.run(&["proposal", "show", &honest]);
+    assert_eq!(
+        on_alice["amendment"]["rules_in_force"],
+        serde_json::json!({ "dropped": [], "added": [] })
+    );
+    // The approval is refused on Dave's node, with `--yes` too, and the refusal sends
+    // him to a member who holds the rule: the proposer's file is not named, because a
+    // proposer's node can lack the rule as well.
+    let (code, text) = dave.reads(&["proposal", "vote", &honest, "approve", "--yes"]);
+    assert_eq!(code, 3, "{text}");
+    assert!(
+        text.contains(
+            "that amendment keeps a rule that the charter in force carries and this node \
+             does not hold"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("you cannot have read what you would approve"));
+    assert!(
+        text.contains(
+            "Import the events file of a member who holds that rule first (`peerharness \
+             events import`)."
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("the proposer's events file"), "{text}");
+    assert_eq!(dave.approvals(&honest), serde_json::json!(["alice"]));
+
     // --- With the rule's records on his node, Dave reads which rule it is, and the
     // decision is his again.
     let full = alice.export(&tmp.path().join("everything.jsonl"));
@@ -854,6 +932,18 @@ fn a_node_that_lacks_a_carried_rule_says_so_and_approves_no_amendment_that_drops
         dave.run(&["proposal", "show", id])["amendment"]["can_be_approved_here"],
         true
     );
+    // And the honest admission is what it was on Alice's node all along.
+    let preview = dave.ballot_preview(&honest, "approve");
+    assert!(
+        preview.contains("the rules in force stay as they are (1 in force)"),
+        "{preview}"
+    );
+    let json = dave.run(&["proposal", "show", &honest]);
+    assert_eq!(
+        json["amendment"]["rules_in_force"],
+        serde_json::json!({ "dropped": [], "added": [] })
+    );
+    assert_eq!(json["amendment"]["can_be_approved_here"], true);
 }
 
 /// The same amendment, with windows on. It admits one member and its `carried` list
