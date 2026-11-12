@@ -250,7 +250,8 @@ fn cannot_be_asked(what: &str, allowed: bool, has_window: bool) -> Option<anyhow
 fn no_window(what: &str) -> anyhow::Error {
     refused(format!(
         "{what} is your decision, and this machine has no confirmation window that \
-         PeerHarness can show. Run it yourself in your own terminal."
+         PeerHarness can show. Run it yourself in your own terminal.{}",
+        marked_by()
     ))
 }
 

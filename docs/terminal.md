@@ -195,9 +195,10 @@ rule in a project goes to that project's `.agents/skills` too. A skill in those
 directories that PeerHarness did not put there is never touched, and a copy you edit
 is left as it is: a command that changes a rule says so. Each change to an agent's
 configuration file is backed up first, and an entry named `peerharness` that you wrote
-yourself is left alone. A file PeerHarness cannot read safely (one with comments, as
-`opencode.jsonc` or Gemini CLI's `settings.json` may have) is not changed: `setup`
-shows the entry for you to add.
+yourself is left alone. A file PeerHarness cannot read safely (one with comments or a
+trailing comma, as `opencode.jsonc`, Kilo's `kilo.jsonc` or Gemini CLI's
+`settings.json` may have) is not changed: `setup` shows the entry for you to add, and
+`watch <agent> --status` says `file_not_editable` until you did.
 
 When a command is refused because it runs inside an agent, the message names the
 variable that said so. goose's terminal integration (`goose term init`) sets

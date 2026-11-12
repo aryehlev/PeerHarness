@@ -55,7 +55,9 @@ Then start a new session of your agent and [try it](#try-it-in-your-agent).
 
 **Other coding agents.** For each of the 14 others it finds (Codex, Gemini CLI, Cursor,
 Copilot CLI, opencode, Amp, goose and more), `setup` shows a preview and then puts your
-rules in the skills it reads and gives it the same tools. The hooks are Claude Code's alone, so in the others a
+rules in the skills it reads and gives it the same tools. For goose and DeepSeek
+Harness it shows the tools entry for you to add yourself. If you use `goose term
+init`, run `setup` from a shell without it: PeerHarness takes that shell for goose's. The hooks are Claude Code's alone, so in the others a
 correction is noted only when the agent notes it. See
 [other coding agents](docs/terminal.md#other-coding-agents).
 

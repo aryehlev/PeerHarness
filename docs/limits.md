@@ -57,6 +57,9 @@ The other limits:
   * Gemini CLI starts the tools only in a folder you trusted. Cursor's CLI loads them
     only after you approved them in each project (`agent mcp enable peerharness`),
     and again after the entry changed.
+  * A configuration file with comments or a trailing comma (`opencode.jsonc`, Kilo's
+    `kilo.jsonc`, Gemini CLI's `settings.json`) is not edited: the agent is connected
+    and the tools entry is shown for you to add.
   * Amp needs an account for every command but `--version`, so its entry was written
     from its documentation and not seen in use.
   * Kilo copies Claude Code's skills once, when its migration from Claude Code runs. A
