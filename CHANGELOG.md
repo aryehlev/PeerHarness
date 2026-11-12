@@ -9,6 +9,16 @@ database schema it writes.
 
 ## Unreleased
 
+* PeerHarness connects nine more coding agents: Gemini CLI, Qwen Code, GitHub Copilot
+  CLI, Cursor, Amp, Factory's Droid, Crush, Kilo and goose (`watch gemini`, `qwen`,
+  `copilot`, `cursor`, `amp`, `droid`, `crush`, `kilo`, `goose`). Gemini CLI, Qwen
+  Code, Copilot CLI, Droid and Kilo get copies in `~/.agents/skills`; Cursor, Amp,
+  Crush and goose read Claude Code's skills. Each gets the tools in its own
+  configuration file, except goose, whose YAML entry is shown for you to add. New
+  marks of an agent's session: `GEMINI_CLI`, `QWEN_CODE`, `COPILOT_CLI`,
+  `CURSOR_AGENT`, `AMP_CURRENT_THREAD_ID`, `FACTORY_SESSION_ID`, `CRUSH`, `KILO`,
+  `GOOSE_TERMINAL` and `AGENT_SESSION_ID`. A refusal inside an agent's session now
+  names the variable that was set. Cline CLI and Kiro CLI are not connected (ADR-052).
 * `circle invite` and `circle device add` say in the terminal what the invitation
   window already said: check the device with the person it is said to belong to,
   whose `peerharness status` shows the same fingerprint, before the yes. The README

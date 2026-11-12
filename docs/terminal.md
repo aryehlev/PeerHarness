@@ -166,18 +166,27 @@ you want instead with `--agent`, which you can repeat:
 
 ```sh
 peerharness setup --agent codex --agent pi
-peerharness watch codex --install      # one agent: codex, opencode, pi, antigravity, deepseek
+peerharness watch codex --install      # one agent: any id in the first column below
 peerharness watch codex --status
 peerharness watch codex --remove       # what PeerHarness put there goes, nothing else
 ```
 
-| agent | your rules | the tools | its commands are recognized by |
+| agent (id) | your rules | the tools | its commands are recognized by |
 |---|---|---|---|
-| Codex | copied to `~/.agents/skills` | appended to `~/.codex/config.toml` | `CODEX_CI`, `CODEX_TOOL_CALL_ID`, `CODEX_THREAD_ID` |
-| opencode | read from Claude Code's `~/.claude/skills` | added to `~/.config/opencode/opencode.json` | `OPENCODE`, `AI_AGENT` |
-| Pi | copied to `~/.agents/skills` | added to `~/.pi/agent/mcp.json` | `PI_CODING_AGENT`, `AI_AGENT` |
-| Antigravity | copied to `~/.gemini/config/skills` | added to `~/.gemini/config/mcp_config.json` | `ANTIGRAVITY_AGENT`, which Google does not document |
-| DeepSeek Harness | copied to `~/.agents/skills` | shown for you to add to `~/.dsh/cordis.patch.yml` | `DSH_SHELL` |
+| Codex (`codex`) | copied to `~/.agents/skills` | appended to `~/.codex/config.toml` | `CODEX_CI`, `CODEX_TOOL_CALL_ID`, `CODEX_THREAD_ID` |
+| opencode (`opencode`) | read from Claude Code's `~/.claude/skills` | added to `~/.config/opencode/opencode.json` | `OPENCODE`, `AI_AGENT` |
+| Pi (`pi`) | copied to `~/.agents/skills` | added to `~/.pi/agent/mcp.json` | `PI_CODING_AGENT`, `AI_AGENT` |
+| Antigravity (`antigravity`) | copied to `~/.gemini/config/skills` | added to `~/.gemini/config/mcp_config.json` | `ANTIGRAVITY_AGENT`, which Google does not document |
+| DeepSeek Harness (`deepseek`) | copied to `~/.agents/skills` | shown for you to add to `~/.dsh/cordis.patch.yml` | `DSH_SHELL` |
+| Gemini CLI (`gemini`) | copied to `~/.agents/skills` | added to `~/.gemini/settings.json`; it starts them only in a folder you trusted | `GEMINI_CLI` |
+| Qwen Code (`qwen`) | copied to `~/.agents/skills` | added to `~/.qwen/settings.json` | `QWEN_CODE` |
+| Copilot CLI (`copilot`) | copied to `~/.agents/skills` | added to `~/.copilot/mcp-config.json` | `COPILOT_CLI` |
+| Cursor (`cursor`) | read from Claude Code's `~/.claude/skills` | added to `~/.cursor/mcp.json`; its CLI asks you to approve them once per project | `CURSOR_AGENT` |
+| Amp (`amp`) | read from Claude Code's `~/.claude/skills` | added to `~/.config/amp/settings.json` | `AMP_CURRENT_THREAD_ID` |
+| Droid (`droid`) | copied to `~/.agents/skills` | added to `~/.factory/mcp.json` | `FACTORY_SESSION_ID` |
+| Crush (`crush`) | read from Claude Code's `~/.claude/skills` | added to `~/.config/crush/crush.json` | `CRUSH`, `AI_AGENT` |
+| Kilo (`kilo`) | copied to `~/.agents/skills` | added to `~/.config/kilo/kilo.jsonc` | `KILO`, `OPENCODE` |
+| goose (`goose`) | read from Claude Code's `~/.claude/skills` | shown for you to add to `~/.config/goose/config.yaml` | `AGENT_SESSION_ID`, `GOOSE_TERMINAL` |
 
 Rules are still installed in Claude Code's skills directory, and decided there. A
 connected agent that reads another directory gets copies of what PeerHarness manages
@@ -186,8 +195,14 @@ rule in a project goes to that project's `.agents/skills` too. A skill in those
 directories that PeerHarness did not put there is never touched, and a copy you edit
 is left as it is: a command that changes a rule says so. Each change to an agent's
 configuration file is backed up first, and an entry named `peerharness` that you wrote
-yourself is left alone. A file PeerHarness cannot read safely (opencode's
-`opencode.jsonc` with comments) is not changed: `setup` shows the entry for you to add.
+yourself is left alone. A file PeerHarness cannot read safely (one with comments, as
+`opencode.jsonc` or Gemini CLI's `settings.json` may have) is not changed: `setup`
+shows the entry for you to add.
+
+When a command is refused because it runs inside an agent, the message names the
+variable that said so. goose's terminal integration (`goose term init`) sets
+`AGENT_SESSION_ID` in your own shell too: run PeerHarness's consent steps from a shell
+without it.
 
 What your agent may start through the tools is what you allowed with `setup`, for every
 agent alike. The limits of each are in [Known limits](limits.md).

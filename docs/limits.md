@@ -32,7 +32,8 @@ when you ask, without a window. The longer account is section 4.17 of
 The other limits:
 
 * **The agents besides Claude Code were connected from their documentation and
-  source, not tried in a real session** (ADR-050). In particular:
+  source, not tried in a real session with a model** (ADR-050, ADR-052). In
+  particular:
   * Google Antigravity documents no variable that marks the commands its agent runs.
     PeerHarness checks `ANTIGRAVITY_AGENT`, which its program (1.5.6) contains as
     `ANTIGRAVITY_AGENT=1` and other tools check, but this was not seen in a session: a
@@ -45,8 +46,23 @@ The other limits:
     DeepSeek Harness connected too, it finds two identical copies of each rule; its
     second major version keeps one, its first keeps the later and warns.
   * Pi reads a project's skills only after its user trusted the project.
-  * DeepSeek Harness's tools entry is shown for you to add: PeerHarness does not edit
-    its YAML patches.
+  * DeepSeek Harness's and goose's tools entries are shown for you to add: PeerHarness
+    does not edit YAML.
+  * goose's agent is recognized by `AGENT_SESSION_ID`, which `goose term init` also
+    puts in your own shell. There, PeerHarness refuses its consent steps as inside an
+    agent and names the variable: use a shell without it.
+  * In Gemini CLI, Qwen Code, Copilot CLI and Amp, a command you type yourself (`!`,
+    or `$` in Amp) carries the same mark as one its agent runs, and so does everything
+    in Kilo's terminal: PeerHarness refuses those as an agent's.
+  * Gemini CLI starts the tools only in a folder you trusted. Cursor's CLI loads them
+    only after you approved them in each project (`agent mcp enable peerharness`),
+    and again after the entry changed.
+  * Amp needs an account for every command but `--version`, so its entry was written
+    from its documentation and not seen in use.
+  * Kilo copies Claude Code's skills once, when its migration from Claude Code runs. A
+    rule copied that way is Kilo's: PeerHarness does not remove it when the rule goes.
+  * Cline CLI and Kiro CLI are not connected: Cline marks none of the commands its
+    agent runs, and Kiro could not be checked without an AWS login.
   * The hooks, and the notice at the end of a turn, are Claude Code's alone.
 
 * **The founder's key is needed to change the roll.** It notarizes charter changes. If

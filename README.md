@@ -16,8 +16,8 @@ keeping a rule, sharing one, voting, inviting and joining take your click. That 
 an agent that is trying to help. It is not a sandbox ([Limits](#limits)).
 
 > **Status: v0.4.0, early and not audited.** For Claude Code on macOS, and it connects
-> Codex, opencode, Pi, Antigravity and DeepSeek Harness too. On Linux it works from a
-> terminal, without the windows. Windows is not supported. Read
+> 14 other coding agents too, Codex, Gemini CLI, Cursor and Copilot CLI among them. On
+> Linux it works from a terminal, without the windows. Windows is not supported. Read
 > [Limits](#limits) before you rely on it.
 
 PeerHarness is also a command-line tool (CLI): every step here is a command too, and
@@ -25,8 +25,8 @@ you can run it yourself without an agent. See [From a terminal](#from-a-terminal
 
 ## Set it up
 
-Paste this into your coding agent (Claude Code, Codex, opencode, Pi, Antigravity or
-DeepSeek Harness):
+Paste this into your coding agent: Claude Code, Codex, Gemini CLI, Cursor, Copilot CLI
+or [another one PeerHarness connects](docs/terminal.md#other-coding-agents).
 
 ```text
 Set up PeerHarness for me: https://github.com/aryehlev/peerharness
@@ -53,9 +53,9 @@ Then tell me to start a new session, and what I can ask you there.
 
 Then start a new session of your agent and [try it](#try-it-in-your-agent).
 
-**Other coding agents.** For Codex, opencode, Pi, Google Antigravity and DeepSeek
-Harness, `setup` shows a preview and then puts your rules in the skills each one reads
-and gives it the same tools. The hooks are Claude Code's alone, so in the others a
+**Other coding agents.** For each of the 14 others it finds (Codex, Gemini CLI, Cursor,
+Copilot CLI, opencode, Amp, goose and more), `setup` shows a preview and then puts your
+rules in the skills it reads and gives it the same tools. The hooks are Claude Code's alone, so in the others a
 correction is noted only when the agent notes it. See
 [other coding agents](docs/terminal.md#other-coding-agents).
 
