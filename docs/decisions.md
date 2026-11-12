@@ -4239,3 +4239,76 @@ use one.
   pass per record, each with its signature checks. The size of a file is bounded, and
   the files PeerHarness writes are in order. Sorting the lines by what they depend on
   first would fix it and was not done.
+
+## ADR-052: Gemini CLI, Qwen Code, Copilot CLI, Cursor, Amp, Droid, Crush, Kilo and goose
+After ADR-050 the owner asked which coding agents were still missing, and to research
+them and add what fits. Twelve were looked at on 2026-11-12, each in its own source
+where it has one (gemini-cli `aeb6c04`, qwen-code `befc947`, crush `e180939`, goose
+`0c5b5e2`, kilocode `6fbb14e`, cline `32075f1`), in the shipped program where it has
+none (Copilot CLI 1.0.109, Cursor's agent CLI 2026.11.11, Amp, Droid 1.8.0, Kiro CLI
+3.2.1), and in their documentation. The ADR-050 design is unchanged: rules are still
+installed and decided in Claude Code's directory, and an agent gets copies, a tools
+entry and the recognition of its sessions.
+
+| agent | marks the commands it runs | reads the user's skills from | MCP servers in |
+|---|---|---|---|
+| Gemini CLI | `GEMINI_CLI=1` (its agent's shell and the user's `!`) | `~/.gemini/skills`, `~/.agents/skills` | `~/.gemini/settings.json`, `mcpServers.<name>` |
+| Qwen Code | `QWEN_CODE=1` (the same) | `~/.qwen/skills`, `~/.agents/skills` | `~/.qwen/settings.json`, `mcpServers.<name>` |
+| Copilot CLI | `COPILOT_CLI=1` (the same) | `~/.copilot/skills`, `~/.agents/skills` (not with `COPILOT_HOME`); a project's `.claude/skills` | `~/.copilot/mcp-config.json`, `mcpServers.<name>` |
+| Cursor | `CURSOR_AGENT=1` (its agent's shell) | `~/.cursor/skills`, `~/.claude/skills` and others | `~/.cursor/mcp.json`, `mcpServers.<name>` |
+| Amp | `AGENT=amp`, `AMP_CURRENT_THREAD_ID` (its agent's shell and the user's `$`) | `~/.agents/skills`, `~/.claude/skills` and others | `~/.config/amp/settings.json`, the key `amp.mcpServers` |
+| Droid | `FACTORY_SESSION_ID` (its agent's shell only) | `~/.factory/skills`, `~/.agents/skills` | `~/.factory/mcp.json`, `mcpServers.<name>` |
+| Crush | `CRUSH=1`, `AGENT=crush`, `AI_AGENT=crush` (its agent's shell only) | `~/.config/crush/skills`, `~/.agents/skills`, `~/.claude/skills` | `~/.config/crush/crush.json`, `mcp.<name>` |
+| Kilo | `KILO=1`, `OPENCODE=1`, `AGENT=1` (everything it starts, its terminal too) | `~/.agents/skills`; `~/.claude/skills` until its Claude migration ran | `~/.config/kilo/kilo.jsonc` (or the first of its other names), `mcp.<name>` |
+| goose | `AGENT_SESSION_ID` (its agent's shell; also a shell after `goose term init`); `GOOSE_TERMINAL` only on its own retry commands | `~/.agents/skills`, `~/.claude/skills` and others | `~/.config/goose/config.yaml`, `extensions.<name>` |
+
+**Decision.**
+
+* **Nine are added**, with the same three parts as ADR-050. These variables from
+  the table, `GEMINI_CLI`, `QWEN_CODE`, `COPILOT_CLI`, `CURSOR_AGENT`,
+  `AMP_CURRENT_THREAD_ID`, `FACTORY_SESSION_ID`, `CRUSH`, `KILO`, `GOOSE_TERMINAL` and
+  `AGENT_SESSION_ID`, are in `consent::AGENT_SESSION_ENV`. `AGENT` is not: the name is
+  too general to refuse a person's terminal on, and each agent that sets it sets one
+  of the others too.
+* **goose is recognized by `AGENT_SESSION_ID`.** Its documentation says it sets
+  `GOOSE_TERMINAL` and `AGENT` on every command, but its shell tool sets neither
+  (seen with goose 1.59.0 against a fake model: only `AGENT_SESSION_ID`). Without it,
+  goose's agent could run `peerharness keep --yes` unrecognized. `goose term init`
+  exports the same variable into its user's own shell, where PeerHarness then refuses
+  a consent step as inside an agent. That errs on the side of refusing, and every
+  refusal now names the variable that was set (never its value), so the person can
+  see why and use another terminal.
+* **Skills.** Copies go to `~/.agents/skills` for Gemini CLI, Qwen Code, Copilot CLI,
+  Droid and Kilo, the one directory they all read, so a rule is copied once whatever
+  is connected; for Copilot CLI with `COPILOT_HOME` set, to `$COPILOT_HOME/skills`.
+  Cursor, Amp, Crush and goose read Claude Code's directory and get none. Copilot CLI,
+  Cursor, Amp, Crush and goose read a project's `.claude/skills`; the others get the
+  project's `.agents/skills`.
+* **Tools.** A JSON entry for each, in the shape the agent's own `mcp add` writes
+  where it has one (Copilot's `type: local` and `tools: ["*"]`, Kilo's opencode-v1
+  shape, Crush's and Droid's `type: stdio`). Amp keeps its servers under one key with
+  a dot in it, which is written as that key. goose's file is YAML: the entry is shown
+  for the owner to add, as for DeepSeek Harness. Gemini CLI and Kilo read files with
+  comments; one that has comments is not rewritten and the entry is shown.
+* **Gemini CLI and Antigravity share `~/.gemini`.** Gemini CLI is found by the files
+  it writes there itself (`settings.json`, `installation_id`, `tmp`), Antigravity by
+  its own (`config`, `antigravity*`), so that one is not connected for the other.
+
+**Not added.**
+
+* *Cline CLI.* Its bash tool runs commands with the user's environment and sets no
+  variable of its own: nothing would tell its agent's `peerharness keep --yes` from
+  the owner's.
+* *Kiro CLI.* Closed source, and nothing runs without an AWS login. Its documented
+  marks (`AGENT_DISPLAY_OUT`, `AGENT_CONTEXT_OUT`) could not be seen, and its program
+  says that the harness that is now its default runs only registry entries of
+  `mcp.json`.
+* *Aider, OpenHands, Auggie, Junie and others* were not researched this time.
+
+**Limits** (also in `docs/limits.md`): Gemini CLI starts an MCP server only in a folder
+its user trusted; Cursor's CLI loads one only after it was approved in each project
+(`agent mcp enable peerharness`), and again after the entry changed; Amp could not be
+run without an account, so its entry was not seen in use; the human's `!` (or `$`) in
+Gemini CLI, Qwen Code, Copilot CLI and Amp, and everything in Kilo's terminal, is
+refused like its agent's commands; Kilo copied Claude Code's skills once when its
+migration ran, and such a copy is Kilo's, which PeerHarness does not remove.

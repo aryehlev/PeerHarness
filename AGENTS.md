@@ -78,10 +78,12 @@ stop, leave the feature disabled, and document the blocker.
   and an agent repeats what it read. Do not add a setting, a mode or a default that
   keeps a rule by itself, and do not let `note` or a hook install anything.
 * An agent's session is recognized by every variable in `consent::AGENT_SESSION_ENV`
-  (ADR-050): Claude Code's, Codex's, opencode's, Pi's, Antigravity's, DeepSeek
-  Harness's, `AI_AGENT` and `PEERHARNESS_AGENT_SESSION`. Do not take one out unless the
-  agent's own source shows it is gone, and add the mark of an agent before PeerHarness
-  connects to it. Connecting or disconnecting an agent (`watch <agent>`) is refused
+  (ADR-050, ADR-052): the marks of Claude Code and of each agent in `agents::Agent`
+  (`Agent::session_env`), `AI_AGENT` and `PEERHARNESS_AGENT_SESSION`. Do not take one
+  out unless the agent's own source shows it is gone, add the mark of an agent before
+  PeerHarness connects to it, and do not connect an agent that marks none of the
+  commands its agent runs (Cline CLI, ADR-052). A refusal may name the variable that
+  was set, never its value. Connecting or disconnecting an agent (`watch <agent>`) is refused
   inside a session, like `setup`, and allows its tools nothing the owner did not allow
   for every agent.
 * Inside a session a note is always an agent's note, whatever flags were passed
@@ -442,8 +444,8 @@ Protocol vectors: `cargo test -p ph-protocol --test vectors`. Never edit files i
 * Tests that play the person remove every variable of `consent::AGENT_SESSION_ENV`
   from the child process (the suite itself may be run by a coding agent). Tests of the
   agent-session guard set one of them.
-* No test touches a developer's other agents. A debug build finds the files of Codex,
-  opencode, Pi, Antigravity and DeepSeek Harness only under `PEERHARNESS_AGENTS_HOME`,
+* No test touches a developer's other agents. A debug build finds the files of every
+  agent in `agents::Agent` only under `PEERHARNESS_AGENTS_HOME`,
   and never in the real home directory or through their own variables; a test that
   connects one sets it, and `HOME`, to temporary directories (see
   `apps/peerharness/tests/other_agents.rs`). Do not make a debug build look elsewhere.

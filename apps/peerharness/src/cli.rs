@@ -44,7 +44,8 @@ pub enum Command {
     /// Creates your node if there is none, connects it to Claude Code after showing you
     /// what your agent may start and what it never decides, and gives Claude Code those
     /// steps as tools. Then connects the other agents found here (Codex, opencode, Pi,
-    /// Antigravity, DeepSeek Harness). Each change is shown first and asks for your
+    /// Antigravity, DeepSeek Harness, Gemini CLI, Qwen Code, Copilot CLI, Cursor, Amp,
+    /// Droid, Crush, Kilo, goose). Each change is shown first and asks for your
     /// confirmation.
     Setup(SetupArgs),
     /// Generate the device key, database and config (idempotent).
@@ -179,7 +180,8 @@ pub struct SetupArgs {
     #[arg(long)]
     pub yes: bool,
     /// Connect this agent besides Claude Code (repeatable): codex, opencode, pi,
-    /// antigravity, deepseek. Without it, every one of them found on this machine.
+    /// antigravity, deepseek, gemini, qwen, copilot, cursor, amp, droid, crush, kilo,
+    /// goose. Without it, every one of them found on this machine.
     #[arg(long, value_enum, value_name = "AGENT")]
     pub agent: Vec<crate::agents::Agent>,
     /// Where a new node keeps its private key, as for `init`.
@@ -251,6 +253,29 @@ pub enum WatchAgent {
     /// DeepSeek Harness: copies of the rules in ~/.agents/skills; the tools are shown
     /// for you to add.
     Deepseek(WatchOtherArgs),
+    /// Gemini CLI: copies of the rules in ~/.agents/skills, the tools in
+    /// ~/.gemini/settings.json.
+    Gemini(WatchOtherArgs),
+    /// Qwen Code: copies of the rules in ~/.agents/skills, the tools in
+    /// ~/.qwen/settings.json.
+    Qwen(WatchOtherArgs),
+    /// GitHub Copilot CLI: copies of the rules in ~/.agents/skills, the tools in
+    /// ~/.copilot/mcp-config.json.
+    Copilot(WatchOtherArgs),
+    /// Cursor: it reads Claude Code's skills; the tools in ~/.cursor/mcp.json.
+    Cursor(WatchOtherArgs),
+    /// Amp: it reads Claude Code's skills; the tools in ~/.config/amp/settings.json.
+    Amp(WatchOtherArgs),
+    /// Factory's Droid: copies of the rules in ~/.agents/skills, the tools in
+    /// ~/.factory/mcp.json.
+    Droid(WatchOtherArgs),
+    /// Crush: it reads Claude Code's skills; the tools in ~/.config/crush/crush.json.
+    Crush(WatchOtherArgs),
+    /// Kilo: copies of the rules in ~/.agents/skills, the tools in its
+    /// ~/.config/kilo/kilo.jsonc.
+    Kilo(WatchOtherArgs),
+    /// goose: it reads Claude Code's skills; the tools are shown for you to add.
+    Goose(WatchOtherArgs),
 }
 
 /// Connect another coding agent to PeerHarness, or disconnect it (ADR-050).

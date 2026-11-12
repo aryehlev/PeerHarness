@@ -1,5 +1,5 @@
 //! `watch <agent> --install | --remove | --status` for the coding agents besides
-//! Claude Code (ADR-050): Codex, opencode, Pi, Antigravity and DeepSeek Harness.
+//! Claude Code (ADR-050, ADR-052): the agents of [`crate::agents::Agent`].
 //!
 //! Connecting an agent is the owner's choice, in their own terminal: it is refused
 //! inside an agent's session as a whole, like `setup`, and every change is shown before
@@ -156,10 +156,10 @@ fn session_line(agent: Agent) -> String {
         )
     } else {
         format!(
-            "{} documents no variable that marks the commands its agent runs. PeerHarness \
-             looks for {}, which other tools look for too; where it is missing, a command its \
-             agent runs looks like one you typed. Its tools are marked as an agent's in every \
-             case, and PeerHarness's skill tells it never to skip a confirmation.",
+            "{} is not known to mark every command its agent runs. PeerHarness looks for {}; \
+             where it is missing, a command its agent runs looks like one you typed. Its tools \
+             are marked as an agent's in every case, and PeerHarness's skill tells it never to \
+             skip a confirmation.",
             agent.name(),
             agent.session_env().join(", ")
         )
@@ -176,12 +176,15 @@ fn tools_preview(
 ) -> String {
     let file = paths.tools.path().display();
     match tools {
-        Tools::Absent => format!(
+        Tools::Absent => {
+            format!(
             "Tools: this adds a server named {SERVER_NAME} to {file} (a backup is made first), \
              which runs:\n   {line}\n{} then starts it in each session. The tools start steps \
-             for you; they never decide.",
-            agent.name()
-        ),
+             for you; they never decide.{}",
+            agent.name(),
+            agent.tools_note().map(|n| format!(" {n}")).unwrap_or_default()
+        )
+        }
         Tools::Same => format!("Tools: already registered in {file}."),
         Tools::Other => format!(
             "Tools: {file} already has a server named {SERVER_NAME} that PeerHarness did not \
@@ -266,6 +269,8 @@ fn install(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
             ToolsFile::Json { file, at } => {
                 let first: Vec<(&str, Value)> = match agent {
                     Agent::Opencode => vec![("$schema", json!("https://opencode.ai/config.json"))],
+                    Agent::Crush => vec![("$schema", json!("https://charm.land/crush.json"))],
+                    Agent::Kilo => vec![("$schema", json!("https://app.kilo.ai/config.json"))],
                     _ => Vec::new(),
                 };
                 agent_config::add_json_entry(

@@ -610,8 +610,9 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   was asked to "set PeerHarness up" can install the binary and must then ask its user
   to run setup themselves. For a node that is already there, setup names the keystore
   that holds its key and warns about a plaintext one (ADR-045).
-* **Other agents (ADR-050).** Connecting Codex, opencode, Pi, Antigravity or DeepSeek
-  Harness is the owner's step in their own terminal, refused inside a session. It
+* **Other agents (ADR-050, ADR-052).** Connecting another coding agent (Codex,
+  opencode, Pi, Antigravity, DeepSeek Harness, Gemini CLI, Qwen Code, Copilot CLI,
+  Cursor, Amp, Droid, Crush, Kilo or goose) is the owner's step in their own terminal, refused inside a session. It
   writes into two places that belong to that agent: copies of the skills PeerHarness
   manages in Claude Code's directory, in the directory the agent reads skills from,
   and one entry in its configuration that starts `peerharness mcp`. Nothing is decided
@@ -629,8 +630,10 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   passes in a script they wrote, and tells a coding agent to stop and ask; that is
   wording, and nothing keeps such an agent from passing the flag. Only the variables of
   `consent::AGENT_SESSION_ENV` are read: `CLAUDECODE`, `PEERHARNESS_AGENT_SESSION`, and
-  those of the other agents PeerHarness connects (ADR-050). Google Antigravity
-  documents none, so its agent's commands may carry no mark at all. A debug build also obeys the stand-ins the
+  those of the other agents PeerHarness connects (ADR-050, ADR-052). Google
+  Antigravity documents none, so its agent's commands may carry no mark at all. An
+  agent that sets none (Cline CLI) is not connected, and a refusal names the variable
+  that was set, never its value. A debug build also obeys the stand-ins the
   tests use in place of the window, the notification and the `claude` command, so
   whoever sets its environment can name the program that answers a window; `doctor`
   and `status` say when a binary is one, and release builds do not read them. An agent

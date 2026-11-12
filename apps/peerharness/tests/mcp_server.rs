@@ -106,6 +106,16 @@ impl Node {
             .env_remove("AI_AGENT")
             .env_remove("ANTIGRAVITY_AGENT")
             .env_remove("DSH_SHELL")
+            .env_remove("GEMINI_CLI")
+            .env_remove("QWEN_CODE")
+            .env_remove("COPILOT_CLI")
+            .env_remove("CURSOR_AGENT")
+            .env_remove("AMP_CURRENT_THREAD_ID")
+            .env_remove("FACTORY_SESSION_ID")
+            .env_remove("CRUSH")
+            .env_remove("KILO")
+            .env_remove("GOOSE_TERMINAL")
+            .env_remove("AGENT_SESSION_ID")
             .envs(self.extra.iter().map(|(k, v)| (*k, v.as_str())));
     }
 

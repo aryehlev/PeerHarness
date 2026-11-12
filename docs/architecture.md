@@ -1289,7 +1289,8 @@ written down directly.
   with or without `--yes`. A session is recognized by a variable of
   `consent::AGENT_SESSION_ENV` being set to anything but empty or `0`: `CLAUDECODE`
   (which Claude Code sets in every command it runs), `PEERHARNESS_AGENT_SESSION`, or
-  one that another agent PeerHarness connects sets (section 12.2, ADR-050). This stops an agent that is trying to help. It is not a security
+  one that another agent PeerHarness connects sets (section 12.2, ADR-050, ADR-052). The
+  refusal names the variable that was set, never its value. This stops an agent that is trying to help. It is not a security
   boundary: a process that clears the variable is not stopped by it (ADR-022). Since
   ADR-042 the same refusal covers `rule opt-in`, `export --local` (on standard output
   too) and `init` with the plaintext keystore; a plain `init` and `rule opt-out` are
@@ -1373,26 +1374,30 @@ written down directly.
   and `setup --no-dialogs`. For a node that is already there it names the keystore,
   and warns about a plaintext one (ADR-045).
 
-### 12.2 Other coding agents (ADR-050)
+### 12.2 Other coding agents (ADR-050, ADR-052)
 
-Codex, opencode, Pi, Google Antigravity and DeepSeek Harness are connected beside
-Claude Code (`apps/peerharness/src/agents.rs`), each by `watch <agent> --install` or by
+Codex, opencode, Pi, Google Antigravity, DeepSeek Harness, Gemini CLI, Qwen Code,
+GitHub Copilot CLI, Cursor, Amp, Factory's Droid, Crush, Kilo and goose are connected
+beside Claude Code (`apps/peerharness/src/agents.rs`), each by `watch <agent> --install` or by
 `setup`, in the owner's terminal, and recorded under `[agents] connected`.
 
 * **Rules.** Claude Code's skills directory (and a project's `.claude/skills`) stays
   the one place where rules are installed, held and removed (section 10.9). After each
   command, and after each settle in the daemon, `crate::copies` makes the directory a
-  connected agent reads (`~/.agents/skills`, `~/.gemini/config/skills`, a project's
-  `.agents/skills`) hold the same managed skills (`ph_skills::mirror`). A copy is
+  connected agent reads (`~/.agents/skills`, `~/.gemini/config/skills`,
+  `$COPILOT_HOME/skills`, a project's `.agents/skills`) hold the same managed skills
+  (`ph_skills::mirror`). A copy is
   written where nothing is under that name or over an unedited copy, and removed when
   its source is gone; an unmanaged skill and an edited copy are left and named.
-  opencode reads Claude Code's directory and gets no copy.
+  opencode, Cursor, Amp, Crush and goose read Claude Code's directory and get no copy.
 * **Tools.** `peerharness mcp` is registered in the agent's configuration file
   (`ph_observer::agent_config`): appended to Codex's `config.toml` as one marked TOML
-  block, added to the JSON of Pi (`exposure: direct`), Antigravity and opencode, and
-  shown for DeepSeek Harness, whose YAML patches are not edited.
+  block, added to the JSON of the others in the shape each one's own `mcp add` writes
+  (Pi's `exposure: direct`, Amp's one key `amp.mcpServers`), and shown for DeepSeek
+  Harness and goose, whose YAML is not edited.
 * **Sessions.** Each agent's marks are in `consent::AGENT_SESSION_ENV`
-  (`Agent::session_env`). Antigravity documents none.
+  (`Agent::session_env`). Antigravity documents none; goose is recognized by
+  `AGENT_SESSION_ID`, which its terminal integration also sets in its user's shell.
 * **Paths.** Under the home directory, honouring the agents' own variables;
   `PEERHARNESS_AGENTS_HOME` replaces the home directory, and a debug build reads
   nothing else.
