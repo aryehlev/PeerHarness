@@ -218,3 +218,10 @@ the files it touches, and the suite was run once in between, before the last fiv
 commits of fixes: 1025 passed and none failed. No run of the suite was made on Linux outside CI.
 `cargo deny` and `cargo audit` are not installed on that Mac and were not run there:
 the fixes add no crate and `Cargo.lock` did not change, and CI runs both.
+
+CI ran for pull request #10 at commit `5b332c4`, which has the same code as `59ba4c7`
+and the documents after it. On Linux (Ubuntu 26.04, x86_64) 1036 tests passed, none
+failed and 10 were skipped. On macOS (macOS 26.7, arm64) 1033 passed, none failed and
+10 were skipped. `cargo deny`, `cargo audit` and the check with Rust 1.89 passed in
+the same run. That is the only run on Linux for these fixes: no reproduction of the
+audit was run there by hand.
