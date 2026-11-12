@@ -42,23 +42,37 @@ pub fn interactive() -> bool {
 /// too.
 pub const PEERHARNESS_SESSION_ENV: &str = "PEERHARNESS_AGENT_SESSION";
 
-/// Environment variables that mark a command run by a coding agent (ADR-050). Each was
-/// read in the agent's own source or documentation (checked 2026-11-12), and a few also
-/// mark the commands its user types inside the agent, which is refused as well: that
-/// errs on the side of the owner's own terminal.
+/// Environment variables that mark a command run by a coding agent (ADR-050, ADR-052).
+/// Each was read in the agent's own source, documentation or program (checked
+/// 2026-11-12), and a few also mark the commands its user types inside the agent, which
+/// is refused as well: that errs on the side of the owner's own terminal.
 ///
 /// * `CLAUDECODE`: Claude Code, in every command it runs.
 /// * `CODEX_CI`, `CODEX_TOOL_CALL_ID`: Codex, in every command its agent runs;
 ///   `CODEX_THREAD_ID` also in the commands its user types with `!`.
 /// * `OPENCODE`: opencode, in its agent's shell (and in everything it starts, in its
-///   first major version).
+///   first major version); Kilo, which is built on it, in everything it starts.
 /// * `PI_CODING_AGENT`: Pi, in everything it starts.
-/// * `AI_AGENT`: the name of the agent, set by Pi and opencode, and by more agents as they
-///   adopt it.
-/// * `ANTIGRAVITY_AGENT`: what tools that detect Google Antigravity look for. Google does
-///   not document it, so a command Antigravity runs may carry no mark at all.
+/// * `AI_AGENT`: the name of the agent, set by Pi, opencode and Crush, and by more agents
+///   as they adopt it.
+/// * `ANTIGRAVITY_AGENT`: what Google Antigravity's program sets, by its text, and what
+///   tools that detect it look for. Google does not document it.
 /// * `DSH_SHELL`: DeepSeek Harness, in every shell command of its model.
-pub const AGENT_SESSION_ENV: [&str; 10] = [
+/// * `GEMINI_CLI`: Gemini CLI, in its agent's shell and in the commands its user types
+///   with `!`.
+/// * `QWEN_CODE`: Qwen Code, the same.
+/// * `COPILOT_CLI`: GitHub Copilot CLI, the same.
+/// * `CURSOR_AGENT`: Cursor, in its agent's shell.
+/// * `AMP_CURRENT_THREAD_ID`: Amp, in its agent's shell and in the commands its user
+///   types with `$`.
+/// * `FACTORY_SESSION_ID`: Droid, in its agent's shell only.
+/// * `CRUSH`: Crush, in its agent's shell only.
+/// * `KILO`: Kilo, in everything it starts, its terminal included.
+/// * `GOOSE_TERMINAL`: what goose's documentation names, on the commands it runs itself;
+///   `AGENT_SESSION_ID`: what goose 1.59 sets on every command its agent runs. goose's
+///   terminal integration (`goose term init`) exports it into its user's own shell as
+///   well, where PeerHarness then refuses as inside an agent and names the variable.
+pub const AGENT_SESSION_ENV: [&str; 20] = [
     "CLAUDECODE",
     PEERHARNESS_SESSION_ENV,
     "CODEX_CI",
@@ -69,19 +83,44 @@ pub const AGENT_SESSION_ENV: [&str; 10] = [
     "AI_AGENT",
     "ANTIGRAVITY_AGENT",
     "DSH_SHELL",
+    "GEMINI_CLI",
+    "QWEN_CODE",
+    "COPILOT_CLI",
+    "CURSOR_AGENT",
+    "AMP_CURRENT_THREAD_ID",
+    "FACTORY_SESSION_ID",
+    "CRUSH",
+    "KILO",
+    "GOOSE_TERMINAL",
+    "AGENT_SESSION_ID",
 ];
 
 /// Whether this process appears to run inside a coding agent's session.
 pub fn in_agent_session() -> bool {
+    session_mark().is_some()
+}
+
+/// The first variable of [`AGENT_SESSION_ENV`] that is set, if any.
+fn session_mark() -> Option<&'static str> {
     AGENT_SESSION_ENV
         .iter()
-        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty() && v != "0"))
+        .copied()
+        .find(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Which variable said so, for a person who is refused in a terminal of their own (a
+/// shell that an agent's terminal integration set up, say). A name, never a value.
+fn marked_by() -> String {
+    session_mark()
+        .map(|k| format!(" ({k} is set here.)"))
+        .unwrap_or_default()
 }
 
 fn agent_refusal(what: &str) -> anyhow::Error {
     refused(format!(
         "{what} is your decision, and this command is running inside a coding agent's \
-         session. Run it yourself in your own terminal."
+         session. Run it yourself in your own terminal.{}",
+        marked_by()
     ))
 }
 
@@ -222,7 +261,8 @@ fn windows_off(what: &str, has_window: bool) -> anyhow::Error {
     refused(format!(
         "{what} is your decision, and this command is running inside a coding agent's \
          session. Run it yourself in your own terminal. (To be asked in a window instead, \
-         run `peerharness setup` there once.)"
+         run `peerharness setup` there once.){}",
+        marked_by()
     ))
 }
 
@@ -466,9 +506,14 @@ mod tests {
 
     #[test]
     fn windows_that_are_off_refuse_as_before() {
-        assert!(windows_off("the ballot", false)
-            .to_string()
-            .ends_with("Run it yourself in your own terminal."));
+        // What follows the sentence is the variable that was set, if this test itself
+        // runs inside an agent's session.
+        let plain = windows_off("the ballot", false).to_string();
+        assert!(
+            plain.contains("Run it yourself in your own terminal."),
+            "{plain}"
+        );
+        assert!(!plain.contains("peerharness setup"), "{plain}");
         let hint = windows_off("the ballot", true).to_string();
         assert!(hint.contains("your own terminal") && hint.contains("peerharness setup"));
     }

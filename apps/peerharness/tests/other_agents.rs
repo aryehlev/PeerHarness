@@ -19,7 +19,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 /// The variables that mark an agent's session, taken out for the person.
-const MARKS: [&str; 10] = [
+const MARKS: [&str; 20] = [
     "CLAUDECODE",
     "PEERHARNESS_AGENT_SESSION",
     "CODEX_CI",
@@ -30,6 +30,16 @@ const MARKS: [&str; 10] = [
     "AI_AGENT",
     "ANTIGRAVITY_AGENT",
     "DSH_SHELL",
+    "GEMINI_CLI",
+    "QWEN_CODE",
+    "COPILOT_CLI",
+    "CURSOR_AGENT",
+    "AMP_CURRENT_THREAD_ID",
+    "FACTORY_SESSION_ID",
+    "CRUSH",
+    "KILO",
+    "GOOSE_TERMINAL",
+    "AGENT_SESSION_ID",
 ];
 
 const CODEX_CONFIG: &str = "# my Codex settings\nmodel = \"gpt-5\"  # keep this\n\n[mcp_servers.other]\ncommand = \"other\"\n";
@@ -368,6 +378,16 @@ fn connecting_an_agent_is_refused_inside_any_agents_session() {
         ("AI_AGENT", "pi"),
         ("ANTIGRAVITY_AGENT", "1"),
         ("DSH_SHELL", "1"),
+        ("GEMINI_CLI", "1"),
+        ("QWEN_CODE", "1"),
+        ("COPILOT_CLI", "1"),
+        ("CURSOR_AGENT", "1"),
+        ("AMP_CURRENT_THREAD_ID", "T-0199a"),
+        ("FACTORY_SESSION_ID", "0199a"),
+        ("CRUSH", "1"),
+        ("KILO", "1"),
+        ("GOOSE_TERMINAL", "1"),
+        ("AGENT_SESSION_ID", "20261111_1"),
     ] {
         for args in [
             vec!["watch", "pi", "--install", "--yes"],
@@ -382,6 +402,14 @@ fn connecting_an_agent_is_refused_inside_any_agents_session() {
                 said.contains("inside a coding agent's session"),
                 "{mark} {args:?}: {said}"
             );
+            // The refusal names the variable, never its value, for a person refused in a
+            // shell of their own.
+            assert!(
+                said.contains(&format!("({mark} is set here.)")),
+                "{mark} {args:?}: {said}"
+            );
+            // A value long enough not to stand in other words is not repeated.
+            assert!(value.len() < 5 || !said.contains(value), "{mark}: {said}");
         }
     }
     // Nothing changed meanwhile.
@@ -437,7 +465,7 @@ struct Expect {
     tools: &'static str,
 }
 
-const EVERY_AGENT: [Expect; 5] = [
+const EVERY_AGENT: [Expect; 14] = [
     Expect {
         agent: "codex",
         detect: ".codex",
@@ -468,6 +496,60 @@ const EVERY_AGENT: [Expect; 5] = [
         copies: Some(".agents/skills"),
         tools: ".dsh/cordis.patch.yml",
     },
+    Expect {
+        agent: "gemini",
+        detect: ".gemini/settings.json",
+        copies: Some(".agents/skills"),
+        tools: ".gemini/settings.json",
+    },
+    Expect {
+        agent: "qwen",
+        detect: ".qwen",
+        copies: Some(".agents/skills"),
+        tools: ".qwen/settings.json",
+    },
+    Expect {
+        agent: "copilot",
+        detect: ".copilot",
+        copies: Some(".agents/skills"),
+        tools: ".copilot/mcp-config.json",
+    },
+    Expect {
+        agent: "crush",
+        detect: ".config/crush",
+        copies: None,
+        tools: ".config/crush/crush.json",
+    },
+    Expect {
+        agent: "kilo",
+        detect: ".config/kilo",
+        copies: Some(".agents/skills"),
+        tools: ".config/kilo/kilo.jsonc",
+    },
+    Expect {
+        agent: "goose",
+        detect: ".config/goose",
+        copies: None,
+        tools: ".config/goose/config.yaml",
+    },
+    Expect {
+        agent: "cursor",
+        detect: ".cursor",
+        copies: None,
+        tools: ".cursor/mcp.json",
+    },
+    Expect {
+        agent: "amp",
+        detect: ".config/amp",
+        copies: None,
+        tools: ".config/amp/settings.json",
+    },
+    Expect {
+        agent: "droid",
+        detect: ".factory",
+        copies: Some(".agents/skills"),
+        tools: ".factory/mcp.json",
+    },
 ];
 
 /// The command a tools entry starts, read back from the file the agent reads.
@@ -482,13 +564,25 @@ fn registered_command(e: &Expect, file: &Path) -> Option<String> {
                 .as_str()
                 .map(str::to_owned)
         }
-        "opencode" => {
+        "opencode" | "kilo" => {
             let v: Value = serde_json::from_str(&text).unwrap();
             v["mcp"]["peerharness"]["command"][0]
                 .as_str()
                 .map(str::to_owned)
         }
-        "pi" | "antigravity" => {
+        "crush" => {
+            let v: Value = serde_json::from_str(&text).unwrap();
+            v["mcp"]["peerharness"]["command"]
+                .as_str()
+                .map(str::to_owned)
+        }
+        "amp" => {
+            let v: Value = serde_json::from_str(&text).unwrap();
+            v["amp.mcpServers"]["peerharness"]["command"]
+                .as_str()
+                .map(str::to_owned)
+        }
+        "pi" | "antigravity" | "gemini" | "qwen" | "copilot" | "cursor" | "droid" => {
             let v: Value = serde_json::from_str(&text).unwrap();
             v["mcpServers"]["peerharness"]["command"]
                 .as_str()
@@ -503,7 +597,14 @@ fn every_agent_is_connected_gets_the_rules_and_is_disconnected_alone() {
     for e in EVERY_AGENT {
         let tmp = TempDir::new().unwrap();
         let m = Machine::new(tmp.path());
-        std::fs::create_dir_all(m.agents.join(e.detect)).unwrap();
+        let found = m.agents.join(e.detect);
+        if found.extension().is_some() {
+            // A file of the agent's own, as it leaves it.
+            std::fs::create_dir_all(found.parent().unwrap()).unwrap();
+            std::fs::write(&found, "{}\n").unwrap();
+        } else {
+            std::fs::create_dir_all(&found).unwrap();
+        }
         // `setup` finds this agent and no other.
         let out = m.setup(&[]);
         let said = text(&out);
@@ -521,12 +622,18 @@ fn every_agent_is_connected_gets_the_rules_and_is_disconnected_alone() {
             );
         }
 
-        // The tools: written where the agent reads them, except DeepSeek Harness's.
+        // The tools: written where the agent reads them, except in YAML (DeepSeek
+        // Harness's and goose's), which is shown.
         let tools = m.agents.join(e.tools);
-        if e.agent == "deepseek" {
+        if e.agent == "deepseek" || e.agent == "goose" {
             assert!(!tools.exists());
             assert_eq!(st["tools"], "manual");
-            assert!(said.contains("serverName: peerharness"), "{said}");
+            let line = if e.agent == "goose" {
+                "cmd: '"
+            } else {
+                "serverName: peerharness"
+            };
+            assert!(said.contains(line), "{said}");
         } else {
             assert_eq!(st["tools"], "registered", "{}: {st}", e.agent);
             assert_eq!(
@@ -549,9 +656,10 @@ fn every_agent_is_connected_gets_the_rules_and_is_disconnected_alone() {
         m.json(&["keep", &cand, "--yes"]);
         match e.copies {
             None => {
-                // opencode reads Claude Code's directory: nothing is copied anywhere.
+                // It reads Claude Code's directory: nothing is copied anywhere.
                 assert!(!m.agents.join(".agents").exists(), "{}", e.agent);
                 assert!(!m.agents.join(".config/opencode/skills").exists());
+                assert_eq!(st["skills_dir"], Value::Null, "{}: {st}", e.agent);
             }
             Some(dir) => {
                 let dir = m.agents.join(dir);
@@ -575,11 +683,30 @@ fn every_agent_is_connected_gets_the_rules_and_is_disconnected_alone() {
             assert!(!dir.join("use-pnpm").exists(), "{}", e.agent);
             assert!(!dir.join("peerharness-notes").exists(), "{}", e.agent);
         }
-        if e.agent != "deepseek" {
+        if e.agent != "deepseek" && e.agent != "goose" {
             assert_eq!(registered_command(&e, &tools), None, "{}", e.agent);
             assert!(tools.exists(), "{}: the file itself stays", e.agent);
         }
         // Claude Code keeps its own.
         assert!(m.skills.join("use-pnpm/SKILL.md").is_file());
     }
+}
+
+/// Kilo reads the first of its five file names that exists, and the entry goes there:
+/// a `kilo.json` of the owner's keeps its keys, and no `kilo.jsonc` appears beside it.
+#[test]
+fn kilo_gets_the_entry_in_the_file_it_reads() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    let dir = m.agents.join(".config/kilo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("kilo.json"), "{\"model\": \"mine\"}\n").unwrap();
+    let out = m.setup(&["--agent", "kilo"]);
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(!dir.join("kilo.jsonc").exists());
+    let v: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("kilo.json")).unwrap()).unwrap();
+    assert_eq!(v["model"], "mine");
+    assert_eq!(v["mcp"]["peerharness"]["type"], "local");
+    assert_eq!(v["mcp"]["peerharness"]["command"][0], exe().as_str());
 }

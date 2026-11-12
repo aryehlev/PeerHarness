@@ -110,7 +110,17 @@ impl Node {
             .env_remove("PI_CODING_AGENT")
             .env_remove("AI_AGENT")
             .env_remove("ANTIGRAVITY_AGENT")
-            .env_remove("DSH_SHELL");
+            .env_remove("DSH_SHELL")
+            .env_remove("GEMINI_CLI")
+            .env_remove("QWEN_CODE")
+            .env_remove("COPILOT_CLI")
+            .env_remove("CURSOR_AGENT")
+            .env_remove("AMP_CURRENT_THREAD_ID")
+            .env_remove("FACTORY_SESSION_ID")
+            .env_remove("CRUSH")
+            .env_remove("KILO")
+            .env_remove("GOOSE_TERMINAL")
+            .env_remove("AGENT_SESSION_ID");
         cmd
     }
 
@@ -2002,7 +2012,7 @@ fn a_yes_to_one_text_does_not_install_another_that_took_its_name_meanwhile() {
     let log = root.join("carol-import-during-the-window");
     let script = format!(
         "#!/bin/sh\ncat > '{saw}'\n\
-         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION -u CODEX_CI -u CODEX_TOOL_CALL_ID -u CODEX_THREAD_ID -u OPENCODE -u PI_CODING_AGENT -u AI_AGENT -u ANTIGRAVITY_AGENT -u DSH_SHELL '{bin}' events import '{newer}' \
+         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION -u CODEX_CI -u CODEX_TOOL_CALL_ID -u CODEX_THREAD_ID -u OPENCODE -u PI_CODING_AGENT -u AI_AGENT -u ANTIGRAVITY_AGENT -u DSH_SHELL -u GEMINI_CLI -u QWEN_CODE -u COPILOT_CLI -u CURSOR_AGENT -u AMP_CURRENT_THREAD_ID -u FACTORY_SESSION_ID -u CRUSH -u KILO -u GOOSE_TERMINAL -u AGENT_SESSION_ID '{bin}' events import '{newer}' \
          > '{log}' 2>&1 || {{ echo declined; exit 0; }}\necho proceed\n",
         saw = saw.display(),
         bin = assert_cmd::cargo::cargo_bin("peerharness").display(),
@@ -2139,7 +2149,7 @@ fn a_rule_is_not_proposed_under_a_charter_that_arrived_while_its_proposer_read()
     let log = root.join("bob-import-during-the-window");
     let script = format!(
         "#!/bin/sh\ncat > '{saw}'\n\
-         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION -u CODEX_CI -u CODEX_TOOL_CALL_ID -u CODEX_THREAD_ID -u OPENCODE -u PI_CODING_AGENT -u AI_AGENT -u ANTIGRAVITY_AGENT -u DSH_SHELL '{bin}' events import '{newer}' \
+         env -u CLAUDECODE -u PEERHARNESS_AGENT_SESSION -u CODEX_CI -u CODEX_TOOL_CALL_ID -u CODEX_THREAD_ID -u OPENCODE -u PI_CODING_AGENT -u AI_AGENT -u ANTIGRAVITY_AGENT -u DSH_SHELL -u GEMINI_CLI -u QWEN_CODE -u COPILOT_CLI -u CURSOR_AGENT -u AMP_CURRENT_THREAD_ID -u FACTORY_SESSION_ID -u CRUSH -u KILO -u GOOSE_TERMINAL -u AGENT_SESSION_ID '{bin}' events import '{newer}' \
          > '{log}' 2>&1 || {{ echo declined; exit 0; }}\necho proceed\n",
         saw = saw.display(),
         bin = assert_cmd::cargo::cargo_bin("peerharness").display(),

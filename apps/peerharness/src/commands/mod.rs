@@ -87,6 +87,15 @@ fn run(ctx: &Ctx, command: Command) -> Result<Report> {
             WatchAgent::Pi(a) => agent::run(ctx, crate::agents::Agent::Pi, &a),
             WatchAgent::Antigravity(a) => agent::run(ctx, crate::agents::Agent::Antigravity, &a),
             WatchAgent::Deepseek(a) => agent::run(ctx, crate::agents::Agent::Deepseek, &a),
+            WatchAgent::Gemini(a) => agent::run(ctx, crate::agents::Agent::Gemini, &a),
+            WatchAgent::Qwen(a) => agent::run(ctx, crate::agents::Agent::Qwen, &a),
+            WatchAgent::Copilot(a) => agent::run(ctx, crate::agents::Agent::Copilot, &a),
+            WatchAgent::Cursor(a) => agent::run(ctx, crate::agents::Agent::Cursor, &a),
+            WatchAgent::Amp(a) => agent::run(ctx, crate::agents::Agent::Amp, &a),
+            WatchAgent::Droid(a) => agent::run(ctx, crate::agents::Agent::Droid, &a),
+            WatchAgent::Crush(a) => agent::run(ctx, crate::agents::Agent::Crush, &a),
+            WatchAgent::Kilo(a) => agent::run(ctx, crate::agents::Agent::Kilo, &a),
+            WatchAgent::Goose(a) => agent::run(ctx, crate::agents::Agent::Goose, &a),
         },
         // Serves until its client closes standard input, and prints no report: standard
         // output belongs to the protocol.

@@ -119,7 +119,17 @@ impl Node {
             .env_remove("PI_CODING_AGENT")
             .env_remove("AI_AGENT")
             .env_remove("ANTIGRAVITY_AGENT")
-            .env_remove("DSH_SHELL");
+            .env_remove("DSH_SHELL")
+            .env_remove("GEMINI_CLI")
+            .env_remove("QWEN_CODE")
+            .env_remove("COPILOT_CLI")
+            .env_remove("CURSOR_AGENT")
+            .env_remove("AMP_CURRENT_THREAD_ID")
+            .env_remove("FACTORY_SESSION_ID")
+            .env_remove("CRUSH")
+            .env_remove("KILO")
+            .env_remove("GOOSE_TERMINAL")
+            .env_remove("AGENT_SESSION_ID");
         if let By::Agent = by {
             cmd.env("CLAUDECODE", "1");
         }
@@ -218,9 +228,13 @@ fn a_high_risk_rule_is_never_proposed_from_a_window() {
     let (code, json, printed) = node.out(By::Agent, &propose);
     assert_eq!(code, 3, "{printed}");
     let msg = json["error"]["message"].as_str().unwrap();
+    // After that sentence comes only the variable that marked the session, never the
+    // hint about windows.
     assert!(
         msg.contains("sharing the proposal is your decision")
-            && msg.ends_with("Run it yourself in your own terminal."),
+            && msg.contains("Run it yourself in your own terminal.")
+            && msg.ends_with(" is set here.)")
+            && !msg.contains("window"),
         "{msg}"
     );
     // `--yes` is the person's flag and changes nothing in a session.
