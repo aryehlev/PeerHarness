@@ -2,6 +2,10 @@
 
 **Your team votes on how its AI coding agents behave.**
 
+**Works with:** Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot CLI, opencode,
+Pi, Google Antigravity, Qwen Code, Amp, Factory's Droid, Crush, Kilo, goose and
+DeepSeek Harness ([how each one connects](docs/terminal.md#other-coding-agents)).
+
 You correct your coding agent ("no, use pnpm, not npm"). PeerHarness turns the
 correction into a one-sentence rule. Keep it for your own agent, or propose it to your
 team: once a majority approves, every member's agent follows it. There is no server.
@@ -15,10 +19,9 @@ screen that shows the exact text. It cannot answer the window: inside its sessio
 keeping a rule, sharing one, voting, inviting and joining take your click. That stops
 an agent that is trying to help. It is not a sandbox ([Limits](#limits)).
 
-> **Status: v0.4.0, early and not audited.** For Claude Code on macOS, and it connects
-> 14 other coding agents too, Codex, Gemini CLI, Cursor and Copilot CLI among them. On
-> Linux it works from a terminal, without the windows. Windows is not supported. Read
-> [Limits](#limits) before you rely on it.
+> **Status: v0.4.0, early and not audited.** Made for Claude Code on macOS first; the
+> other agents get the rules and the tools. On Linux it works from a terminal, without
+> the windows. Windows is not supported. Read [Limits](#limits) before you rely on it.
 
 PeerHarness is also a command-line tool (CLI): every step here is a command too, and
 you can run it yourself without an agent. See [From a terminal](#from-a-terminal).
