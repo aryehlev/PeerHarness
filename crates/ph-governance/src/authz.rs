@@ -470,7 +470,8 @@ pub enum Reference {
     /// re-check after the next sync; it simply has no effect until then.
     Missing,
     /// The reference can never be satisfied (wrong type, kind, circle, scope or skill
-    /// name). The caller should reject the event.
+    /// name). The caller rejects an ANSWER for it. A PROPOSAL is kept all the same and
+    /// its reference has no effect (ADR-051).
     Invalid(Rejection),
 }
 
@@ -509,8 +510,12 @@ pub fn check_answer_reference(
     }
 }
 
-/// Checks an `adopt` PROPOSAL's optional `supersedes` reference against the referenced
-/// PROPOSAL, looked up by the caller (`None` if not stored).
+/// Describes an `adopt` PROPOSAL's optional `supersedes` reference against the
+/// referenced PROPOSAL, looked up by the caller (`None` if not stored).
+///
+/// This is a description, not a gate: a node must keep a proposal whatever its
+/// `supersedes` names, or what it keeps would depend on which of the two arrived first
+/// (ADR-051). An invalid reference records no lineage ([`crate::supersede_links`]).
 ///
 /// Returns [`Reference::Resolved`] when the proposal supersedes nothing (always the case
 /// for `repeal` and `amend` proposals). Otherwise the referenced event must be an
@@ -547,8 +552,12 @@ pub fn check_supersedes_reference(
     }
 }
 
-/// Checks a `repeal` PROPOSAL against its target, looked up by the caller by the
+/// Describes a `repeal` PROPOSAL against its target, looked up by the caller by the
 /// proposal's `target` (`None` if not stored).
+///
+/// This is a description, not a gate: a node must keep a repeal whatever it names, or
+/// what it keeps would depend on which of the two arrived first (ADR-051). The scope
+/// rule below is enforced where a repeal takes effect, in [`crate::rules_in_force`].
 ///
 /// Returns [`Reference::Resolved`] for proposals of another kind. Otherwise the target
 /// must be an `adopt` PROPOSAL with that id, in the same circle and the **same scope**,

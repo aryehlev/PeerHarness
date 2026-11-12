@@ -50,6 +50,131 @@ database schema it writes.
   notice to IndexNow each time it is published. The repository has a description and
   topics on GitHub (ADR-049).
 
+* Fixes after a second audit of 0.4.0, made with AI coding agents (ADR-051):
+  * **A member could keep a passed rule from one node.** Whether a node kept a
+    proposal depended on whether the proposal its `supersedes` named had arrived
+    first, so a member who chose the order could leave one node without a rule that
+    passed for everyone else. A proposal is now kept whatever it names, and a repeal
+    takes a rule out of force only if it has that rule's scope, which is checked in
+    the rule set and no longer on arrival. A node that had refused such a proposal
+    keeps it at its next exchange. Protocol sections 8.4, 12.5 and 14.4 say so.
+  * **A rule could carry a command that Claude Code runs when the skill loads.** The
+    check that refuses that syntax looked at the start of a line and within one line.
+    A fence in the middle of a sentence, or a command closed on the next line, passed,
+    and such a rule could be kept or proposed. The syntax is now refused anywhere in
+    the file, the frontmatter included. A rule that only mentions `!` in a code span
+    and has another code span further down is refused too.
+  * **`reset --confirm` could delete files that were not PeerHarness's.** It removed
+    the whole home folder, so with `PEERHARNESS_HOME` pointed at a folder with other
+    work in it, that work went too, and the check that refuses your home directory
+    could be passed with another spelling of the same path. `reset` now deletes only
+    what PeerHarness put there and says what stays, refuses your home directory under
+    every spelling, and works when the database cannot be read.
+  * **One failed request could stop a daemon without stopping its process.** A panic
+    in one request ended the thread that serves the node, and the daemon went on
+    listening while every later request failed. A request that panics now fails
+    alone.
+  * **A confirmation window could be taller than the screen.** Whether a preview
+    fits was estimated from character widths, and text in a script with wide and
+    high glyphs was estimated far too low, so its end could lie below the screen. The
+    window now measures the text on the machine before it shows anything, and the
+    step is refused when it does not fit.
+  * **A member's text could add lines to another member's inbox.** A question, an
+    answer's rationale and the reason of an opt-out can hold several lines, and
+    `inbox`, `question list` and `rule list` printed them as they came: a question
+    could end with a proposal that waits and the command that approves it. Every
+    further line of such text now stands behind a mark, and who a question is from
+    stands before its text.
+  * **A rule could stay installed after an opt-out or a repeal.** When the database
+    was busy at the wrong moment, a rule was installed without the record that a
+    vote installed it, and nothing removed it afterwards. The copy and the record
+    are now written together.
+  * **Opting out in one team could remove a rule another team still had in force.**
+    With the same rule in two teams, the copy now stays while you follow the other
+    team, and the command says how to take it out there too.
+  * `circle members` no longer says of an advisory team that "each member is asked
+    before anything is installed": a member who joined while rules were binding
+    still follows without being asked, and the line now says so and names `circle
+    mode ask`. `rule list` says when you have left a team, where it showed its rules
+    as not installed.
+  * **One member could make a shared directory change at every sync.** An event its
+    author signed twice has one id and two valid forms, and two members who held one
+    each rewrote the same file after each other. A file that holds the record in
+    either form is now left alone.
+  * **A large file in a shared directory was read into memory.** A file with a
+    record's name was read whole before it was compared, whatever its size. It is
+    now looked at first, and one too large to be a record is replaced unread.
+  * **Files that are no records could stop `events sync` for a whole team.**
+    Sixty-five such files of 1 MiB ended every sync and import of the directory with
+    an error. They are now counted as refused, the records are read all the same,
+    and when a directory holds more than may be read the command says how many
+    files it did not read. An import gives a reason for everything it refused
+    (`rejection_codes` with `--json`).
+  * A frame from a peer is read only in the form the protocol gives it. A frame
+    written as an array of its members, or with a variant spelled as an object with
+    a `null` in it, was read as if it were the real one, and is refused now. No
+    frame a released binary sends is affected (protocol section 11.3).
+  * **A node with its keys in plaintext said so only at `init`.** The warning of
+    every later use was a line in the log that nobody saw. A command that uses a
+    key now prints it, and so does `status`. A `config.toml` that names
+    `insecure-dev` no longer stands in for `--insecure-dev-keystore`.
+  * **The weak key-file parameters of the tests could be turned on without a word.**
+    A config file that named `fast-insecure-test` made `init`, and later `circle
+    create`, encrypt key files weakly with no warning, and a session could pass the
+    flag. Both now warn, and `init` refuses the profile inside an agent's session.
+  * `circle create` no longer leaves a root key in the keystore when it fails. A
+    name that is refused is refused before a key is written, and a key is taken out
+    again when the team could not be stored.
+  * `init` in a folder whose path holds a tab or a line break is refused before
+    anything is written. It used to write a key file and a database, fail, and fail
+    again at every later run.
+  * **One member's flood of questions hid everyone else's.** The daily limits counted
+    the questions that were held back along with those that were shown, so a hundred
+    questions from one member used up the team's day. A held-back question also kept
+    the same question from anyone else out of the inbox. The limits now count what
+    was shown, and a held-back question takes no text.
+  * **A `Stop` hook could stall and lose what the hooks had set aside.** While
+    another process held the database, the hook deleted its spool file, waited for
+    the lock once for every line, and lost the lines it had not put back when it ran
+    into its time limit. It now waits once, leaves the spool alone while the
+    database is busy, and deletes a spool file only after its lines are stored.
+  * **Connecting Claude Code rewrote numbers elsewhere in its settings file.**
+    `watch claude --install` and `--remove` wrote `1e5` back as `100000.0`, and
+    rounded a long decimal or an integer beyond 64 bits. Every number in the file
+    now comes back with the text it had.
+  * **An agent that read the inbox kept its owner from being told about its notes.**
+    `inbox` and `review` marked a noted rule as shown to whoever ran them, and the
+    notice at the end of a turn counts the ones not shown yet. Inside a session they
+    no longer mark anything.
+  * **The limit of 20 waiting notes from an agent could be passed.** Notes written
+    at the same moment were all kept, and `observe import`, run by the agent, added
+    candidates that looked like the owner's own corrections. The limit is now counted
+    and applied in one step, and `observe import` and `observe demo` are refused
+    inside a session.
+  * **An invitation did not show the scopes it gave.** `circle invite --scope ...`
+    asked its owner about a member and a device, in the terminal and in a window, and
+    signed the scopes without showing them. The preview now names them.
+  * **A circle's name could put words into later windows.** The name a circle has
+    on a node was not shown when joining, and it stands inside PeerHarness's own
+    sentences afterwards. Joining now shows it, and a name given inside an agent's
+    session is one word.
+  * **`proposal show` printed a rule nobody had voted on into the agent's session.**
+    The text of a proposed rule now reaches a session only when that rule is installed
+    on the machine. Its owner reads it in their terminal or in the window of a ballot.
+  * `setup` no longer hands `PEERHARNESS_PASSPHRASE` to the `claude` command it runs,
+    and the windows and notifications do not hand it to `osascript`.
+  * `circle revoke` says in its preview when no member on the roll has the device, so
+    a mistyped key is noticed before it is revoked for ever.
+  * The security model listed the programs PeerHarness starts wrongly, and read as if
+    an advisory provider could be called. No command calls one. `doctor` says so.
+
+  The protocol stays `0.1` and the database schema is unchanged. Two things a node
+  does with what it receives changed in place and changed no object: a proposal is
+  kept whatever it names, and a frame is read in one form only (protocol document,
+  section 15). What was left as it is stands in ADR-051 and, where it is a limit for
+  whoever uses PeerHarness, in [docs/limits.md](docs/limits.md). How each fix was
+  checked is in [docs/checked.md](docs/checked.md).
+
 ## 0.4.0 (2026-11-11)
 
 * `peerharness keep <candidate>` saves a noted rule to your library and installs it for

@@ -36,6 +36,8 @@ use crate::output::{Report, Text};
 
 /// What a session is refused: named for `consent::human_only`'s message.
 const PLAINTEXT_KEYS: &str = "storing this node's private keys in plaintext (insecure-dev)";
+const WEAK_KEY_FILES: &str =
+    "encrypting this node's key files with the weak test profile (fast-insecure-test)";
 
 pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
     let home = &ctx.home;
@@ -68,10 +70,9 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
         KdfProfileArg::FastInsecureTest => KdfProfile::FastInsecureTest,
     });
     if kdf == Some(KdfProfile::FastInsecureTest) {
-        ctx.out.warn(
-            "--kdf-profile fast-insecure-test weakens key-file encryption; it is for automated \
-             tests and demos only",
-        );
+        // Before anything is created, like the plaintext keystore: how well a key file
+        // is encrypted is its owner's decision too (ADR-051).
+        human_only(WEAK_KEY_FILES)?;
     }
 
     // What is not there yet is what this run makes, and takes away again if it fails.
@@ -133,16 +134,49 @@ pub fn run(ctx: &Ctx, a: InitArgs) -> Result<Report> {
             OsKeyStore::check_available().map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         if backend == KeystoreBackend::InsecureDev {
-            // A config file that names the plaintext keystore asks for it as the flag does.
+            // A config file that names the plaintext keystore asks for it as the flag
+            // does: a session is refused. And it does not stand in for the flag
+            // (ADR-051): a file that was put into the home is not the owner saying so.
             human_only(PLAINTEXT_KEYS)?;
+            if !a.insecure_dev_keystore {
+                return Err(usage(
+                    "this home's config.toml names the plaintext keystore (insecure-dev), \
+                     which stores private keys in PLAINTEXT; add --insecure-dev-keystore to \
+                     confirm (development only), or choose another with --keystore",
+                ));
+            }
             ctx.out.warn(
                 "insecure-dev keystore: private keys are stored in PLAINTEXT (development only)",
+            );
+        }
+        if backend == KeystoreBackend::File && cfg.node.kdf_profile == KdfProfile::FastInsecureTest
+        {
+            // Whether the flag asked for it or a config file that was already there:
+            // the profile in force is what is warned about, and what a session is
+            // refused.
+            human_only(WEAK_KEY_FILES)?;
+            ctx.out.warn(
+                "kdf profile fast-insecure-test: this node's key files are encrypted with \
+                 weak parameters; it is for automated tests and demos only",
             );
         }
         cfg.save(home)?;
 
         let store = Store::open(home.db_path()).context("cannot create the database")?;
         let ks = open_configured_keystore(home, &cfg, backend)?;
+        // Where the key will be is recorded in the database, and a key file's
+        // reference is its path. It is checked before a key exists (ADR-051): a home
+        // whose path holds a tab or a line break, or is too long, used to be found out
+        // after the key was written, and every later `init` failed in the same place.
+        let keystore_ref = ks.locator(DeviceIdentity::LABEL)?;
+        if ph_store::check_keystore_ref(&keystore_ref).is_err() {
+            return Err(usage(
+                "the path of this home cannot be recorded for the key file: it holds a \
+                 control character (a tab, a line break) or is longer than 1024 bytes. \
+                 Nothing was created. Choose another folder with --home or \
+                 PEERHARNESS_HOME",
+            ));
+        }
         let dev = if DeviceIdentity::exists(&*ks)? {
             key_in_keystore.set(true);
             // A previous init stored the key but not the metadata: adopt it.

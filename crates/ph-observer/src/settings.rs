@@ -37,8 +37,10 @@
 //! # Safety of the rewrite
 //!
 //! * The file is parsed with key order preserved and rewritten pretty-printed with two
-//!   spaces and a trailing newline. Values are kept exactly; whitespace and formatting
-//!   of the original are not (JSON has no lossless round trip through serde).
+//!   spaces and a trailing newline. Values are kept exactly, and a number keeps the
+//!   text it had in the file (`1e5` is not written as `100000.0`, ADR-051). Whitespace,
+//!   indentation and the escapes inside a string are not kept (JSON has no lossless
+//!   round trip through serde).
 //! * Nothing is written when nothing changes (idempotence).
 //! * Malformed JSON, duplicate keys, a non-object top level, a non-object `hooks`, a
 //!   non-array event value, or a settings path that is not a regular file (a FIFO is
@@ -265,7 +267,7 @@ impl HookCommand {
         let mut m = Obj::new();
         m.insert("type", Doc::str("command"));
         m.insert("command", Doc::String(self.render(event)));
-        m.insert("timeout", Doc::Number(Self::TIMEOUT_SECS.into()));
+        m.insert("timeout", Doc::number(Self::TIMEOUT_SECS));
         Doc::Object(m)
     }
 }
@@ -694,7 +696,7 @@ fn parse_settings(bytes: &[u8]) -> Result<Doc, SettingsError> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(Doc::Object(Obj::new()));
     }
-    serde_json::from_slice::<Doc>(bytes).map_err(|e| {
+    Doc::parse(bytes).map_err(|e| {
         let (line, column) = (e.line(), e.column());
         if e.is_data() && e.to_string().starts_with(DUPLICATE_KEY_MSG) {
             SettingsError::DuplicateKey { line, column }

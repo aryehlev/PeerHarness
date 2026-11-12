@@ -30,7 +30,7 @@ governance (section 10, ADR-012 onwards).
     config.toml            # local configuration (0600)
     peerharness.db         # SQLite, WAL mode (0600)
     keys/                  # encrypted key files when the file keystore is used (0700 dir, 0600 files)
-    spool/observations.jsonl  # hook fallback spool (0600), drained on the next CLI/daemon run
+    spool/observations.jsonl  # hook fallback spool (0600), drained by the next Stop hook, `status` or `inbox`
     bundles/<hex-digest>/SKILL.md  # immutable content-addressed skill bundles
     daemon.json            # {"pid", "peer_id", "listen_addrs"} (0600) while the daemon runs; no secret
     daemon.lock            # locked exclusively by the running daemon
@@ -683,8 +683,11 @@ one flat object:
 
 A member that belongs to another kind is a schema error, as is a missing member of the
 proposal's own kind. An `amend` proposal has envelope scope `*` and its `next` passes
-the structure rules of 10.2. A `repeal` must have the scope of its target, so that the
-electorate that adopted a rule is the one that repeals it (`check_repeal_reference`).
+the structure rules of 10.2. A `repeal` takes a rule out of force only if it has the
+scope of its target, so that the electorate that adopted a rule is the one that repeals
+it. That is part of the rule set (`rules_in_force`, 10.7) and not of what a node
+stores: a proposal is kept whatever its `supersedes` or its `target` names, because
+what a node keeps must not depend on the order its records came in (ADR-051).
 The author must be a device of a member in the proposal's electorate.
 
 A proposal can pass only while the charter it names is the current one. When the charter
@@ -693,8 +696,8 @@ changes, open proposals are dead and must be proposed again.
 ### 10.5 Ballots
 
 `VOTE` is `{proposal_id, decision: "approve"|"reject"|"revise", rationale?}`. There is
-no `bundle_digest` member: `proposal_id` is the hash of the entire signed proposal and
-already binds every byte of it.
+no `bundle_digest` member: `proposal_id` is the hash of everything the proposer signed
+(the signature itself is not hashed) and already binds every signed byte of it.
 
 * A ballot is counted (`tally`) if it is in the proposal's circle, names the proposal,
   has the proposal's envelope scope, is signed by a device of a member in the proposal's
@@ -750,15 +753,22 @@ proposals that count under it, with no dependence on arrival order:
 
 ```text
 A = charter.carried  ∪  { adopt proposals passed under the current charter }
-R = { target of every repeal proposal passed under the current charter }
+R = { (target, scope) of every repeal proposal passed under the current charter }
 for each skill name s:
     winner(s) = the proposal in A named s with the greatest (created_at, event_id)
-    s is in force, with winner(s)'s bundle, iff winner(s) ∉ R
+    s is in force, with winner(s)'s bundle, iff (winner(s), its scope) ∉ R
 ```
 
 So a newer passed rule of the same name replaces the older one, and repealing the
 winner leaves that name with no rule (an older one does not come back). At most one rule
-per skill name is in force.
+per skill name is in force. A repeal counts only against a rule of its own scope: one
+that names a proposal of another scope, or anything that is not an `adopt` proposal,
+takes nothing out of force.
+
+The function can only be independent of arrival order if the records it reads are.
+So a node keeps a proposal whatever it names (`supersedes`, a repeal's `target`) and
+whether or not it holds the event named: nothing about a PROPOSAL is checked against
+other stored events when it arrives (ADR-051).
 
 A proposal enters this computation only as a `Passed` value, which has exactly two
 constructors: `Passed::by_vote` (a tally of this proposal that has reached its
@@ -1054,11 +1064,12 @@ switch them off.
    observations, candidates or files.
 2. **No vote runs code.** A rule is one instruction-only `SKILL.md`. Every bundle, built
    locally or received, is refused (`ph_skills::check_instruction_only`) if it declares
-   `allowed-tools`, which would pre-approve tools for the agent, or if a line of its
-   body contains the syntax Claude Code executes when a skill loads
+   `allowed-tools`, which would pre-approve tools for the agent, or if its file
+   contains, anywhere, the syntax Claude Code executes when a skill loads
    (`has_shell_injection`): an exclamation mark directly followed by a backtick with
-   another backtick later on the same line, or a fence opened with three backticks or
-   three tildes directly followed by an exclamation mark. Any file other than `SKILL.md`
+   another backtick anywhere after it, on that line or a later one, or three backticks
+   or three tildes directly followed by an exclamation mark, wherever on a line they
+   stand (ADR-051). Any file other than `SKILL.md`
    and any frontmatter key outside the allowlist of section 11 is refused as before.
 3. **No vote on a rule grants access.** Who may read a circle's records is the roll,
    with the scopes in each member's entry (section 7). It changes only by an amendment
@@ -1186,9 +1197,11 @@ The golden vectors tell a similar story end to end, including a charter change:
   the scanner flags, but which no bundle may contain (next bullet). `name` is 1-64 chars of `[a-z0-9-]`, with no leading, trailing or
   consecutive hyphens, and must equal the directory name. `description` is 1-1024 chars.
 * Every bundle, built locally (`build_bundle`) or received (`validate_received`), must be
-  instructions only (`check_instruction_only`, section 10.10): no `allowed-tools`, and no
-  body line with Claude Code's shell-injection syntax (`has_shell_injection`). These are
-  exact syntactic rules, not scanner heuristics, and no flag overrides them (ADR-018).
+  instructions only (`check_instruction_only`, section 10.10): no `allowed-tools`, and
+  Claude Code's shell-injection syntax nowhere in the file, body or frontmatter
+  (`has_shell_injection`). These are syntactic rules, not scanner heuristics, they
+  refuse more than Claude Code would run, and no flag overrides them (ADR-018,
+  ADR-051).
 * Received bundles reject any path other than exactly `SKILL.md`, as well as `..`,
   absolute paths, backslashes, hidden files, duplicates, symlinks and extra files.
 * The risk scanner gives advisory warnings (credential requests, `curl | sh`, remote
@@ -1212,6 +1225,11 @@ The golden vectors tell a similar story end to end, including a charter change:
   Rollback reinstalls `previous_digest` from the bundle store.
 
 ## 12. Agent providers (ph-learning, advisory only)
+
+No command of the binary calls a provider in this version (ADR-051 corrected the
+documents that read as if one did). The code and its tests are in `ph-learning`, the
+config key `learning.provider` is checked when the config is read, and `doctor`
+reports it. This section is the contract for a command that uses one.
 
 * `trait AgentProvider { fn name(); fn is_remote(); fn complete(&self, req: &AdvisoryRequest) -> Result<AdvisoryResponse> }`.
 * `ClaudeCodeCli`: spawns the user's own unmodified `claude` binary (path from
@@ -1257,7 +1275,14 @@ written down directly.
 * An agent's note is advisory text from `Actor::System`. At most 20 unreviewed
   agent-reported notes are kept; further ones are refused until the owner reviews some.
   Whether a note is an agent's is decided by where the command runs: inside a session
-  (`consent::in_agent_session`) it is one with or without `--from-agent`.
+  (`consent::in_agent_session`) it is one with or without `--from-agent`. The count
+  and the insert are one write transaction, so the cap holds for notes written at the
+  same moment. `observe import` and `observe demo`, which store text as prompts the
+  owner typed, are refused inside a session (ADR-051).
+* A candidate is `Detected` until its owner was shown it: `inbox` and `review` move
+  it to `LocalReview` when they list it, and the notice at the end of a turn counts
+  the `Detected` ones. Inside a session the reader is the agent, so neither command
+  moves anything there (ADR-051), and the owner is still told that the note waits.
 * **Consent is human-only.** Every step that goes through `consent::confirm` or
   `consent::human_only` (reviewing, sharing, proposing, voting, installing, changing
   hooks) refuses with exit code 3 when the process runs inside a coding agent's session,
@@ -1280,7 +1305,9 @@ written down directly.
   for a click on "Proceed". Cancel, the return and escape keys, no answer within 90
   seconds, a window that cannot be shown and `--yes` all refuse with exit code 3. The
   preview is not printed into the session. A text that would not fit on the screen is
-  not shown in part: the step is refused. A rule with a high-risk scanner finding, a
+  not shown in part: the step is refused. The script that shows the window lays the
+  text out with AppKit first and compares its height with the smallest screen
+  attached, and shows nothing when that fails (ADR-051). A rule with a high-risk scanner finding, a
   ballot on anything but a rule, and every other consent step refuse inside a session
   as before. That includes `proposal create`: it shows the scanner's findings and goes
   through `consent::confirm` alone when one is high-risk (ADR-041). A rationale given
@@ -1294,10 +1321,14 @@ written down directly.
   every step it allows): `circle invite`, `proposal vote` on an amendment that admits
   one member and changes nothing else, and `circle join`. They go through
   `consent::confirm_circle_or_window`. The admission windows name the device
-  fingerprint from the amendment and tell the owner to check it with the invitee, and
-  so do the terminal's previews of `circle invite` and `circle device add`; the
-  join window is the terminal's preview, with the root fingerprint and the whole
-  charter. Inside a session `circle invite` writes no events file and refuses `--out`.
+  fingerprint and the scopes of the new member's roll entry, both from the amendment
+  (for `circle invite`, from the charter it drafted, ADR-051), and tell the owner to
+  check the device with the invitee, and so do the terminal's previews of `circle
+  invite` and `circle device add`; the
+  join window is the terminal's preview, with the root fingerprint, the name the
+  circle gets on this machine and the whole charter. That name, and the name a session
+  gives to `circle create`, is one word there (letters, digits, `.`, `_`, `-`):
+  later previews put it among PeerHarness's own words (ADR-051). Inside a session `circle invite` writes no events file and refuses `--out`.
   `circle join <peer id or address>` fetches the charter before it can show it, so
   inside a session it first asks `consent::circle_step_can_be_asked`: where the step
   is not allowed, or the machine can show no window, the consent step's refusal is

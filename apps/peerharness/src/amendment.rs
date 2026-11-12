@@ -273,6 +273,13 @@ pub fn changes(
 }
 
 /// The lines of a description under construction.
+/// What stands in place of a rule's text where the reader is a coding agent's session
+/// and that text is not installed for the agent (ADR-051).
+pub(crate) const NOT_IN_A_SESSION: &str =
+    "not printed inside a coding agent's session, because it is not installed on this \
+     machine. Its owner reads it in their own terminal with this command, or in the window \
+     of a ballot";
+
 struct Lines<'a> {
     indent: &'a str,
     lines: Vec<String>,
@@ -321,7 +328,7 @@ fn scope_list(scopes: &[Scope]) -> String {
 }
 
 /// A roll entry in one line: `(device 1234-..., scopes *)`.
-fn entry_line(entry: &RollEntry) -> String {
+pub(crate) fn entry_line(entry: &RollEntry) -> String {
     format!(
         "(device{} {}, scopes {})",
         plural(entry.devices.len()),
@@ -394,6 +401,18 @@ impl Changes {
     /// always in this order and always present: the roll, the rules of the vote, the
     /// rules in force.
     pub fn describe(&self, indent: &str) -> String {
+        self.describe_as(indent, true)
+    }
+
+    /// [`Changes::describe`] for a reader that is a coding agent's session
+    /// (`proposal show` there, ADR-051): everything it says, without the text of a
+    /// rule the amendment would put in force. That text is a member's and has not been
+    /// voted on by itself; its owner reads it in their own terminal or in a window.
+    pub fn describe_without_texts(&self, indent: &str) -> String {
+        self.describe_as(indent, false)
+    }
+
+    fn describe_as(&self, indent: &str, texts: bool) -> String {
         let mut out = Lines {
             indent,
             lines: Vec::new(),
@@ -498,6 +517,13 @@ impl Changes {
                             force(new.binding),
                             force(old.binding)
                         ),
+                    );
+                    // What the word does and does not change (ADR-051).
+                    out.line(
+                        2,
+                        "that is what a member who joins afterwards starts with: whether \
+                         the members of today are asked before a rule is installed stays \
+                         each member's own choice",
                     );
                 }
             }
@@ -608,11 +634,18 @@ impl Changes {
                         );
                         continue;
                     };
-                    out.line(
-                        2,
-                        format!("its text ({} bytes), exactly as proposed:", bundle.size()),
-                    );
-                    out.member_text(3, bundle.skill_md());
+                    if texts {
+                        out.line(
+                            2,
+                            format!("its text ({} bytes), exactly as proposed:", bundle.size()),
+                        );
+                        out.member_text(3, bundle.skill_md());
+                    } else {
+                        out.line(
+                            2,
+                            format!("its text ({} bytes): {NOT_IN_A_SESSION}", bundle.size()),
+                        );
+                    }
                     let findings = bundle.scan();
                     for f in &findings {
                         out.line(2, format!("scanner, line {}: {}", f.line, f.explanation()));
@@ -887,6 +920,21 @@ mod tests {
         assert_eq!(added["high_risk"], true);
         // The JSON names the rule and does not carry its text.
         assert!(!c.json().to_string().contains("never put to a vote"));
+
+        // Where the reader is a coding agent's session, the same lines without the
+        // text: it is a member's, and nobody voted on it (ADR-051).
+        let said = c.describe_without_texts("");
+        assert!(!said.contains("never put to a vote"), "{said}");
+        // (The scanner's own description of a finding names `rm -rf /`; the line of
+        // the text does not appear.)
+        assert!(!said.contains("run rm -rf / first"), "{said}");
+        assert!(!said.contains("| "), "{said}");
+        assert!(
+            said.contains("    its text (") && said.contains(NOT_IN_A_SESSION),
+            "{said}"
+        );
+        assert!(said.contains("  rule team-conventions comes into force without a vote"));
+        assert!(said.contains("    HIGH RISK findings above."), "{said}");
     }
 
     #[test]
@@ -1231,6 +1279,10 @@ mod tests {
                 "  a rule passes with more than 2/3 of its electorate (now 1/2)",
                 "  changing these rules needs more than 3/4 of the roll (now 2/3)",
                 "  passed rules become advisory (now binding)",
+                // What that word changes, and what it leaves to each member (ADR-051).
+                "    that is what a member who joins afterwards starts with: whether the \
+                 members of today are asked before a rule is installed stays each member's \
+                 own choice",
                 "the rules in force stay as they are (0 in force)",
             ]
         );

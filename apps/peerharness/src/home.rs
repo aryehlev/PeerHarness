@@ -13,6 +13,55 @@ pub const DB_FILE: &str = "peerharness.db";
 pub const DAEMON_FILE: &str = "daemon.json";
 pub const BUNDLES_DIR: &str = "bundles";
 pub const BACKUPS_DIR: &str = "backups";
+pub const DAEMON_LOCK_FILE: &str = "daemon.lock";
+/// The log of the daemon that `peerharness mcp` starts.
+pub const MCP_LOG_FILE: &str = "mcp-daemon.log";
+pub const SPOOL_DIR: &str = "spool";
+
+/// The files PeerHarness itself puts into its home: the config, the database with the
+/// files SQLite keeps beside it, and what a daemon writes.
+const OWN_FILES: [&str; 8] = [
+    CONFIG_FILE,
+    DB_FILE,
+    "peerharness.db-wal",
+    "peerharness.db-shm",
+    "peerharness.db-journal",
+    DAEMON_FILE,
+    DAEMON_LOCK_FILE,
+    MCP_LOG_FILE,
+];
+
+/// The folders PeerHarness itself makes in its home.
+const OWN_DIRS: [&str; 4] = [
+    ph_identity::keystore::KEYS_DIR,
+    BUNDLES_DIR,
+    BACKUPS_DIR,
+    SPOOL_DIR,
+];
+
+/// Whether `name`, an entry of a home directory, is one PeerHarness itself puts there:
+/// one of its files or folders, or what an atomic write of one of its files left when
+/// it was interrupted (`.<file>.tmp-<hex>`). Everything else in a home is its owner's,
+/// and `reset` deletes none of it.
+pub fn is_own_entry(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    OWN_FILES.contains(&name)
+        || OWN_DIRS.contains(&name)
+        || OWN_FILES.iter().any(|file| {
+            name.strip_prefix('.')
+                .and_then(|rest| rest.strip_prefix(file))
+                .and_then(|rest| rest.strip_prefix(".tmp-"))
+                .is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+        })
+}
+
+/// What a file manager leaves in any folder it showed. It is nobody's work, and it
+/// goes with a home that is deleted.
+fn is_litter(name: &std::ffi::OsStr) -> bool {
+    name == ".DS_Store"
+}
 
 /// A resolved home directory.
 #[derive(Clone, Debug)]
@@ -92,6 +141,58 @@ impl Home {
     /// Creates the home directory (0700) if needed.
     pub fn ensure(&self) -> Result<()> {
         ensure_private_dir(&self.root)
+    }
+
+    /// The names in the home that PeerHarness did not put there ([`is_own_entry`]),
+    /// sorted. Empty when the home does not exist.
+    pub fn foreign_entries(&self) -> Result<Vec<String>> {
+        let entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(e).with_context(|| format!("cannot read {}", self.root.display()))
+            }
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            let name = entry
+                .with_context(|| format!("cannot read {}", self.root.display()))?
+                .file_name();
+            if !is_own_entry(&name) && !is_litter(&name) {
+                names.push(name.to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Deletes what PeerHarness put into the home ([`is_own_entry`]) and nothing else,
+    /// then the home itself if that left it empty. Returns whether the home is gone.
+    ///
+    /// A folder of PeerHarness's is deleted with what it holds. A link is deleted as a
+    /// link and never followed.
+    pub fn delete_own(&self) -> Result<bool> {
+        let cannot = || format!("cannot remove {}", self.root.display());
+        for entry in std::fs::read_dir(&self.root).with_context(cannot)? {
+            let entry = entry.with_context(cannot)?;
+            let name = entry.file_name();
+            if !is_own_entry(&name) && !is_litter(&name) {
+                continue;
+            }
+            let path = entry.path();
+            // `file_type` of a directory entry does not follow a link.
+            if entry.file_type().with_context(cannot)?.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            }
+            .with_context(|| format!("cannot remove {}", path.display()))?;
+        }
+        match std::fs::remove_dir(&self.root) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(false),
+            Err(e) => Err(e).with_context(cannot),
+        }
     }
 }
 

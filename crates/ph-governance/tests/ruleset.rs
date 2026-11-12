@@ -7,7 +7,7 @@ use common::*;
 use ph_governance::{
     carried_diff, rules_in_force, tally, Basis, NotPassed, Passed, ProposalView, RuleSet,
 };
-use ph_protocol::Charter;
+use ph_protocol::{Charter, ProposalAction, ProposalBody};
 
 /// Passes `p` under `c` with approvals from the given device seeds.
 fn pass(p: &ProposalView, c: &Charter, seeds: &[u8]) -> Passed {
@@ -72,6 +72,48 @@ fn a_newer_rule_of_the_same_name_replaces_the_older_one() {
         let reversed: Vec<Passed> = order.iter().rev().cloned().collect();
         assert_eq!(rules_in_force(&c, &reversed), reference);
     }
+}
+
+/// A repeal counts only against a rule of its own scope, so that the electorate that
+/// adopted a rule is the one that repeals it. The check is part of the rule set and
+/// not of what a node stores (ADR-051): a repeal from another scope is a record like
+/// any other, in whatever order it arrived, and it takes nothing out of force.
+#[test]
+fn a_repeal_from_another_scope_takes_nothing_out_of_force() {
+    let c = founding(vec![
+        entry("alice", &[1], &["*"]),
+        entry("bob", &[2], &["team/backend"]),
+        entry("carol", &[3], &["team/backend"]),
+        entry("dave", &[4], &["team/backend"]),
+        entry("erin", &[5], &["team/frontend"]),
+    ]);
+    let rule = adopt(2, &c, "team/backend", digest(b"b"));
+    // Another scope has another electorate: here alice and erin, and none of the three
+    // who adopted the rule with alice.
+    let from_elsewhere = proposal_from(
+        1,
+        "team/frontend",
+        ProposalBody {
+            charter: c.digest().unwrap(),
+            title: "Drop the rule".into(),
+            summary: String::new(),
+            action: ProposalAction::Repeal {
+                target: rule.event_id(),
+            },
+        },
+        now().minus_secs(1800),
+    );
+    let adopted = || pass(&rule, &c, &[2, 3, 4]);
+    let elsewhere = || pass(&from_elsewhere, &c, &[1, 5]);
+    for passed in [[adopted(), elsewhere()], [elsewhere(), adopted()]] {
+        let rs = rules_in_force(&c, &passed);
+        assert_eq!(names(&rs), [SKILL], "another scope repealed the rule");
+    }
+
+    // The repeal in the rule's own scope, passed by that scope's electorate, does.
+    let own = repeal(2, &c, &rule);
+    let rs = rules_in_force(&c, &[adopted(), pass(&own, &c, &[2, 3, 4])]);
+    assert!(rs.is_empty());
 }
 
 #[test]

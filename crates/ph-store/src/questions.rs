@@ -189,6 +189,15 @@ pub enum QuestionInsert {
     DuplicateText,
 }
 
+/// What stands in the `normalized_text` column of a question that was held back, before
+/// its event id. A normalized text is letters, digits and spaces, so nothing a member
+/// writes can be this.
+const HELD_TEXT_PREFIX: &str = "held:";
+
+fn held_text(event_id: &EventId) -> String {
+    format!("{HELD_TEXT_PREFIX}{event_id}")
+}
+
 const COLS: &str = "event_id, circle_id, scope, author, question, topic, normalized_text, \
                     related_candidate, is_local, status, created_at, received_at";
 
@@ -213,11 +222,34 @@ impl Store {
     /// Stores a question with status `New`, deduplicated by event id and by
     /// `(circle_id, normalized_text)`. Never errors on a duplicate.
     ///
+    /// Only a question that was accepted holds its text. A held-back question
+    /// (status `Muted`) that has the same text gives it up to this one: what its owner
+    /// was never shown does not keep a question from being shown.
+    ///
     /// # Errors
     ///
     /// [`StoreError::Invalid`] for an empty or oversized `normalized_text`,
     /// [`StoreError::MissingReference`] if the circle is not stored.
     pub fn insert_question(&self, q: &NewQuestion) -> Result<QuestionInsert> {
+        self.insert_question_as(q, QuestionStatus::New)
+    }
+
+    /// Stores a question that the local guard held back: kept, with status `Muted`, and
+    /// not shown. It takes no text: the same question from someone else is still
+    /// shown, and so is this one's text when it is asked again.
+    ///
+    /// # Errors
+    ///
+    /// As [`Store::insert_question`].
+    pub fn insert_held_question(&self, q: &NewQuestion) -> Result<QuestionInsert> {
+        self.insert_question_as(q, QuestionStatus::Muted)
+    }
+
+    fn insert_question_as(
+        &self,
+        q: &NewQuestion,
+        status: QuestionStatus,
+    ) -> Result<QuestionInsert> {
         if q.normalized_text.is_empty() || q.normalized_text.len() > MAX_NORMALIZED_TEXT_BYTES {
             return Err(StoreError::invalid(
                 "normalized question text",
@@ -233,9 +265,23 @@ impl Store {
         if by_id {
             return Ok(QuestionInsert::DuplicateEvent);
         }
-        if self.question_text_exists(&q.circle_id, &q.normalized_text)? {
-            return Ok(QuestionInsert::DuplicateText);
-        }
+        let held = status == QuestionStatus::Muted;
+        // What a held-back question records in place of its text: a value no
+        // normalized text can be (it has a colon), and one for each question.
+        let normalized_text = if held {
+            held_text(&q.event_id)
+        } else {
+            if self.question_text_exists(&q.circle_id, &q.normalized_text)? {
+                return Ok(QuestionInsert::DuplicateText);
+            }
+            // A row that was held back before held-back rows stopped taking a text.
+            self.conn.execute(
+                "UPDATE questions SET normalized_text = ?3 || event_id
+                 WHERE circle_id = ?1 AND normalized_text = ?2 AND status = 'muted'",
+                params![q.circle_id.to_string(), q.normalized_text, HELD_TEXT_PREFIX],
+            )?;
+            q.normalized_text.clone()
+        };
         self.conn.execute(
             &format!(
                 "INSERT INTO questions ({COLS})
@@ -248,10 +294,10 @@ impl Store {
                 q.author.to_string(),
                 q.question,
                 q.topic,
-                q.normalized_text,
+                normalized_text,
                 q.related_candidate.as_ref().map(ToString::to_string),
                 sql::b(q.is_local),
-                QuestionStatus::New.as_str(),
+                status.as_str(),
                 q.created_at.unix_seconds(),
                 q.received_at.unix_seconds()
             ],
@@ -317,40 +363,49 @@ impl Store {
         Ok(())
     }
 
-    /// Questions by `author` (in any circle) received at or after `since`.
+    /// Accepted questions by `author` (in any circle) received at or after `since`.
+    /// One that was held back (status `Muted`) is not counted: a quota is a number of
+    /// questions that were shown.
     pub fn count_questions_by_author_since(
         &self,
         author: &DeviceKey,
         since: Timestamp,
     ) -> Result<u64> {
         let n: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM questions WHERE author = ?1 AND received_at >= ?2",
+            "SELECT COUNT(*) FROM questions
+             WHERE author = ?1 AND received_at >= ?2 AND status != 'muted'",
             params![author.to_string(), since.unix_seconds()],
             |r| r.get(0),
         )?;
         Ok(u64::try_from(n).unwrap_or(0))
     }
 
-    /// Questions in `circle` received at or after `since`.
+    /// Accepted questions that others asked in `circle`, received at or after `since`.
+    /// Not counted: one that was held back (status `Muted`), and what this node's own
+    /// owner asked. Otherwise one member's flood, of which a day's quota is shown,
+    /// would use up what every other member may ask.
     pub fn count_questions_by_circle_since(
         &self,
         circle: &CircleId,
         since: Timestamp,
     ) -> Result<u64> {
         let n: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM questions WHERE circle_id = ?1 AND received_at >= ?2",
+            "SELECT COUNT(*) FROM questions
+             WHERE circle_id = ?1 AND received_at >= ?2 AND status != 'muted' AND is_local = 0",
             params![circle.to_string(), since.unix_seconds()],
             |r| r.get(0),
         )?;
         Ok(u64::try_from(n).unwrap_or(0))
     }
 
-    /// Whether a question with this normalized text exists in `circle`. The text is
-    /// compared exactly; normalize it with the same function used for
+    /// Whether an accepted question with this normalized text exists in `circle`: one
+    /// that was held back (status `Muted`) does not count. The text is compared
+    /// exactly; normalize it with the same function used for
     /// [`NewQuestion::normalized_text`].
     pub fn question_text_exists(&self, circle: &CircleId, normalized_text: &str) -> Result<bool> {
         Ok(self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM questions WHERE circle_id = ?1 AND normalized_text = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM questions
+             WHERE circle_id = ?1 AND normalized_text = ?2 AND status != 'muted')",
             params![circle.to_string(), normalized_text],
             |r| r.get(0),
         )?)

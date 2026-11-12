@@ -117,6 +117,33 @@ impl Machine {
     }
 }
 
+/// `setup` registers the tools by running Claude Code's own command. That program is
+/// not PeerHarness, and the passphrase of the key file was in its environment when the
+/// person had it set for the command (ADR-051).
+#[test]
+fn the_passphrase_is_not_handed_to_claude_code() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    let seen = tmp.path().join("claude-saw");
+    std::fs::write(
+        &m.claude,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"${{PEERHARNESS_PASSPHRASE:-unset}}\" >> '{seen}'\n\
+             case \"$1 $2\" in\n'mcp get') exit 1 ;;\n'mcp add') exit 0 ;;\nesac\nexit 2\n",
+            seen = seen.display(),
+        ),
+    )
+    .unwrap();
+    let out = m
+        .setup(&["--yes", "--json"])
+        .env("PEERHARNESS_PASSPHRASE", "a-passphrase-for-this-test-only")
+        .output()
+        .unwrap();
+    assert_eq!(json(&out)["tools"], "registered");
+    // Asked whether it has the server, then told to add it: two runs, neither with it.
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), "unset\nunset\n");
+}
+
 fn json(out: &Output) -> Value {
     assert!(
         out.status.success(),

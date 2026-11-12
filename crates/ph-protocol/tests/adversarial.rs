@@ -505,6 +505,99 @@ fn real_envelopes_validate_from_inside_frames() {
     assert_eq!(results, vec![true, true, false]);
 }
 
+/// A frame is one JSON object in the form the encoder writes, and in no other
+/// (ADR-051). The derived deserializers also read a struct from an array of its
+/// members and a variant without fields from an object with a `null` in it. Each of
+/// those was a second way to write a frame, and is refused, at the top and inside.
+#[test]
+fn a_frame_in_any_form_but_the_encoders_is_refused() {
+    let z = Digest::sha256(b"x").to_string();
+    let schema = |r: Result<(), ProtocolError>, what: &str| {
+        assert!(
+            matches!(r, Err(ProtocolError::Schema { .. })),
+            "{what}: {r:?}"
+        );
+    };
+
+    // Requests. The first of each pair is what the encoder writes, and is read.
+    let read = |s: &str| Request::from_bytes(s.as_bytes()).map(|_| ());
+    for ok in [
+        r#"{"type":"hello","versions":["0.1"]}"#.to_owned(),
+        format!(r#"{{"type":"fetch_events","circle_id":"{z}","known":[],"limit":5}}"#),
+        format!(
+            r#"{{"type":"fetch_events","circle_id":"{z}","known":[],"limit":5,"after":"{z}"}}"#
+        ),
+        format!(r#"{{"type":"fetch_bundle","circle_id":"{z}","digest":"{z}"}}"#),
+        r#"{"type":"push_events","events":[{}]}"#.to_owned(),
+        r#"{"type":"authenticate","memberships":[],"listen_addrs":[]}"#.to_owned(),
+        // Order and whitespace are not form: the value is what is compared.
+        r#" { "versions" : ["0.1"], "type" : "hello" } "#.to_owned(),
+    ] {
+        read(&ok).unwrap_or_else(|e| panic!("{ok}: {e:?}"));
+    }
+    for bad in [
+        r#"["hello",["0.1"]]"#.to_owned(),
+        r#"["hello",["0.1"],1]"#.to_owned(),
+        format!(r#"["fetch_events","{z}",[],5]"#),
+        format!(r#"["fetch_events","{z}",[],5,"{z}"]"#),
+        format!(r#"["fetch_bundle","{z}","{z}"]"#),
+        r#"["push_events",[{}]]"#.to_owned(),
+        r#"["authenticate",[],[]]"#.to_owned(),
+        r#"{"type":"hello","versions":null}"#.to_owned(),
+        format!(r#"{{"type":"fetch_events","circle_id":"{z}","known":[],"limit":5,"after":null}}"#),
+        r#""hello""#.to_owned(),
+        "null".to_owned(),
+        "1".to_owned(),
+    ] {
+        schema(read(&bad), &bad);
+    }
+    // A member inside a frame written as an array of its members.
+    let proof = json!({ "credential": credential(), "acceptance": acceptance() });
+    let frame = |proof: &Value| {
+        json!({ "type": "authenticate", "memberships": [proof], "listen_addrs": [] }).to_string()
+    };
+    read(&frame(&proof)).unwrap();
+    schema(
+        read(&frame(&json!([proof["credential"], proof["acceptance"]]))),
+        "a proof as an array",
+    );
+
+    // Responses.
+    let read = |s: &str| Response::from_bytes(s.as_bytes()).map(|_| ());
+    for ok in [
+        r#"{"type":"error","code":"unauthorized"}"#.to_owned(),
+        format!(r#"{{"type":"push_result","results":[{{"event_id":"{z}","status":"accepted"}}]}}"#),
+        r#"{"type":"push_result","results":[{"status":"rejected"}]}"#.to_owned(),
+        r#"{"type":"events","events":[],"more":false}"#.to_owned(),
+        r#"{"type":"authenticated","memberships":[]}"#.to_owned(),
+        format!(r#"{{"type":"authenticated","memberships":[],"circles":["{z}"]}}"#),
+        format!(
+            r#"{{"type":"bundle","digest":"{z}","files":[{{"path":"SKILL.md","content_b64":"aGVsbG8="}}]}}"#
+        ),
+    ] {
+        read(&ok).unwrap_or_else(|e| panic!("{ok}: {e:?}"));
+    }
+    for bad in [
+        r#"{"type":"error","code":{"unauthorized":null}}"#.to_owned(),
+        r#"["error","unauthorized"]"#.to_owned(),
+        r#"["error",{"rate_limited":null}]"#.to_owned(),
+        format!(
+            r#"{{"type":"push_result","results":[{{"event_id":"{z}","status":{{"accepted":null}}}}]}}"#
+        ),
+        format!(r#"{{"type":"push_result","results":[["{z}","accepted"]]}}"#),
+        format!(r#"{{"type":"push_result","results":[["{z}",{{"duplicate":null}}]]}}"#),
+        r#"{"type":"push_result","results":[{"status":"accepted","event_id":null}]}"#.to_owned(),
+        r#"["events",[],false]"#.to_owned(),
+        r#"{"type":"authenticated","memberships":[],"circles":null}"#.to_owned(),
+        r#"["authenticated",[]]"#.to_owned(),
+        format!(r#"{{"type":"bundle","digest":"{z}","files":[["SKILL.md","aGVsbG8="]]}}"#),
+        // A sender omits `circles` when the list is empty (section 11.5).
+        r#"{"type":"authenticated","memberships":[],"circles":[]}"#.to_owned(),
+    ] {
+        schema(read(&bad), &bad);
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // Privacy of errors and Debug output
 // ---------------------------------------------------------------------------------------

@@ -27,6 +27,18 @@ pub struct IdentityMetadata {
     pub created_at: Timestamp,
 }
 
+/// Whether `keystore_ref` can be recorded: not empty, at most
+/// [`MAX_KEYSTORE_REF_BYTES`] and with no control character. [`Store::set_identity`]
+/// checks it. It is public so that a caller can check the reference of a key before
+/// the key is written: a key file's reference is its path.
+///
+/// # Errors
+///
+/// [`crate::StoreError::Invalid`] otherwise.
+pub fn check_keystore_ref(keystore_ref: &str) -> Result<()> {
+    sql::check_short("keystore reference", keystore_ref, MAX_KEYSTORE_REF_BYTES)
+}
+
 impl Store {
     /// The identity row, if `peerharness init` has run.
     pub fn identity(&self) -> Result<Option<IdentityMetadata>> {
@@ -51,11 +63,7 @@ impl Store {
     /// Creates or replaces the identity row (device re-enrollment replaces it).
     pub fn set_identity(&self, id: &IdentityMetadata) -> Result<()> {
         sql::check_short("keystore backend", &id.keystore_backend, 64)?;
-        sql::check_short(
-            "keystore reference",
-            &id.keystore_ref,
-            MAX_KEYSTORE_REF_BYTES,
-        )?;
+        check_keystore_ref(&id.keystore_ref)?;
         self.conn.execute(
             "INSERT INTO identity_metadata (id, device_key, keystore_backend, keystore_ref, created_at)
              VALUES (1, ?1, ?2, ?3, ?4)

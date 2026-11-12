@@ -1,5 +1,10 @@
 //! `observe demo` and `observe import`: synthetic local observations for demos and tests.
 //! Text is redacted and bounded on the way in (`NormalizedObservation::from_raw`).
+//!
+//! Both are refused inside a coding agent's session (ADR-051). What they store is read
+//! as something the owner typed to their agent, so the candidates the detector makes
+//! from it are labelled as found in the owner's own prompts and are not counted by the
+//! cap on an agent's waiting notes. An agent has `note` for what it wants to report.
 
 use std::path::Path;
 
@@ -11,6 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::Ctx;
+use crate::consent::human_only;
 use crate::detect::{self, DetectSummary};
 use crate::error::usage;
 use crate::home::read_bounded_file;
@@ -29,6 +35,7 @@ const MAX_IMPORT_LINE_BYTES: usize = 64 * 1024;
 const MAX_REPO_CHARS: usize = 128;
 
 pub fn demo(ctx: &Ctx) -> Result<Report> {
+    human_only("adding observations as if you had typed them")?;
     let node = ctx.open_node()?;
     let now = node.now();
     let retention = node.config.retention.observation_secs();
@@ -71,6 +78,7 @@ struct ImportLine {
 }
 
 pub fn import(ctx: &Ctx, file: &Path) -> Result<Report> {
+    human_only("adding observations as if you had typed them")?;
     let node = ctx.open_node()?;
     let now = node.now();
     let retention = node.config.retention.observation_secs();

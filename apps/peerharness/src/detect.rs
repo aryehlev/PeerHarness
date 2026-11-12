@@ -27,37 +27,69 @@ pub fn store_observation(
     store.insert_observation(obs, obs.created_at.plus_secs(retention_secs))
 }
 
-/// Moves spooled hook observations into the database. Observations that cannot be
-/// inserted are appended to the spool again. Returns the number inserted.
+/// Why a drain stored nothing.
+#[derive(Debug)]
+enum DrainError {
+    Store(ph_store::StoreError),
+    Spool(ph_observer::SpoolError),
+}
+
+impl From<ph_store::StoreError> for DrainError {
+    fn from(e: ph_store::StoreError) -> Self {
+        DrainError::Store(e)
+    }
+}
+
+/// Moves spooled hook observations into the database. Returns the number inserted.
+///
+/// The order is what keeps a line from being lost (ADR-051). The write lock of the
+/// database is taken first. While another process holds it, this waits once for the
+/// connection's busy timeout and leaves the spool as it is: nothing was claimed. With
+/// the lock in hand the spool is claimed and its lines are inserted in the one
+/// transaction, and the claim files are deleted only after it is committed. If
+/// anything fails in between, the transaction stores nothing and the claim files
+/// stay, to be read again by a later drain. Inserting is idempotent by observation id.
+///
+/// It used to delete the spool once it was read, insert line by line, each insert
+/// waiting for the lock on its own, and append what failed to the spool again, where
+/// a full spool dropped it.
 pub fn drain_spool(spool: &Path, store: &Store, retention_secs: i64) -> usize {
-    let drained = match ph_observer::drain(spool) {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::warn!(error = %e, "cannot drain the observation spool");
-            return 0;
-        }
-    };
-    let mut inserted = 0;
-    let mut requeued = 0;
-    for obs in &drained.observations {
-        match store_observation(store, obs, retention_secs) {
-            Ok(true) => inserted += 1,
-            Ok(false) => {}
-            Err(_) => {
-                requeued += 1;
-                let _ = ph_observer::append_observation(spool, obs);
+    let taken = store.transaction_with(|store| -> Result<_, DrainError> {
+        let claimed = ph_observer::claim_spool(spool).map_err(DrainError::Spool)?;
+        let mut inserted = 0;
+        for obs in &claimed.observations {
+            if store_observation(store, obs, retention_secs)? {
+                inserted += 1;
             }
         }
+        Ok((claimed, inserted))
+    });
+    match taken {
+        Ok((claimed, inserted)) => {
+            let skipped = claimed.skipped_lines;
+            if let Err(e) = claimed.release() {
+                // The rows are stored. A claim file that stays is read again later,
+                // and inserts nothing twice.
+                tracing::warn!(error = %e, "cannot delete a drained spool file");
+            }
+            if inserted + skipped > 0 {
+                tracing::info!(inserted, skipped, "drained observation spool");
+            }
+            inserted
+        }
+        Err(DrainError::Store(e)) if e.is_busy() => {
+            tracing::debug!("the database is busy: the observation spool stays as it is");
+            0
+        }
+        Err(DrainError::Store(e)) => {
+            tracing::warn!(error = %e, "cannot store the observation spool; it is kept");
+            0
+        }
+        Err(DrainError::Spool(e)) => {
+            tracing::warn!(error = %e, "cannot drain the observation spool");
+            0
+        }
     }
-    if inserted + requeued + drained.skipped_lines > 0 {
-        tracing::info!(
-            inserted,
-            requeued,
-            skipped = drained.skipped_lines,
-            "drained observation spool"
-        );
-    }
-    inserted
 }
 
 /// Runs the deterministic detector over recent observations (optionally one repo) and
@@ -136,6 +168,87 @@ mod tests {
             ObservationKind::UserPrompt,
             text,
         )
+    }
+
+    /// The spool loses no line while the database is busy (ADR-051). The drain used
+    /// to delete the spool once it had read it, wait for the lock once for every
+    /// line, and append each line that failed to the spool again.
+    ///
+    /// No sleeps and no threads: neither connection waits (busy timeout 0), and the
+    /// other one holds the write lock while this one drains.
+    #[test]
+    fn a_drain_while_the_database_is_busy_leaves_the_spool_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("peerharness.db");
+        let store = Store::open_with_busy_timeout(&path, 0).unwrap();
+        let spool = ph_observer::spool::spool_path(dir.path());
+        let now = Timestamp::now();
+        let ret = 14 * 86_400;
+        let lines: Vec<_> = (0..40)
+            .map(|i| prompt(&format!("Use tabs in module {i}."), "r", now))
+            .collect();
+        for obs in &lines {
+            ph_observer::append_observation(&spool, obs).unwrap();
+        }
+        let before = std::fs::read(&spool).unwrap();
+        let in_spool_dir = || std::fs::read_dir(spool.parent().unwrap()).unwrap().count();
+
+        // Another process writes. Nothing is claimed, nothing is stored, and the
+        // spool is byte for byte what it was.
+        let other = Store::open_with_busy_timeout(&path, 0).unwrap();
+        other
+            .transaction(|_| {
+                assert_eq!(drain_spool(&spool, &store, ret), 0);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(std::fs::read(&spool).unwrap(), before);
+        assert_eq!(in_spool_dir(), 1, "no claim file was made");
+        assert!(store
+            .recent_observations(None, now.minus_secs(60), 500)
+            .unwrap()
+            .is_empty());
+
+        // The lock is free: every line is stored, and the spool is gone.
+        assert_eq!(drain_spool(&spool, &store, ret), lines.len());
+        assert_eq!(in_spool_dir(), 0);
+        assert_eq!(
+            store
+                .recent_observations(None, now.minus_secs(60), 500)
+                .unwrap()
+                .len(),
+            lines.len()
+        );
+        // Again: nothing to do, and nothing stored twice.
+        assert_eq!(drain_spool(&spool, &store, ret), 0);
+
+        // Lines that a drain claimed and could not store are in a claim file. A later
+        // drain stores them, with what the spool got meanwhile, each once.
+        for obs in &lines[..3] {
+            ph_observer::append_observation(&spool, obs).unwrap();
+        }
+        let fresh = prompt("Use spaces in module 99.", "r", now);
+        ph_observer::append_observation(&spool, &fresh).unwrap();
+        drop(ph_observer::claim_spool(&spool).unwrap());
+        assert_eq!(in_spool_dir(), 1);
+        let claim = std::fs::read_dir(spool.parent().unwrap())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let stale = format!(
+            "{}-{}-1-0",
+            ph_observer::spool::processing_path(&spool).display(),
+            now.unix_seconds() - 3600
+        );
+        std::fs::rename(claim, stale).unwrap();
+        assert_eq!(
+            drain_spool(&spool, &store, ret),
+            1,
+            "only the new line is new"
+        );
+        assert_eq!(in_spool_dir(), 0);
     }
 
     #[test]

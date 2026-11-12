@@ -120,8 +120,21 @@ allowed:
   is never refused.
 * `peerharness export --local` and `peerharness events export`, which write your notes
   and a circle's records out.
-* `peerharness init` with the plaintext keystore (`insecure-dev`). A plain `init`
+* `peerharness init` with the plaintext keystore (`insecure-dev`), or with the weak
+  key-file parameters of the tests (`--kdf-profile fast-insecure-test`), whether a
+  flag asks for it or a `config.toml` that is already in the home. A plain `init`
   works there.
+* `peerharness observe import` and `peerharness observe demo`, which store text as
+  prompts you typed. Inside a session `note` is the one way to write something down.
+
+Two things are narrower inside a session and are not refused. A circle's name, given
+to `circle create` or to `circle join --name`, is one word there: letters and digits,
+with `.`, `_` and `-` after the first. The name is local to your machine and later
+windows show it among PeerHarness's own words; in your terminal you name a circle as
+you like, and
+the preview of a join shows the name before you answer. And `inbox` or `review` run
+by your agent do not count as you having seen a note: the line at the end of a turn
+still tells you that it waits.
 
 A note written inside a session is labelled "reported by your agent" in your inbox,
 whether or not the agent passed `--from-agent`, and at most 20 such notes wait at a
@@ -297,7 +310,9 @@ counts for what you were shown").
 `proposal vote` on a rule refuses an approval until the rule's text is on your node:
 read it with `proposal show`. In a terminal the ballot itself shows the proposal's
 title and not the text. `proposal show` prints the text, every line behind `| `, with
-the number of scanner findings and whether one is high-risk. It does not print the
+the number of scanner findings and whether one is high-risk. (When a coding agent
+runs it in its session, the text is left out unless that rule is installed on your
+machine already: a rule's text is for you to read first.) It does not print the
 findings: those are shown when a rule is proposed, on a ballot asked in a window, and
 before an install that asks.
 
@@ -468,7 +483,7 @@ keep a vote intact.
 
 | | Commands | Good to know |
 |---|---|---|
-| A repository you already share | `peerharness events sync .peerharness/team --circle team`, then commit and push | Each record is its own file, so there are no merge conflicts. Everyone who can read the repository can read the roll and the ballots |
+| A repository you already share | `peerharness events sync .peerharness/team --circle team`, then commit and push | Each record is its own file, so members who add different records never touch the same file. Everyone who can read the repository can read the roll and the ballots |
 | A member's address | `peerharness daemon --listen /ip4/0.0.0.0/udp/4001/quic-v1`, then `peerharness sync <the address it prints>` | Needs the same network, a VPN or a forwarded UDP port |
 | The local network | `peerharness daemon --listen … --lan`, then `peerharness sync --lan` | Announces the device's public key and port on that network |
 | A file | `peerharness events export --circle team --out f.jsonl`, then `peerharness events import f.jsonl` | Holds the roll and proposals in clear text: send it only to members |
@@ -483,6 +498,14 @@ only, no member twice, and nothing but the one member a record has (`event` or
 `bundle`). A line that is not such a record is refused and counted, and the other
 records are still imported. The event inside is then verified as one from a peer is,
 which refuses an unknown member or an explicit `null` anywhere in it.
+
+The report gives a reason for what was refused, one line for each (`refused
+(not_a_record): 3`). At most 64 MiB of records are read from one directory, and as
+much again of files that have a record's name and hold none. Beyond that the command
+goes on with what it read and says how many files it did NOT read: take out the files
+that are no records and run it again. In a shared directory, a file that already
+holds a record is left as it is, and a file with a record's name and anything else in
+it is replaced by the record.
 
 Joining from a file or a directory joins the circle whose root fingerprint you pass.
 Anyone who can write to a shared directory can add records of a circle of their own
@@ -519,6 +542,11 @@ peerharness circle leave --circle team              # stop following now, and as
 # the ones it already cast included, so a result that needed one of them is open again.
 peerharness circle revoke <member or device key> --circle team
 ```
+
+A revocation cannot be taken back, and a device key that no member has can be revoked
+like any other. The preview says so when no member on the roll has the device, so that
+a mistyped key is noticed before the yes. `circle invite` shows the scopes of the new
+member beside the device (`--scope`, or `*` for all).
 
 What a revocation does to results that had passed, and what can go wrong with an
 import afterwards, is under [Known limits](limits.md).
@@ -810,7 +838,10 @@ rm ~/.local/bin/peerharness
 only as its preview showed it. Where it makes no request, it says so and why, and
 running it again once the cause is gone shows the request and makes it. A team's
 only member cannot leave it: opt out of its rules one by one. `reset --confirm` cannot
-be undone, and ballots you already cast stay on the other members' nodes. A skill
+be undone, and ballots you already cast stay on the other members' nodes. It deletes
+what PeerHarness put into its folder and nothing else: a file of yours that lies there
+stays, the folder stays with it, and the report says so. It also works when the
+database can no longer be read. A skill
 that is still installed when you reset stays where it is, and the report lists its
 folder for you to delete by hand. If you founded a team, its root key is deleted with
 your node, and nobody can be admitted to that team or removed from it afterwards.
@@ -824,7 +855,8 @@ peerharness init --keystore insecure-dev --insecure-dev-keystore   # plaintext k
 ```
 
 Type the last line in your own terminal: inside a coding agent's session the plaintext
-keystore is refused.
+keystore is refused. From then on every command that uses the key prints a warning
+that it is stored in plaintext, and `peerharness status` says it too.
 
 `demo/two-peers.sh`, in a clone of the repository, runs two nodes as two processes
 over QUIC on loopback, in a temporary folder. It refuses inside a coding agent's

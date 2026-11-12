@@ -18,7 +18,7 @@ use crate::commands::Ctx;
 use crate::error::{refused, usage};
 use crate::governance;
 use crate::node::Node;
-use crate::output::{safe, short_id, Report, Text};
+use crate::output::{continued, safe, short_id, Report, Text, MEMBERS_WORDS};
 
 pub fn run(ctx: &Ctx, command: RuleCommand) -> Result<Report> {
     let node = ctx.open_node()?;
@@ -104,24 +104,39 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
     for c in &circles {
         let (charter, rules, _) = governance::rule_set(&node.store, &c.circle_id)?;
         let places = node.store.rule_places(&c.circle_id)?;
-        t.line(format!(
-            "{} (charter {}, your mode: {}): {} rule(s) in force",
-            safe(&c.name),
-            charter.seq,
-            c.adoption_mode,
-            rules.len()
-        ));
+        // An owner who left the circle on this machine is bound by none of its rules,
+        // whatever the roll still says: `apply_rules` installs nothing for them, and
+        // this listing says the same (ADR-051).
+        let left = node.store.circle_left_at(&c.circle_id)?.is_some();
+        if left {
+            t.line(format!(
+                "{} (charter {}, you left this circle on this machine): {} rule(s) in force \
+                 for its members, none of them for you",
+                safe(&c.name),
+                charter.seq,
+                rules.len()
+            ));
+        } else {
+            t.line(format!(
+                "{} (charter {}, your mode: {}): {} rule(s) in force",
+                safe(&c.name),
+                charter.seq,
+                c.adoption_mode,
+                rules.len()
+            ));
+        }
         for rule in rules.rules() {
             let opted_out = node
                 .store
                 .is_rule_opted_out(&c.circle_id, rule.skill_name())?;
-            let binds_me = charter
-                .content
-                .voter(
-                    &node.device_key(),
-                    &ph_protocol::Electorate::Scope(rule.scope()),
-                )
-                .is_some();
+            let binds_me = !left
+                && charter
+                    .content
+                    .voter(
+                        &node.device_key(),
+                        &ph_protocol::Electorate::Scope(rule.scope()),
+                    )
+                    .is_some();
             // Where this machine puts rules of that scope (`circle place`).
             let target =
                 governance::Target::of(&installer, governance::place_for(&places, rule.scope()));
@@ -133,6 +148,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 None
             };
             let here = match (held, target.installer.status(rule.skill_name())) {
+                _ if left => "does not bind you: you left this circle",
                 _ if !binds_me => "does not bind you: you are not in its electorate",
                 (Some(why), _) => why.state(),
                 (None, Ok(InstallState::Managed { digest, modified }))
@@ -175,19 +191,22 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 &rule.proposal_id(),
                 &node.device_key(),
             )?;
+            // One line a member, the name first and the member's own words last, and
+            // every further line of those behind a mark: a reason cannot add a name
+            // to the list or a line to the listing (ADR-051).
             let out_of_it: Vec<String> = recorded
                 .iter()
                 .filter(|s| s.stance == Stance::OptedOut)
                 .map(|s| match s.reason.as_deref().filter(|r| !r.is_empty()) {
-                    Some(r) => format!("{} ({})", s.member, safe(r)),
+                    Some(r) => format!("{}: {}", s.member, continued(r, MEMBERS_WORDS)),
                     None => s.member.clone(),
                 })
                 .collect();
             if !out_of_it.is_empty() {
-                t.line(format!(
-                    "      on record as opted out: {}",
-                    out_of_it.join(", ")
-                ));
+                t.line("      on record as opted out:");
+                for member in &out_of_it {
+                    t.line(format!("        - {member}"));
+                }
             }
             rows.push(json!({
                 "circle": c.name,
@@ -197,6 +216,7 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 "bundle_digest": rule.bundle_digest(),
                 "opted_out": opted_out,
                 "binds_you": binds_me,
+                "left_circle": left,
                 "state": here,
                 "held": held.map(governance::Held::code),
                 "project": target.dir,

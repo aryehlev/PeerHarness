@@ -3,8 +3,9 @@
 //!
 //! The directory form exists so that a team can keep its circle in a place it already
 //! shares, typically a git repository. Each record is a file named by its own hash
-//! (`event-<hex>.json`, `bundle-<hex>.json`), so two members who add records at the same
-//! time add different files and nothing ever needs merging.
+//! (`event-<hex>.json`, `bundle-<hex>.json`), so two members who add different records
+//! at the same time add different files. One event can exist in two signed forms, and
+//! then one file can hold either ([`same_record`], ADR-051).
 //!
 //! Nothing read here is trusted. File names are only a convenience: every line goes
 //! through `governance::ingest`, which verifies it, and a file whose content does not
@@ -24,6 +25,7 @@ use anyhow::{Context, Result};
 use ph_core::Digest;
 use ph_protocol::jcs::{self, ParseLimits};
 use ph_protocol::limits::MAX_DEPTH;
+use ph_protocol::SignedEnvelope;
 use serde_json::Value;
 
 use crate::error::usage;
@@ -69,6 +71,12 @@ pub struct Source {
     pub lines: Vec<String>,
     /// Directory entries that were not read: other files, links, oversized files.
     pub ignored: usize,
+    /// Files of a directory that have a record's name and hold no record. They are
+    /// counted and not kept: an import reports them as refused.
+    pub not_records: usize,
+    /// Record files of a directory that were not read, because what was read before
+    /// them had reached [`MAX_SOURCE_BYTES`]. The run goes on with what was read.
+    pub not_read: usize,
 }
 
 fn is_hex64(s: &str) -> bool {
@@ -132,6 +140,12 @@ pub fn entry_name(line: &str) -> Option<String> {
 /// Reads the records offered at `path`: the lines of a JSON lines file, or the record
 /// files of a directory in name order.
 pub fn read_source(path: &Path) -> Result<Source> {
+    read_source_within(path, MAX_SOURCE_BYTES)
+}
+
+/// [`read_source`], with the most bytes it reads of records, and of what is none,
+/// given: the tests use a small number in place of [`MAX_SOURCE_BYTES`].
+fn read_source_within(path: &Path, budget: u64) -> Result<Source> {
     let meta = fs::metadata(path).with_context(|| format!("cannot read {}", path.display()))?;
     if !meta.is_dir() {
         let bytes = read_bounded_file(path, MAX_SOURCE_BYTES)?;
@@ -143,7 +157,7 @@ pub fn read_source(path: &Path) -> Result<Source> {
                 .filter(|l| !l.is_empty())
                 .map(str::to_owned)
                 .collect(),
-            ignored: 0,
+            ..Source::default()
         });
     }
     let mut names: Vec<String> = Vec::new();
@@ -172,36 +186,118 @@ pub fn read_source(path: &Path) -> Result<Source> {
         }
     }
     names.sort();
-    let mut total: u64 = 0;
+    // Two budgets of [`MAX_SOURCE_BYTES`] each (ADR-051): one for records, which are
+    // kept in memory, and one for files with a record's name that hold none, which
+    // are read and dropped. When either is used up, the rest of the directory is
+    // counted and not read, and the run goes on with what it has. Anyone who can
+    // write to a shared directory can put files there. Sixty-five of them, of a
+    // megabyte each, used to end every member's import and sync with an error.
+    let mut kept: u64 = 0;
+    let mut dropped: u64 = 0;
+    let mut full = false;
     for name in names {
+        if full {
+            source.not_read += 1;
+            continue;
+        }
         let file = path.join(&name);
         let Ok(bytes) = read_bounded_file(&file, MAX_ENTRY_BYTES) else {
             source.ignored += 1;
             continue;
         };
-        total += bytes.len() as u64;
-        if total > MAX_SOURCE_BYTES {
-            return Err(usage(format!(
-                "{} holds more than {MAX_SOURCE_BYTES} bytes of records",
-                path.display()
-            )));
+        let len = bytes.len() as u64;
+        // One record per file: anything after the first line is not read.
+        let line = String::from_utf8(bytes).ok().and_then(|text| {
+            text.lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .map(str::to_owned)
+        });
+        match line {
+            Some(line) if parse_record(&line).is_some() => {
+                if kept + len > budget {
+                    source.not_read += 1;
+                    full = true;
+                    continue;
+                }
+                kept += len;
+                source.lines.push(line);
+            }
+            Some(_) => {
+                source.not_records += 1;
+                dropped += len;
+            }
+            None => {
+                source.ignored += 1;
+                dropped += len;
+            }
         }
-        match String::from_utf8(bytes) {
-            // One record per file: anything after the first line is not read.
-            Ok(text) => match text.lines().map(str::trim).find(|l| !l.is_empty()) {
-                Some(line) => source.lines.push(line.to_owned()),
-                None => source.ignored += 1,
-            },
-            Err(_) => source.ignored += 1,
-        }
+        full = dropped > budget;
     }
     Ok(source)
 }
 
-/// Writes each line into `dir` under its content-derived name, unless a file with exactly
-/// that content is already there. A file of that name with other content is replaced: the
-/// lines given here were verified by this node, and whatever was there was not. Creates
-/// the directory and its README when missing. Returns how many files were written.
+/// Whether `old` and `new` are the same record, where `new` is one this node verified.
+///
+/// For an event that is not the same as "the same bytes" (ADR-051). An event's id is
+/// the digest of what its author signed, without the signature, and an author can
+/// sign the same bytes more than once. Two nodes can so hold one event in two signed
+/// forms, both valid. A file that carries the same event id in a form whose signature
+/// verifies is the record: replacing it with this node's form would make two nodes
+/// that share the directory rewrite the file after each other for ever, and every
+/// rewrite is a change for the others to commit and fetch.
+///
+/// A text is the same when it is the text its digest names.
+fn same_record(old: &str, new: &str) -> bool {
+    match (parse_record(old), parse_record(new)) {
+        (Some(Record::Event(old)), Some(Record::Event(new))) => {
+            let (Ok(old), Ok(new)) = (
+                SignedEnvelope::from_value(&old),
+                SignedEnvelope::from_value(&new),
+            ) else {
+                return false;
+            };
+            old.event_id() == new.event_id() && old.verify_signature().is_ok()
+        }
+        (
+            Some(Record::Bundle {
+                digest: old,
+                skill_md,
+            }),
+            Some(Record::Bundle { digest: new, .. }),
+        ) => {
+            old == new
+                && ph_skills::digest_for_skill_md(skill_md.as_bytes()).is_ok_and(|d| d == old)
+        }
+        _ => false,
+    }
+}
+
+/// Whether the file at `path` already holds the record of `line`: the same bytes, or
+/// the same record in another valid form ([`same_record`]). A file larger than a
+/// record can be is never read: it is not one.
+fn holds(path: &Path, line: &str) -> bool {
+    let regular =
+        fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && m.len() <= MAX_ENTRY_BYTES);
+    if !regular {
+        return false;
+    }
+    let Ok(Ok(old)) = read_bounded_file(path, MAX_ENTRY_BYTES).map(String::from_utf8) else {
+        return false;
+    };
+    old.strip_suffix('\n') == Some(line)
+        || old
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .is_some_and(|old| same_record(old, line))
+}
+
+/// Writes each line into `dir` under its content-derived name, unless a file with that
+/// record is already there ([`holds`]). A file of that name with anything else in it is
+/// replaced: the lines given here were verified by this node, and whatever was there
+/// was not. Creates the directory and its README when missing. Returns how many files
+/// were written.
 pub fn write_dir(dir: &Path, lines: &[String]) -> Result<usize> {
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     let readme = dir.join(README_NAME);
@@ -214,12 +310,10 @@ pub fn write_dir(dir: &Path, lines: &[String]) -> Result<usize> {
             continue;
         };
         let path = dir.join(name);
-        let content = format!("{line}\n");
-        let same = fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
-            && fs::read(&path).is_ok_and(|old| old == content.as_bytes());
-        if same {
+        if holds(&path, line) {
             continue;
         }
+        let content = format!("{line}\n");
         // Never write through a link or onto a directory someone put in the way.
         if let Ok(meta) = fs::symlink_metadata(&path) {
             if meta.is_dir() {
@@ -383,6 +477,151 @@ mod tests {
         fs::write(&path, "tampered\n").unwrap();
         assert_eq!(write_dir(&dir, std::slice::from_ref(&a)).unwrap(), 1);
         assert_eq!(fs::read_to_string(&path).unwrap(), format!("{a}\n"));
+    }
+
+    /// Files with a record's name that hold no record do not end a run (ADR-051).
+    /// They are counted as such, they do not use up what may be read of records, and
+    /// when there is too much of either, the rest is counted as not read.
+    #[test]
+    fn a_directory_with_files_that_are_no_records_is_still_read() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("circle");
+        // Three records, whose names sort after the junk.
+        let records: Vec<String> = ["e1", "e2", "e3"]
+            .iter()
+            .map(|h| event_line(&h.repeat(32)))
+            .collect();
+        assert_eq!(write_dir(&dir, &records).unwrap(), 3);
+        let size = records[0].len() as u64 + 1;
+        let junk = |n: u8, bytes: usize| {
+            let name = format!("event-{}.json", format!("{n:02x}").repeat(32));
+            fs::write(dir.join(name), "x".repeat(bytes)).unwrap();
+        };
+        // The budget for records: what does not fit is counted, not an error.
+        let source = read_source_within(&dir, 2 * size).unwrap();
+        assert_eq!(source.lines, records[..2]);
+        assert_eq!(source.not_read, 1);
+
+        // As much junk as there are records. Counted together, as they used to be,
+        // the two are twice what may be read, and the run ended with an error. The
+        // junk has a budget of its own, and the records are read all the same.
+        for n in 0..3 {
+            junk(n, size as usize);
+        }
+        let source = read_source_within(&dir, 3 * size).unwrap();
+        assert_eq!(source.lines, records);
+        assert_eq!((source.not_records, source.not_read), (3, 0));
+
+        // The budget for what is no record: reading stops there, and says so.
+        for n in 3..9 {
+            junk(n, size as usize);
+        }
+        let source = read_source_within(&dir, 3 * size).unwrap();
+        assert_eq!(source.not_records, 4, "one more than fits is read");
+        assert!(source.lines.is_empty());
+        assert_eq!(source.not_read, 5 + 3);
+        // With room for all of it, all of it is read.
+        let source = read_source(&dir).unwrap();
+        assert_eq!(source.lines, records);
+        assert_eq!((source.not_records, source.not_read), (9, 0));
+    }
+
+    /// One event in two signed forms (ADR-051). An event's id does not cover its
+    /// signature, and its author can sign the same bytes twice. A file that holds the
+    /// other valid form is the record and is left alone: two nodes that share the
+    /// directory would otherwise rewrite it after each other for ever. A form whose
+    /// signature does not verify is no record, and is replaced.
+    #[test]
+    fn the_same_event_in_another_valid_form_is_not_rewritten() {
+        use ed25519_dalek::hazmat::{raw_sign, ExpandedSecretKey};
+        use ph_protocol::{EnvelopeBuilder, EventBody, QuestionBody, SigningKey};
+        use sha2::{Digest as _, Sha512};
+
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let root = ph_core::DeviceKey::from_signing_key(&SigningKey::from_bytes(&[8; 32]));
+        let ours = EnvelopeBuilder::new(
+            ph_core::CircleId::derive(&root),
+            ph_core::Scope::all(),
+            EventBody::Question(QuestionBody {
+                question: "tabs or spaces?".into(),
+                topic: "note".into(),
+                related_candidate: None,
+            }),
+        )
+        .sign(&key, ph_core::Timestamp::now())
+        .unwrap();
+        // The author's second signature: the same key and bytes, another nonce.
+        let mut expanded: [u8; 64] = Sha512::digest(key.to_bytes()).into();
+        for b in &mut expanded[32..] {
+            *b ^= 0xa5;
+        }
+        let second = raw_sign::<Sha512>(
+            &ExpandedSecretKey::from_bytes(&expanded),
+            &ours.envelope.signing_input().unwrap(),
+            &key.verifying_key(),
+        );
+        let mut theirs = ours.clone();
+        theirs.signature = ph_core::Signature::from_dalek(&second);
+        assert_ne!(theirs.signature, ours.signature);
+        assert_eq!(theirs.event_id, ours.event_id);
+        theirs.verify_signature().unwrap();
+        // Nobody else can make one: a signature changed by one bit is no form.
+        let mut forged = ours.clone();
+        let mut bytes = *ours.signature.as_bytes();
+        bytes[5] ^= 1;
+        forged.signature = ph_core::Signature::from_bytes(bytes);
+        assert!(forged.verify_signature().is_err());
+
+        let line =
+            |e: &SignedEnvelope| format!(r#"{{"event":{}}}"#, e.to_canonical_json().unwrap());
+        let (ours, theirs, forged) = (line(&ours), line(&theirs), line(&forged));
+        assert_ne!(ours, theirs);
+        assert_eq!(entry_name(&ours), entry_name(&theirs));
+        assert!(same_record(&theirs, &ours) && same_record(&ours, &theirs));
+        assert!(!same_record(&forged, &ours));
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("circle");
+        let path = dir.join(entry_name(&ours).unwrap());
+        // The other member wrote their form first: ours changes nothing, run after run.
+        assert_eq!(write_dir(&dir, std::slice::from_ref(&theirs)).unwrap(), 1);
+        for _ in 0..3 {
+            assert_eq!(write_dir(&dir, std::slice::from_ref(&ours)).unwrap(), 0);
+            assert_eq!(fs::read_to_string(&path).unwrap(), format!("{theirs}\n"));
+        }
+        // And theirs changes nothing where ours stands.
+        fs::write(&path, format!("{ours}\n")).unwrap();
+        assert_eq!(write_dir(&dir, std::slice::from_ref(&theirs)).unwrap(), 0);
+        // A file with the same id and a signature that does not verify is put right.
+        fs::write(&path, format!("{forged}\n")).unwrap();
+        assert_eq!(write_dir(&dir, std::slice::from_ref(&ours)).unwrap(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), format!("{ours}\n"));
+        // So is one with the same id and another body: its id is not its content's.
+        let other_body = ours.replace("tabs or spaces?", "spaces or tabs?");
+        assert_ne!(other_body, ours);
+        fs::write(&path, format!("{other_body}\n")).unwrap();
+        assert!(!holds(&path, &ours));
+        assert_eq!(write_dir(&dir, std::slice::from_ref(&ours)).unwrap(), 1);
+    }
+
+    /// A file with a record's name that is larger than a record can be is replaced
+    /// without being read: comparing it used to read all of it into memory.
+    #[test]
+    fn a_file_too_large_to_be_a_record_is_replaced_unread() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("circle");
+        let a = event_line(&"11".repeat(32));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(entry_name(&a).unwrap());
+        // Sparse: a gigabyte that takes no room on disk, and would take it in memory.
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(1024 * 1024 * 1024)
+            .unwrap();
+        assert!(!holds(&path, &a));
+        assert_eq!(write_dir(&dir, std::slice::from_ref(&a)).unwrap(), 1);
+        assert_eq!(fs::read_to_string(&path).unwrap(), format!("{a}\n"));
+        assert!(holds(&path, &a));
     }
 
     #[test]

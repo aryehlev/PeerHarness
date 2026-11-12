@@ -252,17 +252,25 @@ pub fn carried_diff(proposed: &[EventId], in_force: &RuleSet) -> CarriedDiff {
 /// `passed` may be in any order and may contain entries for other charters (ignored).
 /// Carried proposals the caller did not supply are reported in
 /// [`RuleSet::missing_carried`].
+///
+/// A repeal takes a rule out of force only if it has that rule's scope. A repeal that
+/// names a proposal of another scope, an amendment, a repeal or nothing this node holds
+/// has no effect, whenever it arrived.
 pub fn rules_in_force(current: &Charter, passed: &[Passed]) -> RuleSet {
     let Ok(digest) = current.digest() else {
         return RuleSet::default();
     };
-    let mut repealed: HashSet<EventId> = HashSet::new();
+    // A repeal counts against the proposal it names only where it has that proposal's
+    // scope, so that the electorate that adopted a rule is the one that repeals it.
+    // That is checked here, on the records the node holds, and not when a repeal
+    // arrives: what a node keeps must not depend on which of the two came first.
+    let mut repealed: HashSet<(EventId, Scope)> = HashSet::new();
     let mut winners: BTreeMap<String, Rule> = BTreeMap::new();
     let mut supplied: HashSet<EventId> = HashSet::new();
     for p in passed.iter().filter(|p| p.charter == digest) {
         let proposal = &p.proposal;
         if let Some(target) = proposal.repeal_target() {
-            repealed.insert(target);
+            repealed.insert((target, proposal.scope().clone()));
             continue;
         }
         let Some(adopt) = proposal.adopt() else {
@@ -288,7 +296,7 @@ pub fn rules_in_force(current: &Charter, passed: &[Passed]) -> RuleSet {
             }
         }
     }
-    winners.retain(|_, r| !repealed.contains(&r.proposal_id));
+    winners.retain(|_, r| !repealed.contains(&(r.proposal_id, r.scope.clone())));
     let missing_carried = current
         .content
         .carried

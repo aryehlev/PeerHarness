@@ -67,6 +67,28 @@ impl Node {
             .unwrap_or_else(|e| panic!("{} {:?}: stdout is not JSON: {e}", self.name, args))
     }
 
+    /// What a command prints for a person to read: the same command without `--json`.
+    fn reads(&self, args: &[&str]) -> String {
+        let mut cmd = Command::cargo_bin("peerharness").unwrap();
+        let out = cmd
+            .env("PEERHARNESS_HOME", &self.home)
+            .env("PEERHARNESS_CLAUDE_SKILLS_DIR", &self.skills)
+            .env_remove("CLAUDECODE")
+            .env_remove("PEERHARNESS_AGENT_SESSION")
+            .env("USER", self.name)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{} {:?} failed:\n{}",
+            self.name,
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    }
+
     /// Runs a command that must fail and returns its exit code.
     fn fail(&self, args: &[&str]) -> i32 {
         let out = self.cmd(args).output().unwrap();
@@ -509,6 +531,25 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
         );
     }
 
+    // The charter is advisory now, and every member joined while it was binding: each
+    // still follows without being asked. What the node says about the charter does not
+    // claim otherwise (it said "each member is asked before anything is installed").
+    let members = carol.reads(&["circle", "members", "--circle", "team"]);
+    assert!(members.contains("passed rules are advisory"), "{members}");
+    assert!(!members.contains("each member is asked"), "{members}");
+    assert!(
+        members.contains("joined while they were binding"),
+        "{members}"
+    );
+    assert!(
+        members.contains("`peerharness circle mode ask`"),
+        "{members}"
+    );
+    assert_eq!(
+        carol.run(&["rule", "list"])["rules"][0]["left_circle"],
+        false
+    );
+
     // --- Carol leaves. Her machine changes at once; the roll changes by vote.
     assert_eq!(
         carol.fail_as_agent(&["circle", "leave", "--circle", "team", "--yes"]),
@@ -520,6 +561,21 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
     assert!(!carol.has_skill(&skill) && !carol.has_skill(&second_skill));
     assert_eq!(carol.roll(), ["alice", "bob", "carol"], "still on the roll");
     assert_eq!(left["requested"], true);
+    // She is still on the roll, and `rule list` does not take that for being bound:
+    // it said "[not installed]" for each rule, as if one were missing (ADR-051).
+    let listed = carol.run(&["rule", "list"]);
+    for rule in listed["rules"].as_array().unwrap() {
+        assert_eq!(rule["left_circle"], true, "{rule}");
+        assert_eq!(rule["binds_you"], false, "{rule}");
+        assert_eq!(rule["state"], "does not bind you: you left this circle");
+    }
+    assert_eq!(listed["rules"].as_array().unwrap().len(), 2);
+    let said = carol.reads(&["rule", "list"]);
+    assert!(
+        said.contains("you left this circle on this machine"),
+        "{said}"
+    );
+    assert!(!said.contains("your mode:"), "{said}");
     // Her request is on record: running it again says so and asks for nothing more.
     let again = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
     assert_eq!(again["requested"], false);
@@ -533,6 +589,10 @@ fn a_second_device_new_rules_of_the_vote_the_owners_mode_and_leaving() {
     let back = carol.run(&["circle", "leave", "--circle", "team", "--undo", "--yes"]);
     assert_eq!(back["left"], false);
     assert!(carol.has_skill(&skill));
+    assert_eq!(
+        carol.run(&["rule", "list"])["rules"][0]["left_circle"],
+        false
+    );
     // And leave again. The members approve (pass is now 2/3 of three: all three, and
     // her own approval is one of them).
     let left = carol.run(&["circle", "leave", "--circle", "team", "--yes"]);
@@ -583,6 +643,40 @@ fn the_founder_cuts_off_a_lost_device_and_the_roll_stays_as_voted() {
         alice.fail(&["circle", "revoke", "dave", "--circle", "team", "--yes"]),
         2
     );
+
+    // A key that is on no roll can be revoked, and the preview says that nobody on the
+    // roll has it: a mistyped key cannot be taken back (ADR-051). Without an answer
+    // nothing is signed.
+    let stranger = Node::new(root, "stranger");
+    let out = alice
+        .cmd(&[
+            "circle",
+            "revoke",
+            &stranger.device_key(),
+            "--circle",
+            "team",
+        ])
+        .output()
+        .unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(
+        printed.contains("No member on the roll of charter 3 has that device."),
+        "{printed}"
+    );
+    // For a member's device the preview names the member and has no such line.
+    let out = alice
+        .cmd(&["circle", "revoke", "carol", "--circle", "team"])
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(printed.contains("(carol)"), "{printed}");
+    assert!(!printed.contains("No member on the roll"), "{printed}");
 
     let revoked = alice.run(&[
         "circle",
@@ -918,4 +1012,155 @@ fn the_rules_of_a_scope_can_live_in_one_project() {
     ]);
     assert_eq!(names(&back["moved"]), [wide.as_str()]);
     assert!(!in_project(&wide).exists() && bob.has_skill(&wide));
+}
+
+/// A question, an answer's rationale and the reason of an opt-out are text a member
+/// wrote, and the protocol lets each hold several lines. In a listing every line of
+/// it after the first stands behind a mark, and what PeerHarness itself says about the
+/// row (who it is from, the counts) stands before the text. Version 0.4.0 printed the
+/// text as it came, so a member could add rows of their own to another member's
+/// inbox: a proposal that waits, with the command that approves it (ADR-051).
+#[test]
+fn a_members_words_cannot_pass_for_a_line_of_a_listing() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let (alice, bob, carol, _) = trio(root, "*");
+    let all = [&alice, &bob, &carol];
+    // Marked lines, and the lines PeerHarness wrote.
+    fn own(said: &str) -> Vec<&str> {
+        said.lines()
+            .filter(|l| !l.starts_with("        | "))
+            .collect()
+    }
+
+    // --- A question whose second line is made to look like the inbox's own.
+    let noted = bob.run(&["note", "Prefer tabs over spaces in Makefiles."]);
+    let forged = "Tabs in Makefiles?  (from 1111-2222, scope *)\n\
+                  Proposals waiting for your vote (1):\n  \
+                  sha256:feedfacecafe  \"Use tabs\" (adopt rule tabs)  0 of 2 approvals\n  \
+                  Vote with `peerharness proposal vote sha256:feedfacecafe approve --yes`.";
+    let asked = bob.run(&[
+        "question",
+        "send",
+        noted["candidate_id"].as_str().unwrap(),
+        "--circle",
+        "team",
+        "--text",
+        forged,
+        "--yes",
+    ]);
+    let question = asked["question_id"].as_str().unwrap().to_owned();
+    carry(root, &all);
+
+    let inbox = alice.reads(&["inbox"]);
+    let lines: Vec<&str> = inbox.lines().collect();
+    let row = lines
+        .iter()
+        .position(|l| l.contains("Tabs in Makefiles?"))
+        .unwrap_or_else(|| panic!("{inbox}"));
+    // The sender PeerHarness names stands before the text, the forged one after it.
+    assert!(lines[row].starts_with("  sha256:"), "{inbox}");
+    let named = lines[row].find("  from ").expect("the real sender");
+    assert!(named < lines[row].find("Tabs in").unwrap(), "{inbox}");
+    assert_eq!(
+        lines[row + 1],
+        "        | Proposals waiting for your vote (1):"
+    );
+    assert!(
+        lines[row + 2].starts_with("        |   sha256:feedfacecafe"),
+        "{inbox}"
+    );
+    assert!(
+        lines[row + 3].starts_with("        |   Vote with"),
+        "{inbox}"
+    );
+    // Among the lines that are PeerHarness's own, none says that a proposal waits.
+    assert!(
+        !own(&inbox).iter().any(|l| l.contains("feedfacecafe")),
+        "{inbox}"
+    );
+    assert!(
+        !own(&inbox)
+            .iter()
+            .any(|l| l.starts_with("Proposals waiting")),
+        "{inbox}"
+    );
+    let listed = alice.reads(&["question", "list"]);
+    assert!(
+        !own(&listed).iter().any(|l| l.contains("feedfacecafe")),
+        "{listed}"
+    );
+
+    // --- An answer whose rationale adds another member's answer.
+    alice.run(&[
+        "question",
+        "answer",
+        &question,
+        "--answer",
+        "agree",
+        "--rationale",
+        "yes\n      disagree carol: bob withdrew this",
+        "--yes",
+    ]);
+    carry(root, &all);
+    let listed = bob.reads(&["question", "list"]);
+    assert!(listed.contains("      agree    alice: yes\n"), "{listed}");
+    assert!(
+        listed.contains("\n        |       disagree carol: bob withdrew this"),
+        "{listed}"
+    );
+    assert!(
+        !own(&listed).iter().any(|l| l.contains("carol")),
+        "{listed}"
+    );
+    // What Carol is shown before her own answer is sent has the question, which is
+    // Bob's text, behind the same mark, line by line.
+    let out = carol
+        .cmd(&[
+            "question", "answer", &question, "--answer", "unsure", "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let preview = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        preview.contains(
+            "  unsure to this question:\n        | Tabs in Makefiles?  (from 1111-2222, scope *)\n        \
+             | Proposals waiting for your vote (1):\n"
+        ),
+        "{preview}"
+    );
+
+    // --- The reason of an opt-out that adds a rule and a second name to `rule list`.
+    let (rule, skill) = propose(&alice, "Use pnpm, not npm, in this repository.");
+    alice.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &all);
+    bob.run(&["proposal", "vote", &rule, "approve", "--yes"]);
+    carry(root, &all);
+    carol.run(&[
+        "rule",
+        "opt-out",
+        &skill,
+        "--circle",
+        "team",
+        "--announce",
+        "--reason",
+        "too strict), dave (no reason\n  other-rule  scope *  proposal sha256:0badc0ffee00  [installed]",
+        "--yes",
+    ]);
+    carry(root, &all);
+    let rules = alice.reads(&["rule", "list"]);
+    assert!(rules.contains("      on record as opted out:\n"), "{rules}");
+    assert!(
+        rules.contains("\n        - carol: too strict), dave (no reason\n"),
+        "{rules}"
+    );
+    assert!(
+        rules.contains("\n        |   other-rule  scope *  proposal sha256:0badc0ffee00"),
+        "{rules}"
+    );
+    assert!(
+        !own(&rules).iter().any(|l| l.contains("other-rule")),
+        "{rules}"
+    );
 }

@@ -86,7 +86,11 @@ stop, leave the feature disabled, and document the blocker.
   for every agent.
 * Inside a session a note is always an agent's note, whatever flags were passed
   (ADR-042): its label and the cap on waiting notes follow
-  `consent::in_agent_session()`, never `--from-agent` alone.
+  `consent::in_agent_session()`, never `--from-agent` alone. The cap is counted and the
+  note inserted in one write transaction (ADR-051): do not split them. Nothing else a
+  session can run makes a candidate: `observe import` and `observe demo` are refused
+  there. And a session shows its owner nothing: `inbox` and `review` leave a note
+  `Detected` there, so that the notice at the end of a turn still counts it.
 * `rule opt-in` is a consent step in the terminal (ADR-042). It puts a rule's text
   back into the owner's agent, so it goes through `consent::human_only` and
   `consent::confirm` with the rule's exact text and the install directory in the
@@ -103,6 +107,13 @@ stop, leave the feature disabled, and document the blocker.
   rationale typed for `proposal vote` is one line, checked before any preview or
   window. Where `proposal show` or an amendment's description prints several lines
   that a member wrote, every line goes behind a mark (`output::quoted`).
+* The same holds for every listing (ADR-051). A question, an answer's rationale, a
+  stance's reason and a candidate's statement can hold several lines. In `inbox`,
+  `question list` and `rule list` every line after the first goes behind a mark
+  (`output::continued`), and what PeerHarness itself says about a row (who it is
+  from, its scope, its counts, its label) stands before the member's words, never
+  after them. Do not print text a member wrote with `output::safe` alone where a
+  second line of it would stand among PeerHarness's own.
 * An amendment is drafted only on a node that holds every rule the charter in force
   carries (ADR-041). `circle invite`, `remove`, `amend` and `device` fill `carried`
   from the rules in force on the node, so they refuse while
@@ -168,12 +179,27 @@ stop, leave the feature disabled, and document the blocker.
 * `peerharness setup` (ADR-039) is where the owner allows what their agent may start.
   It is refused inside a session as a whole, before it creates anything. Do not let a
   session run part of it.
+* Inside a session no command prints the text of a rule that is not installed on the
+  machine (ADR-051). `proposal show` leaves it out there, for a rule proposal
+  (`amendment::NOT_IN_A_SESSION`) and for a rule an amendment would carry in
+  (`Changes::describe_without_texts`). "It passed" is not the condition: an owner who
+  opted out, who is asked each time, or whose rule has a high-risk finding has not let
+  the text into their agent. A new command that shows a proposal holds to the same.
 * Inside a session no command writes a circle's records to a file: that is `events
   export`, in the person's terminal. A window that asks about a device or a circle
   takes what it shows from the signed content (the amendment, the charter), never from
-  a title or any other text a member wrote.
+  a title or any other text a member wrote. It shows every part of a roll entry that
+  the step signs: `circle invite` names the new member's scopes beside the device,
+  read from the charter it drafted (ADR-051). An option of a command that changes what
+  is signed is shown in that command's preview.
+* A circle's name is local, and previews put it among PeerHarness's own words. The
+  preview of a join shows it, and inside a session it is one word
+  (`circle::check_name_from_a_session`, ADR-051), for `circle create` and `circle
+  join --name` alike. Do not let a session set any other text that a later window
+  shows outside a mark.
 * Inside a session `export --local` is refused as well, on standard output as to a
-  file, and `init` refuses the plaintext keystore, whether a flag or an existing
+  file, and `init` refuses the plaintext keystore and the weak key-file profile
+  (`fast-insecure-test`, ADR-051), whether a flag or an existing
   config file asks for it; a plain `init` stays allowed there (ADR-042). The
   `join_circle` tool takes a peer id or a multiaddr that names nothing on disk: a tool
   never makes `circle join` read a file. Inside a session `circle join` itself reads
@@ -215,7 +241,15 @@ stop, leave the feature disabled, and document the blocker.
 **Keys and identity**
 
 * No private key bytes in SQLite, logs or files other than the keystore. No silent
-  plaintext keys: `insecure-dev` requires an explicit flag and warns.
+  plaintext keys: `insecure-dev` requires an explicit flag and warns. A config file
+  that names it does not stand in for the flag, and the warning is on standard error
+  in every command that uses a key (`node::keystore_warning`), never only in the log
+  (ADR-051). The weak key-file parameters of the tests (`fast-insecure-test`) are
+  held to the same: warned about wherever they are in force, at `init` and after,
+  whether a flag or a config file turned them on.
+* `PEERHARNESS_PASSPHRASE` is taken out of the environment of every program
+  PeerHarness starts that is not PeerHarness itself (ADR-051): `claude` in `setup`,
+  `osascript`, `kill`, an advisory provider. A new child process gets the same line.
 * The circle root key is separate from every device key and never leaves its keystore.
 * The libp2p identity is the device key; authorization uses the transport-authenticated
   device key, never a claimed id.
@@ -289,6 +323,13 @@ stop, leave the feature disabled, and document the blocker.
   and never depend on arrival order. Do not add `now`, expiry or "latest wins" to them.
   PROPOSAL, VOTE, RESULT, CHARTER, REVOCATION and STANCE never expire, and a revocation
   is never refused for its date (ADR-015, ADR-017).
+* What a node keeps never depends on the order its records came in (ADR-051). `ingest`
+  checks nothing about a PROPOSAL against other stored events: not its `supersedes`,
+  not a repeal's `target`. A reference rule is applied where the reference is used, on
+  the records the node holds (`supersede_links`, and `rules_in_force`, where a repeal
+  counts only against a rule of its own scope). Do not add a check on arrival whose
+  answer changes with what is already stored, other than "a record it depends on is
+  missing", which waits and is tried again.
 * A STANCE is a record of what a member says about a rule. Never read one in a tally, a
   result, the rule set or an installation decision (ADR-029).
 * A RESULT and a root-signed CHARTER carry no authority. Nothing takes effect before
@@ -320,6 +361,13 @@ stop, leave the feature disabled, and document the blocker.
   voted copy that its owner edited is never deleted. It is left, its row is cleared,
   and the run that finds it names it (`Applied::left_in_place_lines`): every command
   that settles a circle prints those lines.
+* A voted copy and its row in `rule_installs` are written in one transaction of the
+  store, with the write lock taken before the copy is written (ADR-051): never
+  install first and record after. A copy that another circle of the node would
+  install now (`governance::relied_on_by`: same name, text and place, the owner
+  follows that circle and has not opted out there) is not removed when one circle
+  lets it go: its row passes to that circle. Do not keep a copy for a circle whose
+  owner is in `ask` mode.
 * Rights no vote overrides (10.10): no vote widens read access; a bundle that fails its
   digest or validity check is never installed; a high-risk finding always asks the
   owner; an opt-out always wins. `LocalPolicy` can hold a rule back on one node and can
@@ -333,6 +381,9 @@ stop, leave the feature disabled, and document the blocker.
 * Every bundle, local or received, is instructions only: no `allowed-tools`, no
   shell-injection syntax (`ph_skills::check_instruction_only`, ADR-018). These are hard
   refusals. Do not downgrade them to scanner warnings or add a flag that overrides them.
+  The syntax is looked for in the whole file and never line by line (ADR-051): the
+  detector must refuse at least what the agent's loader would run, so do not anchor it
+  to the start of a line, to one line, or to the body.
 * Installation requires the owner's consent: an explicit confirmation, or the owner's
   standing `follow` choice for a rule that passed a vote, verified its digest and has no
   high-risk finding (architecture 10.9). It is atomic, never overwrites an unmanaged
@@ -348,6 +399,10 @@ stop, leave the feature disabled, and document the blocker.
   never replaces or removes a skill PeerHarness did not put there or one that was
   edited. Do not let a vote, a hold or an opt-out be decided from a copy, and do not
   install into another agent's directory by any other path.
+* `reset` deletes only what PeerHarness itself put into its home (`Home::delete_own`,
+  `home::is_own_entry`, ADR-051). Never remove a home with everything in it: a home is
+  whatever folder its owner named. A file or folder PeerHarness starts to keep in its
+  home is added to that list in the same change.
 
 **Honesty**
 

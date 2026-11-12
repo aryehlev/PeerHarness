@@ -90,12 +90,14 @@ fn export(ctx: &Ctx, circle: &str, out: Option<&Path>, dir: Option<&Path>) -> Re
 fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
     let source = carrier::read_source(path)?;
     let bundles = crate::library::bundle_store(&node.home);
-    let summary = governance::import_lines(
+    let mut summary = governance::import_lines(
         &node.store,
         &bundles,
         source.lines.iter().map(String::as_str),
         node.now(),
     )?;
+    // What the directory reader turned away before a line was made of it.
+    summary.add_refused(governance::NOT_A_RECORD, source.not_records);
 
     let mut t = Text::new();
     t.line(format!(
@@ -148,6 +150,9 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             t.line(format!("  {}: {}", safe(&circle.name), kept.line()));
             kept_edited.push(kept.name.clone());
         }
+        for kept in &settled.applied.kept_for {
+            t.line(format!("  {}: {}", safe(&circle.name), kept.line()));
+        }
         for waiting in &settled.applied.asking {
             t.line(format!("  {}: {}", safe(&circle.name), waiting.line()));
         }
@@ -178,6 +183,17 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             if source.ignored == 1 { "was" } else { "were" },
         ));
     }
+    if source.not_read > 0 {
+        // Said loudly: records that were not read are records this node may lack.
+        t.line(format!(
+            "  {} record file(s) in the directory were NOT READ: it holds more than {} MiB \
+             of records, or of files with a record's name that are none. What was read \
+             before them was imported. Take out the files that are not records and run \
+             this again.",
+            source.not_read,
+            carrier::MAX_SOURCE_BYTES / (1024 * 1024),
+        ));
+    }
     if summary.stored > 0 {
         t.line("See what needs your vote: `peerharness proposal list`.");
     }
@@ -189,6 +205,12 @@ fn import(node: &Node, path: &Path) -> Result<(Value, Text)> {
             "rejected": summary.rejected,
             "bundles": summary.bundles,
             "ignored": source.ignored,
+            "not_read": source.not_read,
+            "rejection_codes": summary
+                .rejection_codes
+                .iter()
+                .map(|(code, n)| json!({ "code": code, "count": n }))
+                .collect::<Vec<_>>(),
             "installed": installed,
             "removed": removed,
             "not_removed": not_removed,

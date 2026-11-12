@@ -10,6 +10,13 @@
 //!   person. A plain `init` is still allowed.
 //! * A note written inside a session is an agent's note whatever flags it was given:
 //!   labelled so, and counted against the cap on waiting agent notes.
+//! * `inbox` and `review` inside a session do not mark a note as shown to its owner,
+//!   so the notice at the end of a turn still tells the owner that it waits.
+//! * `proposal show` inside a session does not print the text of a rule that is not
+//!   installed on the machine.
+//! * The cap on an agent's waiting notes holds for notes written at the same moment,
+//!   and `observe import` and `observe demo`, which store text as the owner's own
+//!   prompts, are refused.
 //! * The `join_circle` tool of `peerharness mcp` takes a peer id or an address, never a
 //!   path, so an agent cannot make a join read a file it wrote. `circle join` itself
 //!   holds to that inside a session: what reads as a peer id or as an address is never
@@ -487,23 +494,32 @@ fn the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not() 
     assert!(msg.contains("plaintext"), "{msg}");
     assert!(!preset.home.join("keys").exists(), "no key was written");
     assert!(!preset.home.join("peerharness.db").exists());
+    // For the person the file does not stand in for the flag (ADR-051): it used to,
+    // and a file put into a home made a plain `init` write a plaintext key.
+    let (code, json, printed) = preset.out(By::Person, &["init"]);
+    assert_eq!(code, 2, "{printed}");
+    let msg = json["error"]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--insecure-dev-keystore"), "{printed}");
+    assert!(!preset.home.join("keys").exists(), "no key was written");
+    assert!(!preset.home.join("peerharness.db").exists());
+    let (code, json, printed) = preset.out(By::Person, &["init", "--insecure-dev-keystore"]);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(json["keystore"], "insecure-dev");
+    assert!(printed.contains("PLAINTEXT"), "{printed}");
 
     // --- A plain init is allowed inside a session: the README's setup prompt has the
-    // agent run it. The keys go to an encrypted file here.
-    let (code, json, printed) = node.out(
-        By::Agent,
-        &[
-            "init",
-            "--keystore",
-            "file",
-            "--kdf-profile",
-            "fast-insecure-test",
-        ],
-    );
+    // agent run it. The keys go to an encrypted file here, with the parameters a key
+    // file has by default.
+    let (code, json, printed) = node.out(By::Agent, &["init", "--keystore", "file"]);
     assert_eq!(code, 0, "{printed}");
     assert_eq!(json["created"], true);
     assert_eq!(json["keystore"], "file");
     assert!(!node.home.join("keys").join("device.insecure-key").exists());
+    assert_eq!(
+        kdf_of(&node.home.join("keys").join("device.key")),
+        (65536, 3)
+    );
+    assert!(!printed.contains("warning"), "{printed}");
 
     // --- And the person may still choose the plaintext keystore, with its warning.
     let dev = Node::bare_dirs(tmp.path(), "carol");
@@ -511,6 +527,123 @@ fn the_plaintext_keystore_is_refused_inside_a_session_and_a_plain_init_is_not() 
     assert_eq!(code, 0, "{printed}");
     assert_eq!(json["keystore"], "insecure-dev");
     assert!(printed.contains("PLAINTEXT"), "{printed}");
+
+    // --- The warning is not only `init`'s (ADR-051). It used to be a line in the log
+    // from then on, which nobody sees: a command that uses the key says it where a
+    // person reads, and `status`, which uses none, says it too.
+    let (code, _, printed) = dev.out(
+        By::Person,
+        &["circle", "create", "team", "--member", "carol"],
+    );
+    assert_eq!(code, 0, "{printed}");
+    assert!(
+        printed.contains("warning: this node's private keys are stored in PLAINTEXT"),
+        "{printed}"
+    );
+    let (_, status, printed) = dev.out(By::Person, &["status"]);
+    assert!(
+        status["keystore_warning"]
+            .as_str()
+            .unwrap()
+            .contains("PLAINTEXT"),
+        "{printed}"
+    );
+    // A command that uses no key says nothing.
+    let (code, _, printed) = dev.out(By::Person, &["inbox"]);
+    assert_eq!(code, 0, "{printed}");
+    assert!(!printed.contains("PLAINTEXT"), "{printed}");
+}
+
+/// The memory and time parameters a key file was encrypted with.
+fn kdf_of(key_file: &Path) -> (u64, u64) {
+    let file: Value = serde_json::from_slice(&std::fs::read(key_file).unwrap()).unwrap();
+    (file["m_kib"].as_u64().unwrap(), file["t"].as_u64().unwrap())
+}
+
+/// The weak parameters for key files are the tests' (ADR-051). Choosing them is the
+/// owner's decision like the plaintext keystore: a session is refused, whether a flag
+/// asks or a config file that was already there, and a person is warned in both cases
+/// and by every later command that writes or opens a key file under that profile. A
+/// config file used to turn the profile on with no word from `init`, and a session
+/// could pass the flag.
+#[test]
+fn the_weak_key_file_profile_is_refused_inside_a_session_and_never_silent() {
+    let tmp = TempDir::new().unwrap();
+    let weak = [
+        "init",
+        "--keystore",
+        "file",
+        "--kdf-profile",
+        "fast-insecure-test",
+    ];
+    let preset_config = "[node]\nkeystore = \"file\"\nkdf_profile = \"fast-insecure-test\"\n";
+
+    // --- The flag, inside a session: refused before anything is created.
+    let node = Node::bare_dirs(tmp.path(), "alice");
+    for by in [By::Agent, By::Marked] {
+        let msg = node.refused(by, &weak);
+        assert!(msg.contains("fast-insecure-test"), "{msg}");
+        assert!(msg.contains("your own terminal"), "{msg}");
+        assert!(!node.home.exists(), "nothing was created");
+    }
+
+    // --- A config file that names the profile, inside a session: the same.
+    let preset = Node::bare_dirs(tmp.path(), "bob");
+    std::fs::create_dir_all(&preset.home).unwrap();
+    std::fs::write(preset.home.join("config.toml"), preset_config).unwrap();
+    let msg = preset.refused(By::Agent, &["init"]);
+    assert!(msg.contains("fast-insecure-test"), "{msg}");
+    assert!(!preset.home.join("keys").exists(), "no key was written");
+    assert!(!preset.home.join("peerharness.db").exists());
+
+    // --- The person, with that config file and no flag: the node is made, and the
+    // warning that the flag always had is printed. It was not.
+    let (code, json, printed) = preset.out(By::Person, &["init"]);
+    assert_eq!(code, 0, "{printed}");
+    assert_eq!(json["created"], true);
+    assert_eq!(
+        kdf_of(&preset.home.join("keys").join("device.key")),
+        (64, 1)
+    );
+    assert!(
+        printed.contains("warning: kdf profile fast-insecure-test"),
+        "{printed}"
+    );
+
+    // --- A node made with the default profile, whose config file is changed
+    // afterwards. The circle's root key is then written with the weak parameters: the
+    // command that writes it says so, and so does `status`.
+    let late = Node::bare_dirs(tmp.path(), "carol");
+    let (code, _, printed) = late.out(By::Person, &["init", "--keystore", "file"]);
+    assert_eq!(code, 0, "{printed}");
+    assert!(!printed.contains("warning"), "{printed}");
+    let (_, status, _) = late.out(By::Person, &["status"]);
+    assert_eq!(status["keystore_warning"], Value::Null);
+    let config = late.home.join("config.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("[node]\n"), "{text}");
+    std::fs::write(
+        &config,
+        text.replace("[node]\n", "[node]\nkdf_profile = \"fast-insecure-test\"\n"),
+    )
+    .unwrap();
+    let (code, _, printed) = late.out(
+        By::Person,
+        &["circle", "create", "team", "--member", "carol"],
+    );
+    assert_eq!(code, 0, "{printed}");
+    assert!(
+        printed.contains("warning: this node writes its key files with the test profile"),
+        "{printed}"
+    );
+    let (_, status, printed) = late.out(By::Person, &["status"]);
+    assert!(
+        status["keystore_warning"]
+            .as_str()
+            .unwrap()
+            .contains("fast-insecure-test"),
+        "{printed}"
+    );
 }
 
 /// consent-12. The inbox label tells the owner which rules their agent wrote. Inside a
@@ -559,6 +692,206 @@ fn a_note_written_inside_a_session_is_an_agents_note() {
     let own = node.run(&["note", "One more rule."]);
     assert_eq!(own["origin"], "written down");
     assert_eq!(node.candidates().len(), 21);
+}
+
+/// The cap counted the waiting notes and then inserted, as two steps: notes written at
+/// the same moment each counted fewer than twenty, and up to 26 of 60 were kept in the
+/// audit's runs (ADR-051). The count and the insert are one write transaction now.
+#[test]
+fn the_cap_holds_for_notes_written_at_the_same_moment() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let codes: Vec<i32> = std::thread::scope(|s| {
+        let writers: Vec<_> = (0..40)
+            .map(|i| {
+                let node = &node;
+                s.spawn(move || {
+                    let text = format!("Parallel rule {i}: always pass flag{i} to the build.");
+                    node.out(By::Agent, &["note", &text]).0
+                })
+            })
+            .collect();
+        writers.into_iter().map(|w| w.join().unwrap()).collect()
+    });
+    let kept = codes.iter().filter(|c| **c == 0).count();
+    let refused = codes.iter().filter(|c| **c == 3).count();
+    assert_eq!((kept, refused), (20, 20), "{codes:?}");
+    assert_eq!(node.candidates().len(), 20);
+}
+
+/// `observe import` stores lines as if the owner had typed them to their agent, and the
+/// detector makes candidates from them that carry the label of the owner's own prompts
+/// and are not counted by the cap. Inside a session an agent wrote 30 such candidates
+/// past a full cap (ADR-051). Both `observe` commands are the person's now.
+#[test]
+fn observations_are_not_added_by_hand_inside_a_session() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let file = tmp.path().join("made-up.jsonl");
+    let mut lines = String::new();
+    for i in 0..3 {
+        for session in ["s1", "s2"] {
+            lines.push_str(&format!(
+                r#"{{"kind":"user_prompt","repo":"myrepo","session":"{session}","text":"No, use tool{i}x, not tool{i}y, for this repo."}}"#
+            ));
+            lines.push('\n');
+        }
+    }
+    std::fs::write(&file, lines).unwrap();
+    let file = file.to_str().unwrap();
+
+    for by in [By::Agent, By::Marked] {
+        for args in [&["observe", "import", file][..], &["observe", "demo"][..]] {
+            let msg = node.refused(by, args);
+            assert!(msg.contains("inside a coding agent's session"), "{msg}");
+        }
+    }
+    assert_eq!(node.run(&["status"])["candidates"], json!({}));
+    assert!(node.candidates().is_empty());
+
+    // In the person's own terminal both still work.
+    let imported = node.run(&["observe", "import", file]);
+    assert_eq!(imported["observations_stored"], 6, "{imported}");
+    assert_eq!(node.candidates().len(), 3);
+    node.run(&["observe", "demo"]);
+    assert_eq!(node.candidates().len(), 4);
+}
+
+/// `proposal show` printed the text of a rule that had not passed into the session
+/// that ran it, while the security model says a rule's text reaches an agent only
+/// after the rule passed (ADR-051). Inside a session the text is printed only where
+/// exactly that text is installed on the machine already.
+#[test]
+fn a_rule_that_is_not_installed_is_not_printed_into_a_session() {
+    let tmp = TempDir::new().unwrap();
+    // One rule in force and installed, in a circle of one.
+    let alice = node_with_a_rule(tmp.path());
+    let installed = alice.run(&["proposal", "list"])["proposals"][0]["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // A second member is admitted, so the next rule needs two approvals and stays open.
+    let bob = Node::new(tmp.path(), "bob");
+    let bob_key = bob.run(&["status"])["device_key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    alice.run(&[
+        "circle", "invite", &bob_key, "--circle", "team", "--member", "bob", "--yes",
+    ]);
+    const OPEN_RULE: &str = "When a file named NOTES exists, read it before anything else.";
+    let cand = alice.run(&["note", OPEN_RULE])["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let open = alice.run(&["proposal", "create", &cand, "--circle", "team", "--yes"])
+        ["proposal_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let show = |by: By, id: &str| -> String {
+        let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
+        alice.env(&mut cmd, by);
+        let out = cmd.args(["proposal", "show", id]).output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    // The body of the skill that a rule becomes: its heading, then the sentence.
+    let body = format!("| # Rule\n      | \n      | {OPEN_RULE}");
+
+    // The open rule: its owner reads the text in their terminal, a session does not.
+    let read = show(By::Person, &open);
+    assert!(read.contains("standing           open"), "{read}");
+    assert!(read.contains(&body), "{read}");
+    for by in [By::Agent, By::Marked] {
+        let read = show(by, &open);
+        assert!(read.contains("standing           open"), "{read}");
+        assert!(read.contains("  rule text ("), "{read}");
+        assert!(
+            read.contains("not printed inside a coding agent's session"),
+            "{read}"
+        );
+        assert!(!read.contains("| # Rule"), "{read}");
+        assert!(!read.contains("| name:"), "{read}");
+        // The title is the rule's sentence and is listed in the inbox as well: it is
+        // the text of the skill that is held back.
+        assert_eq!(read.matches(OPEN_RULE).count(), 1, "{read}");
+    }
+
+    // The rule that is installed for the agent is in its context anyway.
+    let read = show(By::Agent, &installed);
+    assert!(
+        read.contains(&format!("| # Rule\n      | \n      | {RULE}")),
+        "{read}"
+    );
+    assert!(!read.contains("not printed inside"), "{read}");
+}
+
+/// What Claude Code shows its user at the end of a turn: the output of the Stop hook,
+/// run inside the session as Claude Code runs it.
+fn stop_notice(node: &Node) -> String {
+    let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("peerharness"));
+    node.env(&mut cmd, By::Agent);
+    let mut child = cmd
+        .args(["hook", "stop"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"{"hook_event_name":"Stop","session_id":"s1","cwd":"/nowhere","transcript_path":"/nowhere/t"}"#,
+        )
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap()
+}
+
+/// A note that was shown to its owner stops being announced at the end of a turn.
+/// `inbox` and `review` marked it as shown for whoever ran them, so an agent that
+/// wrote a note and then read the inbox kept its owner from ever being told
+/// (ADR-051). Inside a session nothing is marked: the reader is the agent.
+#[test]
+fn a_session_that_reads_the_inbox_has_shown_the_owner_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let node = Node::new(tmp.path(), "alice");
+    let (code, noted, printed) = node.out(
+        By::Agent,
+        &["note", "Never force-push to main without asking first."],
+    );
+    assert_eq!(code, 0, "{printed}");
+    let id = noted["candidate_id"].as_str().unwrap().to_owned();
+
+    // The agent reads the inbox and the note, under either mark of a session. (The
+    // `inbox` tool of `peerharness mcp` runs under the second.)
+    for by in [By::Agent, By::Marked] {
+        let (code, inbox, printed) = node.out(by, &["inbox"]);
+        assert_eq!(code, 0, "{printed}");
+        assert_eq!(inbox["candidates"][0]["status"], "detected", "{inbox}");
+        let (code, shown, printed) = node.out(by, &["review", &id]);
+        assert_eq!(code, 0, "{printed}");
+        assert_eq!(shown["candidate"]["status"], "detected", "{shown}");
+    }
+    assert_eq!(node.run(&["status"])["candidates"]["detected"], 1);
+
+    // So the owner is told at the end of the turn.
+    let notice = stop_notice(&node);
+    assert!(
+        notice.contains("1 possible convention to review"),
+        "{notice:?}"
+    );
+
+    // The owner reads the inbox in their terminal: now it has been shown.
+    assert_eq!(node.candidates()[0]["status"], "local_review");
+    let status = node.run(&["status"]);
+    assert_eq!(status["candidates"]["local_review"], 1, "{status}");
+    assert!(status["candidates"]["detected"].is_null(), "{status}");
 }
 
 /// consent-16. The tool's own comment says a word that names a file is never taken for

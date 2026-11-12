@@ -16,6 +16,20 @@ use crate::Store;
 /// (`"follow"`) or ask the owner first (`"ask"`). See architecture section 10.9.
 pub const ADOPTION_MODES: [&str; 2] = ["follow", "ask"];
 
+/// Whether `name` can be a circle's local name: 1 to 64 characters on one line, with
+/// no control character. [`Store::insert_circle`] checks it. It is public so that a
+/// caller can check a name before it does something a refused insert would not undo,
+/// such as writing the circle's root key to the keystore.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] otherwise.
+pub fn check_circle_name(name: &str) -> Result<()> {
+    check_text("circle name", name, 1, CIRCLE_NAME, Lines::Single)
+        .map(|_| ())
+        .map_err(|_| StoreError::invalid("circle name", "expected 1-64 characters"))
+}
+
 /// A circle row.
 #[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct CircleRow {
@@ -82,8 +96,7 @@ impl Store {
                 what: "circle id and root key",
             });
         }
-        check_text("circle name", &c.name, 1, CIRCLE_NAME, Lines::Single)
-            .map_err(|_| StoreError::invalid("circle name", "expected 1-64 characters"))?;
+        check_circle_name(&c.name)?;
         check_adoption_mode(&c.adoption_mode)?;
         if let Some(r) = &c.root_keystore_ref {
             sql::check_short("root keystore reference", r, 1024)?;

@@ -1277,7 +1277,7 @@ fn a_yes_to_a_change_of_one_charter_is_not_signed_as_a_change_of_the_next() {
     let shown = std::fs::read_to_string(&saw).unwrap_or_default();
     assert!(
         shown.contains(&format!(
-            "admit dave (device {}) to the roll of charter 3",
+            "admit dave (device {}, scopes *) to the roll of charter 3",
             dave.fingerprint()
         )),
         "{shown}\n{printed}"

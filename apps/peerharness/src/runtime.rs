@@ -69,7 +69,24 @@ const MAX_ADDRS_TRIED: usize = 6;
 /// What a person is told when an exchange failed on a connection through a relay.
 const RELAY_LIMIT: &str = "the connection to that peer goes through a public relay, which      carries about 128 KiB and two minutes per connection, and a direct connection could      not be made (the networks in between do not allow it). What arrived is kept, and the      next sync goes on from there. For a dependable link, one member's node needs an      address the others can reach.";
 
-type Job = Box<dyn FnOnce(&Node) + Send + 'static>;
+type JobFor<C> = Box<dyn FnOnce(&C) + Send + 'static>;
+type Job = JobFor<Node>;
+
+/// The loop of the node thread: runs the jobs as they come, each on its own.
+///
+/// A job that panics fails alone (ADR-051). Its caller is told that its job was
+/// dropped, and the next job is served. Without this one panic ended the thread, and a
+/// daemon went on listening while every request it took failed: its owner saw a
+/// running daemon that synced nothing. A job works on the node through `&C` and the
+/// store rolls an open transaction back when it is dropped, so the job after a panic
+/// finds the node as the last finished job left it.
+fn serve<C>(jobs: &std::sync::mpsc::Receiver<JobFor<C>>, node: &C) {
+    while let Ok(job) = jobs.recv() {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(node))).is_err() {
+            tracing::error!("a request panicked on the node thread: it failed, the node goes on");
+        }
+    }
+}
 
 /// A handle to the node thread.
 #[derive(Clone)]
@@ -101,9 +118,7 @@ impl Worker {
                 if !ok {
                     return;
                 }
-                while let Ok(job) = rx.recv() {
-                    job(&node);
-                }
+                serve(&rx, &node);
             })
             .context("cannot start the node thread")?;
         let (seed, key) = ready_rx
@@ -199,6 +214,9 @@ pub struct Changes {
     /// Copies a vote installed that were to be removed and were left in place because
     /// they were edited on this machine (`governance::Applied::kept_edited`).
     pub kept_edited: Vec<governance::KeptEdited>,
+    /// Copies a vote installed that were to be removed and stay because another
+    /// circle's rule needs them (`governance::Applied::kept_for`).
+    pub kept_for: Vec<governance::KeptFor>,
     /// Rules in force that wait for the owner's confirmation.
     pub asking: Vec<governance::Waiting>,
     /// Rules in force that this node holds back (`governance::Held`), each with the
@@ -219,6 +237,7 @@ impl std::fmt::Debug for Changes {
             .field("removed", &self.removed)
             .field("not_removed", &self.not_removed)
             .field("kept_edited", &self.kept_edited.len())
+            .field("kept_for", &self.kept_for.len())
             .field("asking", &self.asking)
             .field("held", &self.held.len())
             .field("charters_issued", &self.charters_issued)
@@ -269,6 +288,11 @@ impl Changes {
                 self.kept_edited.push(kept);
             }
         }
+        for kept in other.kept_for {
+            if !self.kept_for.contains(&kept) {
+                self.kept_for.push(kept);
+            }
+        }
         for waiting in other.asking {
             if !self.asking.contains(&waiting) {
                 self.asking.push(waiting);
@@ -294,6 +318,7 @@ impl Changes {
         self.installed.is_empty()
             && self.removed.is_empty()
             && self.kept_edited.is_empty()
+            && self.kept_for.is_empty()
             && self.asking.is_empty()
             && self.charters_issued.is_empty()
     }
@@ -332,6 +357,7 @@ fn settle_circles(node: &Node, circles: &BTreeSet<CircleId>) -> Result<Changes> 
                 changes.removed.extend(settled.applied.removed);
                 changes.not_removed.extend(settled.applied.not_removed);
                 changes.kept_edited.extend(settled.applied.kept_edited);
+                changes.kept_for.extend(settled.applied.kept_for);
                 changes.asking.extend(settled.applied.asking);
                 changes.held.extend(
                     settled
@@ -1535,6 +1561,45 @@ mod tests {
             },
             circle.to_owned(),
         )
+    }
+
+    /// A request that panics fails alone: its caller's channel is dropped, which is
+    /// what `Worker::call` reports as a dropped job, and the next request is served by
+    /// the same thread.
+    #[test]
+    fn a_request_that_panics_fails_alone_and_the_node_thread_goes_on() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let (tx, rx) = mpsc::channel::<JobFor<u32>>();
+        let thread = std::thread::spawn(move || serve(&rx, &7));
+
+        let (first, first_reply) = mpsc::channel::<u32>();
+        tx.send(Box::new(move |_| {
+            let _reply = first;
+            panic!("a request that panics, made by a test");
+        }))
+        .unwrap();
+        let (second, second_reply) = mpsc::channel::<u32>();
+        tx.send(Box::new(move |node| second.send(*node).unwrap()))
+            .unwrap();
+
+        assert_eq!(second_reply.recv_timeout(Duration::from_secs(30)), Ok(7));
+        assert_eq!(
+            first_reply.recv_timeout(Duration::from_secs(30)),
+            Err(mpsc::RecvTimeoutError::Disconnected),
+            "the request that panicked got no answer"
+        );
+        // And many more after it.
+        for n in 0..50u32 {
+            let (reply, got) = mpsc::channel::<u32>();
+            tx.send(Box::new(move |node| reply.send(*node + n).unwrap()))
+                .unwrap();
+            assert_eq!(got.recv_timeout(Duration::from_secs(30)), Ok(7 + n));
+        }
+        drop(tx);
+        thread
+            .join()
+            .expect("the thread ended when its jobs ended, not by a panic");
     }
 
     /// One exchange settles a circle twice. A rule that is held, or that waits, is

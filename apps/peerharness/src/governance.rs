@@ -21,10 +21,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Context, Result};
 use ph_core::{CircleId, DeviceKey, Digest, EventId, Scope, Timestamp};
 use ph_governance::{
-    authorize_incoming, carried_diff, check_answer_reference, check_repeal_reference,
-    check_successor, check_supersedes_reference, normalize_question_text, rules_in_force, tally,
-    verify_result, DecisionRecords, GuardDecision, Passed, ProposalView, QuestionContext,
-    QuestionGuard, Reference, ResultView, RuleSet, Tally, VoteView,
+    authorize_incoming, carried_diff, check_answer_reference, check_successor,
+    normalize_question_text, rules_in_force, tally, verify_result, DecisionRecords, GuardDecision,
+    Passed, ProposalView, QuestionContext, QuestionGuard, Reference, ResultView, RuleSet, Tally,
+    VoteView,
 };
 use ph_identity::CircleAuthority;
 use ph_protocol::{
@@ -33,7 +33,7 @@ use ph_protocol::{
     VerifiedEnvelope, VoteBody, VoteDecision,
 };
 use ph_skills::{Bundle, BundleStore};
-use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, QuestionStatus, Store};
+use ph_store::{BundleRow, CircleRow, InsertOutcome, NewQuestion, Store};
 use serde_json::{json, Value};
 
 use crate::amendment::{self, Changes};
@@ -337,29 +337,16 @@ pub fn ingest(
     let circle = verified.circle_id;
     let env: &SignedEnvelope = &verified;
     match &verified.body {
-        EventBody::Proposal(b) => {
-            let lookup = |id: &EventId| -> Option<SignedEnvelope> {
-                store
-                    .event(id)
-                    .ok()
-                    .flatten()
-                    .and_then(|e| e.envelope().ok())
-            };
-            let superseded = b
-                .as_adopt()
-                .and_then(|a| a.supersedes)
-                .and_then(|id| lookup(&id));
-            if let Reference::Invalid(_) = check_supersedes_reference(env, superseded.as_ref()) {
-                return Ok(Ingest::Rejected("bad_supersedes"));
-            }
-            let target = ProposalView::from_verified(&verified)
-                .ok()
-                .and_then(|p| p.repeal_target())
-                .and_then(|id| lookup(&id));
-            if let Reference::Invalid(_) = check_repeal_reference(env, target.as_ref()) {
-                return Ok(Ingest::Rejected("bad_repeal_target"));
-            }
-        }
+        // A proposal is stored whatever its `supersedes` or its repeal `target` names
+        // (protocol 12.5, ADR-051). Whether this node already holds the event it names
+        // must not decide whether the proposal is kept: a member who sent the two in
+        // one order to some nodes and in the other order to the rest would leave them
+        // with different records, and so with different rules. A `supersedes` that
+        // names anything but an `adopt` proposal for the same skill records no lineage
+        // (`ph_governance::supersede_links`), and a repeal takes a rule out of force
+        // only if it has that rule's scope (`ph_governance::rules_in_force`). Both are
+        // read from the stored records, in whatever order they came.
+        EventBody::Proposal(_) => {}
         EventBody::Result(b) => {
             let result =
                 ResultView::from_verified(&verified).map_err(|_| anyhow!("not a result"))?;
@@ -455,9 +442,18 @@ fn ingest_question(
         let outcome = s.insert_event(verified, origin_peer, now)?;
         if outcome == InsertOutcome::Inserted && !normalized.is_empty() {
             if let Some(q) = NewQuestion::from_envelope(verified, normalized.clone(), mine, now) {
-                let listed = s.insert_question(&q)? == ph_store::QuestionInsert::Inserted;
-                if listed && !decision.is_accept() {
-                    s.set_question_status(&q.event_id, QuestionStatus::Muted)?;
+                match decision {
+                    GuardDecision::Accept => {
+                        s.insert_question(&q)?;
+                    }
+                    // Asked already, and shown: no second entry.
+                    GuardDecision::Drop(ph_governance::DropReason::Duplicate) => {}
+                    // Held back. It takes no text and counts against no quota
+                    // (ADR-051): what the owner was not shown must not keep the same
+                    // question, or another member's, from being shown.
+                    GuardDecision::Drop(_) => {
+                        s.insert_held_question(&q)?;
+                    }
                 }
             }
         }
@@ -1111,9 +1107,30 @@ pub struct ImportSummary {
     pub deferred: usize,
     pub rejected: usize,
     pub bundles: usize,
-    /// Rejection codes with counts, for the local report.
+    /// Rejection codes with counts, for the local report. Every refusal has a code,
+    /// so the counts add up to [`Self::rejected`].
     pub rejection_codes: Vec<(String, usize)>,
 }
+
+impl ImportSummary {
+    /// Counts `n` more refusals under `code`: what the source itself turned away (a
+    /// file of a directory with a record's name that holds no record).
+    pub fn add_refused(&mut self, code: &str, n: usize) {
+        if n == 0 {
+            return;
+        }
+        self.rejected += n;
+        match self.rejection_codes.iter_mut().find(|(c, _)| c == code) {
+            Some((_, count)) => *count += n,
+            None => self.rejection_codes.push((code.to_owned(), n)),
+        }
+        self.rejection_codes.sort();
+    }
+}
+
+/// The code an import reports for a line, or a file of a directory, that is not a
+/// record.
+pub const NOT_A_RECORD: &str = "not_a_record";
 
 /// Imports lines produced by [`export_circle`]. Every line is parsed strictly
 /// (`carrier::parse_record`: a size limit, no member twice, nothing but the one member a
@@ -1131,6 +1148,7 @@ pub fn import_lines<'a>(
     let mut events: Vec<String> = Vec::new();
     let mut offered_bundles: Vec<(Digest, String)> = Vec::new();
     let mut summary = ImportSummary::default();
+    let mut codes: HashMap<&'static str, usize> = HashMap::new();
     for line in lines {
         let line = line.trim();
         if line.is_empty() {
@@ -1141,11 +1159,13 @@ pub fn import_lines<'a>(
         match crate::carrier::parse_record(line) {
             Some(Record::Event(event)) => events.push(event.to_string()),
             Some(Record::Bundle { digest, skill_md }) => offered_bundles.push((digest, skill_md)),
-            None => summary.rejected += 1,
+            None => {
+                summary.rejected += 1;
+                *codes.entry(NOT_A_RECORD).or_default() += 1;
+            }
         }
     }
     let mut pending = events;
-    let mut codes: HashMap<&'static str, usize> = HashMap::new();
     loop {
         let mut progress = false;
         let mut next = Vec::new();
@@ -1186,6 +1206,7 @@ pub fn import_lines<'a>(
         }
         if !named {
             summary.rejected += 1;
+            *codes.entry("text_no_proposal_names").or_default() += 1;
             continue;
         }
         match ph_skills::validate_received(
@@ -1197,7 +1218,10 @@ pub fn import_lines<'a>(
                 record_bundle(store, bundles, &bundle, now)?;
                 summary.bundles += 1;
             }
-            Err(_) => summary.rejected += 1,
+            Err(_) => {
+                summary.rejected += 1;
+                *codes.entry("text_not_a_valid_rule").or_default() += 1;
+            }
         }
     }
     let mut codes: Vec<(String, usize)> =
@@ -1252,6 +1276,11 @@ pub struct Applied {
     /// never deleted unasked. The record that a vote installed it is cleared, so this
     /// is found once: the copy is its owner's from then on.
     pub kept_edited: Vec<KeptEdited>,
+    /// Copies a vote of this circle installed that were to be removed now and stay,
+    /// because another circle of this node has the same rule in force with the same
+    /// text and its owner follows that circle. The record that a vote installed the
+    /// copy is that circle's from now on ([`KeptFor`]).
+    pub kept_for: Vec<KeptFor>,
     /// Rules in force that are not installed and wait for the owner's confirmation. A
     /// rule that is in place already is not among them.
     pub asking: Vec<Waiting>,
@@ -1296,6 +1325,13 @@ impl Applied {
             }
         }
         all.kept_edited = kept;
+        let mut shared = self.kept_for;
+        for copy in all.kept_for.drain(..) {
+            if !shared.contains(&copy) {
+                shared.push(copy);
+            }
+        }
+        all.kept_for = shared;
         all
     }
 
@@ -1305,17 +1341,66 @@ impl Applied {
     }
 
     /// One line for each skill that was to go and is still on the machine: one that
-    /// could not be removed ([`Self::not_removed`]) and a voted copy that was left
-    /// because its owner edited it ([`Self::kept_edited`]). An edited copy is found
-    /// by one run only, the one that clears its record, so every command that brings
-    /// the skills directory in line prints these lines: a run that kept them to
-    /// itself would be the last that could have named the copy.
+    /// could not be removed ([`Self::not_removed`]), a voted copy that was left
+    /// because its owner edited it ([`Self::kept_edited`]), and one that another
+    /// circle's rule keeps ([`Self::kept_for`]). An edited copy and a copy that
+    /// passed to another circle are found by one run only, the one that clears the
+    /// record, so every command that brings the skills directory in line prints these
+    /// lines: a run that kept them to itself would be the last that could have named
+    /// the copy.
     pub fn left_in_place_lines(&self) -> Vec<String> {
         self.not_removed
             .iter()
             .map(|skill| not_removed_line(skill))
             .chain(self.kept_edited.iter().map(KeptEdited::line))
+            .chain(self.kept_for.iter().map(KeptFor::line))
             .collect()
+    }
+}
+
+/// A copy that a vote of one circle installed and that was to be removed there, left
+/// in place because another circle of this node has the same rule in force, with the
+/// same text and for the same place, and the owner follows that circle's rules
+/// ([`Applied::kept_for`], ADR-051).
+///
+/// Removing it would take a rule in force out of the owner's agent until that other
+/// circle is settled again, on the strength of a choice the owner made about the
+/// first circle alone. The copy stays, and the record that a vote installed it passes
+/// to the other circle, whose repeal or opt-out removes it from then on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeptFor {
+    /// The skill's name.
+    pub name: String,
+    /// The name, on this machine, of the circle whose rule keeps the copy.
+    pub circle: String,
+}
+
+impl KeptFor {
+    /// The line a command prints for the owner: what stays, why, and the command that
+    /// takes it out. Inside a coding agent's session the line names no command, like
+    /// [`KeptEdited::line`].
+    pub fn line(&self) -> String {
+        self.line_for(crate::consent::in_agent_session())
+    }
+
+    /// [`Self::line`], with who reads it: the person, or a session (`in_session`).
+    pub fn line_for(&self, in_session: bool) -> String {
+        let name = &self.name;
+        let circle = crate::output::safe(&self.circle);
+        let stays = format!(
+            "rule {name}: the skill stays installed, because the circle {circle} has the \
+             same rule in force with the same text and you follow that circle's rules"
+        );
+        if in_session {
+            return format!(
+                "{stays}. Whether it is taken out there as well is the owner's choice, \
+                 made in their own terminal. Tell them so, and take nothing out yourself."
+            );
+        }
+        format!(
+            "{stays}. To take it out of your agent, opt out there as well: `peerharness \
+             rule opt-out {name} --circle {circle}`."
+        )
     }
 }
 
@@ -1625,6 +1710,72 @@ pub fn held(
     Ok((!by_vote).then_some(Held::OwnSkill))
 }
 
+/// Another circle of this node, not `except`, whose vote would install exactly this
+/// copy now if it were not there: a rule named `name` with the text `digest` is in
+/// force in it and binds the owner, the owner has not opted out of it and follows that
+/// circle's rules without being asked, the rule goes to `place`, and nothing about the
+/// text or the owner's policy holds it back.
+///
+/// A circle whose owner chose to be asked is not one: there a rule is installed on
+/// the owner's yes, and a copy that another circle's vote put there was never that.
+fn relied_on_by(
+    store: &Store,
+    bundles: &BundleStore,
+    owner: &Owner<'_>,
+    except: &CircleId,
+    (name, digest, place): (&str, &Digest, &Option<String>),
+) -> Result<Option<CircleRow>> {
+    use ph_governance::{
+        adoption_step, local_policy_met, AdoptionMode, AdoptionStep, BundleChecks, OwnerChoice,
+    };
+    for other in store.circles()? {
+        let id = &other.circle_id;
+        if id == except
+            || other.adoption_mode != "follow"
+            || store.circle_left_at(id)?.is_some()
+            || store.is_rule_opted_out(id, name)?
+        {
+            continue;
+        }
+        let Ok((charter, rules, tallies)) = rule_set(store, id) else {
+            continue;
+        };
+        let Some(rule) = rules.get(name) else {
+            continue;
+        };
+        let binds = charter
+            .content
+            .voter(owner.me, &ph_protocol::Electorate::Scope(rule.scope()))
+            .is_some();
+        if !binds
+            || rule.bundle_digest() != *digest
+            || place_for(&store.rule_places(id)?, rule.scope()) != *place
+        {
+            continue;
+        }
+        let Ok(bundle) = bundles.get(digest) else {
+            continue;
+        };
+        let checks = BundleChecks {
+            digest_verified: bundle.digest() == rule.bundle_digest(),
+            skill_valid: bundle.name() == rule.skill_name(),
+            high_risk: ph_skills::has_high_risk(&bundle.scan()),
+        };
+        let choice = OwnerChoice {
+            opted_out: false,
+            confirmed: false,
+        };
+        let policy_ok = local_policy_met(owner.policy, tallies.get(&rule.proposal_id()));
+        if matches!(
+            adoption_step(rule, AdoptionMode::Follow, checks, choice, policy_ok),
+            AdoptionStep::Install
+        ) {
+            return Ok(Some(other));
+        }
+    }
+    Ok(None)
+}
+
 /// The owner of this node, as far as applying rules is concerned.
 #[derive(Clone, Copy)]
 pub struct Owner<'a> {
@@ -1739,6 +1890,25 @@ pub fn apply_rules(
             });
         }
         if managed_with(&target, name, digest) {
+            // The same rule in force in another circle that the owner follows keeps
+            // the copy (ADR-051). The record passes to that circle in one write.
+            let needed = (name, digest, &target.dir);
+            if let Some(other) = relied_on_by(store, bundles, owner, id, needed)? {
+                store.transaction_with(|store| -> Result<()> {
+                    store.record_rule_install(&other.circle_id, name, digest, now)?;
+                    store.set_rule_install_place(&other.circle_id, name, target.dir.as_deref())?;
+                    store.clear_rule_install(id, name)?;
+                    Ok(())
+                })?;
+                let kept = KeptFor {
+                    name: name.to_owned(),
+                    circle: other.name,
+                };
+                if !applied.kept_for.contains(&kept) {
+                    applied.kept_for.push(kept);
+                }
+                return Ok(true);
+            }
             match target
                 .installer
                 .uninstall(name, UninstallOptions::default())
@@ -1819,16 +1989,42 @@ pub fn apply_rules(
                 if managed_with(&target, &name, &rule.bundle_digest()) {
                     continue; // already in place
                 }
-                match target.installer.install(&bundle, InstallOptions::default()) {
-                    Ok(outcome) => {
-                        // Remember that the vote put it here, so a repeal removes it.
-                        store.record_rule_install(id, &name, &rule.bundle_digest(), now)?;
-                        store.set_rule_install_place(id, &name, target.dir.as_deref())?;
-                        installs::ensure_circle_skill(store, &bundle, &rule.proposal_id(), now)?;
-                        installs::record_install(store, target.scope, &bundle, &outcome, now)?;
-                        applied.installed.push(name);
+                // The copy and the record that a vote put it there are made together
+                // (ADR-051). The write lock of the store is taken before anything is
+                // written to the agent's directory: where another process holds it
+                // for longer than this one waits, nothing is installed and the next
+                // settle tries again. The copy used to be written first and the
+                // record after it, and a store that was busy in between left a copy
+                // with no record. Such a copy counts as its owner's own from then on:
+                // an opt-out and a repeal reported that they took it out and took
+                // nothing out.
+                let wrote = std::cell::Cell::new(false);
+                let made = store.transaction_with(|store| -> Result<bool> {
+                    let Ok(outcome) = target.installer.install(&bundle, InstallOptions::default())
+                    else {
+                        return Ok(false);
+                    };
+                    wrote.set(true);
+                    // Remember that the vote put it here, so a repeal removes it.
+                    store.record_rule_install(id, &name, &rule.bundle_digest(), now)?;
+                    store.set_rule_install_place(id, &name, target.dir.as_deref())?;
+                    installs::ensure_circle_skill(store, &bundle, &rule.proposal_id(), now)?;
+                    installs::record_install(store, target.scope, &bundle, &outcome, now)?;
+                    Ok(true)
+                });
+                match made {
+                    Ok(true) => applied.installed.push(name),
+                    Ok(false) => applied.conflicts.push(name),
+                    Err(e) => {
+                        // The record was not written, so the copy must not stay: it
+                        // is taken out again, and the next settle installs it anew.
+                        if wrote.get() {
+                            let _ = target
+                                .installer
+                                .uninstall(&name, UninstallOptions::default());
+                        }
+                        return Err(e);
                     }
-                    Err(_) => applied.conflicts.push(name),
                 }
             }
             step @ AdoptionStep::AskOwner(_) => {
@@ -2303,6 +2499,169 @@ pub(crate) mod tests {
         .into_bytes()
     }
 
+    /// Another node of the circle `store` holds: the same circle and the same charter,
+    /// and nothing else.
+    fn twin(store: &Store, circle: &CircleId, now: Timestamp) -> Store {
+        let other = Store::open_in_memory().unwrap();
+        other
+            .set_identity(&ph_store::IdentityMetadata {
+                device_key: device(2),
+                keystore_backend: "insecure-dev".into(),
+                keystore_ref: "test".into(),
+                created_at: now,
+            })
+            .unwrap();
+        let row = store.circle(circle).unwrap().unwrap();
+        other
+            .insert_circle(&CircleRow {
+                is_founder: false,
+                ..row
+            })
+            .unwrap();
+        other
+            .insert_charter(&current_charter(store, circle).unwrap(), now)
+            .unwrap();
+        other
+    }
+
+    /// A proposal in `scope`, signed by `seed`'s device under the node's current
+    /// charter: what a modified client can send.
+    fn scoped_proposal(
+        store: &Store,
+        seed: u8,
+        circle: &CircleId,
+        scope: &str,
+        action: ph_protocol::ProposalAction,
+        now: Timestamp,
+    ) -> Vec<u8> {
+        let charter = current_charter(store, circle).unwrap().digest().unwrap();
+        EnvelopeBuilder::new(
+            *circle,
+            Scope::new(scope).unwrap(),
+            EventBody::Proposal(ProposalBody {
+                charter,
+                title: "A proposal".into(),
+                summary: String::new(),
+                action,
+            }),
+        )
+        .sign(&key(seed), now)
+        .unwrap()
+        .to_canonical_json()
+        .unwrap()
+        .into_bytes()
+    }
+
+    fn adopt_action(name: &str, supersedes: Option<EventId>) -> ph_protocol::ProposalAction {
+        ph_protocol::ProposalAction::Adopt(ph_protocol::AdoptAction {
+            skill_name: name.into(),
+            description: "Prefer pnpm over npm.".into(),
+            bundle_digest: Digest::sha256(name.as_bytes()),
+            bundle_size: 230,
+            related_question: None,
+            supersedes,
+        })
+    }
+
+    /// What a node keeps never depends on the order its records came in (ADR-051).
+    ///
+    /// A proposal used to be refused for good when the proposal its `supersedes` named
+    /// was already there and was for another skill, and kept when that one came later.
+    /// A member who sent the two in one order to some nodes and in the other order to
+    /// one node left that node without the proposal: it never saw the rule that then
+    /// passed, and no later exchange gave it to it.
+    #[test]
+    fn a_proposal_is_kept_whatever_its_supersedes_names_and_whenever_that_came() {
+        let (store, circle, now) = node();
+        let other = proposal(
+            &store,
+            2,
+            &circle,
+            "X",
+            adopt_action("other-skill", None),
+            now,
+        );
+        let rule = proposal(
+            &store,
+            2,
+            &circle,
+            "Prefer pnpm over npm.",
+            adopt_action("prefer-pnpm-over-npm", Some(id_of(&other))),
+            now,
+        );
+        let mut kept = Vec::new();
+        for order in [[&rule, &other], [&other, &rule]] {
+            let node = twin(&store, &circle, now);
+            for raw in order {
+                assert_eq!(ingest(&node, raw, None, now).unwrap(), Ingest::Stored);
+            }
+            // It can be voted on, and it passes, on both.
+            let view = proposal_view(&node, &id_of(&rule)).unwrap();
+            for seed in [1, 2] {
+                assert_eq!(
+                    ingest(&node, &ballot(seed, &view, now), None, now).unwrap(),
+                    Ingest::Stored
+                );
+            }
+            let (_, rules, _) = rule_set(&node, &circle).unwrap();
+            kept.push(rules.carried_ids());
+        }
+        assert_eq!(kept[0], [id_of(&rule)]);
+        assert_eq!(kept[0], kept[1], "the two nodes hold the same rules");
+    }
+
+    /// A repeal is kept like any other proposal, in whatever order it and the proposal
+    /// it names arrive, and it takes a rule out of force only if it has that rule's
+    /// scope (ADR-051). The scope used to be checked when the repeal arrived, and only
+    /// if its target was there by then: a repeal that came first was kept and counted,
+    /// so another scope's electorate could repeal a rule on a node that got the two in
+    /// that order.
+    #[test]
+    fn a_repeal_from_another_scope_is_kept_in_any_order_and_repeals_nothing() {
+        let (store, circle, now) = node();
+        // The rule is adopted in `team/backend`. The repeal is put to scope `*`.
+        let rule = scoped_proposal(
+            &store,
+            2,
+            &circle,
+            "team/backend",
+            adopt_action("prefer-pnpm-over-npm", None),
+            now,
+        );
+        let from_elsewhere = scoped_proposal(
+            &store,
+            2,
+            &circle,
+            "*",
+            ph_protocol::ProposalAction::Repeal {
+                target: id_of(&rule),
+            },
+            now,
+        );
+        for order in [[&rule, &from_elsewhere], [&from_elsewhere, &rule]] {
+            let node = twin(&store, &circle, now);
+            for raw in order {
+                assert_eq!(ingest(&node, raw, None, now).unwrap(), Ingest::Stored);
+            }
+            for raw in [&rule, &from_elsewhere] {
+                let view = proposal_view(&node, &id_of(raw)).unwrap();
+                for seed in [1, 2] {
+                    assert_eq!(
+                        ingest(&node, &ballot(seed, &view, now), None, now).unwrap(),
+                        Ingest::Stored
+                    );
+                }
+                assert!(count(&node, &view).unwrap().1.passed());
+            }
+            let (_, rules, _) = rule_set(&node, &circle).unwrap();
+            assert_eq!(
+                rules.carried_ids(),
+                [id_of(&rule)],
+                "a repeal of another scope took the rule out of force"
+            );
+        }
+    }
+
     /// What a voter on device `me` is shown about the amendment `raw`.
     fn shown(store: &Store, bundles: &BundleStore, raw: &[u8], me: u8) -> Changes {
         let view = proposal_view(store, &id_of(raw)).unwrap();
@@ -2714,6 +3073,76 @@ pub(crate) mod tests {
         assert_eq!(ingest(&store, &mine, None, now).unwrap(), Ingest::Stored);
         let row = store.question(&id_of(&mine)).unwrap().unwrap();
         assert!(row.is_local && row.status == QuestionStatus::New);
+    }
+
+    /// The quotas count what was shown (ADR-051). One member's flood used to count
+    /// in full against the circle's day, the eighty questions that were held back
+    /// with the twenty that were shown, so that the next member's one question was
+    /// held back too. A held-back question also kept its text, and the same question
+    /// from anyone else was then never shown. And what the owner asked counted
+    /// against what the others may ask.
+    #[test]
+    fn a_flood_from_one_member_does_not_hide_the_questions_of_another() {
+        let (store, circle, now) = node();
+        let shown = |raw: &[u8]| store.question(&id_of(raw)).unwrap().map(|q| q.status);
+
+        // The owner's own questions, more than a circle's day: none of them counts.
+        for i in 0..110 {
+            let raw = question(1, &circle, "*", &format!("Mine, number {i}?"), now);
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+        }
+        // Bob floods: a hundred questions. Twenty are shown.
+        let mut flood = Vec::new();
+        for i in 0..100 {
+            let raw = question(2, &circle, "*", &format!("Flood, number {i}?"), now);
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+            flood.push(raw);
+        }
+        let inbox = store.inbox(&[QuestionStatus::New]).unwrap();
+        assert_eq!(inbox.len(), 20);
+        assert_eq!(shown(&flood[19]), Some(QuestionStatus::New));
+        assert_eq!(shown(&flood[20]), Some(QuestionStatus::Muted));
+
+        // Carol's one question is shown.
+        let honest = question(3, &circle, "team/backend", "Do we pin the toolchain?", now);
+        assert_eq!(ingest(&store, &honest, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&honest), Some(QuestionStatus::New));
+
+        // A question of bob's that was held back does not take its text: carol asks
+        // the same, and it is shown.
+        let same = question(3, &circle, "team/backend", "flood number 99", now);
+        assert_eq!(shown(&flood[99]), Some(QuestionStatus::Muted));
+        assert_eq!(ingest(&store, &same, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&same), Some(QuestionStatus::New));
+        // And the owner can ask it too: `question send` looks for the text first.
+        assert!(!store
+            .question_text_exists(&circle, &normalize_question_text("Flood, number 98?"))
+            .unwrap());
+
+        // A question that was shown still gets no second entry.
+        let again = question(3, &circle, "team/backend", "FLOOD number 5", now);
+        assert_eq!(ingest(&store, &again, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&again), None);
+
+        // Bob stays held to his own day: one more is held back, and stays so.
+        let more = question(2, &circle, "*", "And one more from bob?", now);
+        assert_eq!(ingest(&store, &more, None, now).unwrap(), Ingest::Stored);
+        assert_eq!(shown(&more), Some(QuestionStatus::Muted));
+        assert_eq!(store.inbox(&[QuestionStatus::New]).unwrap().len(), 22);
+
+        // The circle's day is still a limit, of questions that were shown: carol is
+        // held to twenty like bob, and what is over is held back.
+        for i in 0..30 {
+            let raw = question(
+                3,
+                &circle,
+                "team/backend",
+                &format!("Carol, number {i}?"),
+                now,
+            );
+            assert_eq!(ingest(&store, &raw, None, now).unwrap(), Ingest::Stored);
+        }
+        assert_eq!(store.inbox(&[QuestionStatus::New]).unwrap().len(), 40);
     }
 
     pub(crate) fn adopt(
@@ -4561,6 +4990,195 @@ pub(crate) mod tests {
         assert_eq!(in_force.carried_ids(), [rule.event_id()]);
         // A draft made now is checked against this state, and the old one is refused.
         assert!(as_drafted(&store, &key(1), &circle, &shown, &rules).is_err());
+    }
+
+    /// A copy is never written without the record that a vote wrote it (ADR-051). The
+    /// copy used to be written first and the record after it. While another process
+    /// held the store for longer than this one waits, that left a copy with no
+    /// record, which counts as its owner's own: an opt-out and a repeal then said
+    /// they removed it and removed nothing.
+    ///
+    /// No sleeps and no threads: both connections do not wait (busy timeout 0), and
+    /// the other one holds the write lock while this one settles.
+    #[test]
+    fn a_copy_is_never_installed_without_the_record_that_a_vote_installed_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("peerharness.db");
+        let store = Store::open_with_busy_timeout(&path, 0).unwrap();
+        let (circle, now) = found(&store);
+        let machine = Machine::new();
+        pass_rule(&store, &machine, &circle, "style", "Use two spaces.", now);
+        let mut row = store.circle(&circle).unwrap().unwrap();
+        row.adoption_mode = "follow".into();
+        let settle = || {
+            apply_rules(
+                &store,
+                &machine.bundles,
+                &machine.installer,
+                &row,
+                &Owner {
+                    me: &device(1),
+                    policy: &ph_governance::LocalPolicy::default(),
+                    confirmed: &[],
+                },
+                now,
+            )
+        };
+
+        // Another process writes: this settle cannot record anything, so it installs
+        // nothing either, and says that the store is busy.
+        let other = Store::open_with_busy_timeout(&path, 0).unwrap();
+        other
+            .transaction(|_| {
+                let refused = settle().unwrap_err();
+                assert!(
+                    refused
+                        .downcast_ref::<ph_store::StoreError>()
+                        .is_some_and(ph_store::StoreError::is_busy),
+                    "{refused:?}"
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(machine.text("style"), None, "a copy with no record");
+        assert!(store.rule_installs(&circle).unwrap().is_empty());
+
+        // The store is free again: the same settle installs the rule and records it.
+        assert_eq!(settle().unwrap().installed, ["style"]);
+        assert!(machine.text("style").is_some());
+        assert_eq!(store.rule_installs(&circle).unwrap().len(), 1);
+        // So the owner's opt-out takes out what the vote put in.
+        store.set_rule_opt_out(&circle, "style", now).unwrap();
+        assert_eq!(settle().unwrap().removed, ["style"]);
+        assert_eq!(machine.text("style"), None);
+    }
+
+    /// A second circle on the node of [`found`], named `other`: alice and bob, both in
+    /// every scope. Alice follows its rules without being asked, or is asked, as
+    /// `mode` says.
+    fn found_other(store: &Store, mode: &str, now: Timestamp) -> CircleId {
+        let authority = CircleAuthority::from_signing_key(key(101));
+        let circle = authority.circle_id();
+        let mut content =
+            CharterContent::founding(RollEntry::new("alice", vec![device(1)], vec![Scope::all()]));
+        content
+            .roll
+            .push(RollEntry::new("bob", vec![device(2)], vec![Scope::all()]));
+        content.normalize();
+        let charter = authority.issue_founding_charter(content, now).unwrap();
+        store
+            .insert_circle(&CircleRow {
+                circle_id: circle,
+                name: "other".into(),
+                root_key: authority.root_key(),
+                is_founder: true,
+                root_keystore_ref: None,
+                adoption_mode: mode.into(),
+                accepted_charter: None,
+                created_at: now,
+            })
+            .unwrap();
+        store.insert_charter(&charter, now).unwrap();
+        circle
+    }
+
+    /// Sets the owner's mode for `circle` on the node: `follow` or `ask`.
+    fn follows(store: &Store, circle: &CircleId, mode: &str) {
+        let accepted = current_charter(store, circle).unwrap().digest().unwrap();
+        store.set_circle_adoption(circle, mode, &accepted).unwrap();
+    }
+
+    /// The same rule, name and text, in force in two circles of one node. The copy in
+    /// the agent's directory was installed by the vote of one of them. When that
+    /// circle lets it go (an opt-out here, and a repeal or leaving take the same
+    /// path), the copy stays if the owner follows the other circle, and the record
+    /// passes to that circle, whose opt-out then removes it. Version 0.4.0 removed
+    /// the copy, and a rule in force that its owner had not opted out of was gone
+    /// from the agent until that circle was settled again (ADR-051).
+    #[test]
+    fn a_copy_that_another_circles_rule_needs_stays_when_one_circle_lets_it_go() {
+        let (store, team, now) = node();
+        let other = found_other(&store, "follow", now);
+        let machine = Machine::new();
+        let sentence = "Use two spaces for indentation.";
+        pass_rule(&store, &machine, &team, "style", sentence, now);
+        pass_rule(&store, &machine, &other, "style", sentence, now);
+        let settle = |circle: &CircleId| {
+            let mode = store.circle(circle).unwrap().unwrap().adoption_mode;
+            machine.apply_in(&mode, &store, circle, &[])
+        };
+        let on_record = |circle: &CircleId| store.rule_installs(circle).unwrap().len();
+        // `team` is settled first and installs; `other` finds its rule in place.
+        follows(&store, &team, "follow");
+        assert_eq!(settle(&team).installed, ["style"]);
+        assert!(settle(&other).installed.is_empty());
+        assert_eq!((on_record(&team), on_record(&other)), (1, 0));
+
+        // Alice opts out in `team` only.
+        store.set_rule_opt_out(&team, "style", now).unwrap();
+        let applied = settle(&team);
+        assert!(applied.removed.is_empty(), "{applied:?}");
+        assert_eq!(
+            applied.kept_for,
+            [KeptFor {
+                name: "style".into(),
+                circle: "other".into()
+            }]
+        );
+        assert!(
+            machine.text("style").is_some(),
+            "the rule of `other` is gone"
+        );
+        assert_eq!((on_record(&team), on_record(&other)), (0, 1));
+        // The person is told how to take it out, and a session is told no command.
+        let line = applied.kept_for[0].line_for(false);
+        assert!(
+            line.contains("`peerharness rule opt-out style --circle other`"),
+            "{line}"
+        );
+        assert_eq!(applied.left_in_place_lines().len(), 1);
+        assert!(!applied.kept_for[0].line_for(true).contains("peerharness "));
+        // Settling again says nothing more and changes nothing.
+        let again = settle(&team);
+        assert!(again.kept_for.is_empty() && again.removed.is_empty());
+        assert!(machine.text("style").is_some());
+
+        // The copy is `other`'s now: opting out there removes it.
+        store.set_rule_opt_out(&other, "style", now).unwrap();
+        assert_eq!(settle(&other).removed, ["style"]);
+        assert_eq!(machine.text("style"), None);
+        assert_eq!((on_record(&team), on_record(&other)), (0, 0));
+    }
+
+    /// Where the owner chose to be asked in the other circle, nothing is kept for it:
+    /// a rule is installed there on the owner's yes, and a copy that another circle's
+    /// vote installed was never that. The opt-out removes the copy, and the other
+    /// circle's rule waits for its owner.
+    #[test]
+    fn a_copy_is_not_kept_for_a_circle_whose_owner_is_asked() {
+        let (store, team, now) = node();
+        let other = found_other(&store, "ask", now);
+        let machine = Machine::new();
+        let sentence = "Use two spaces for indentation.";
+        pass_rule(&store, &machine, &team, "style", sentence, now);
+        pass_rule(&store, &machine, &other, "style", sentence, now);
+        assert_eq!(machine.apply(&store, &team, &[]).installed, ["style"]);
+
+        store.set_rule_opt_out(&team, "style", now).unwrap();
+        let applied = machine.apply(&store, &team, &[]);
+        assert_eq!(applied.removed, ["style"]);
+        assert!(applied.kept_for.is_empty());
+        assert_eq!(machine.text("style"), None);
+        let waits = machine.apply_in("ask", &store, &other, &[]);
+        assert_eq!(waits.asking.len(), 1, "{waits:?}");
+
+        // Nor for a circle the owner opted out of the rule in, or left.
+        store.clear_rule_opt_out(&team, "style").unwrap();
+        assert_eq!(machine.apply(&store, &team, &[]).installed, ["style"]);
+        follows(&store, &other, "follow");
+        store.set_circle_left(&other, Some(now)).unwrap();
+        store.set_rule_opt_out(&team, "style", now).unwrap();
+        assert_eq!(machine.apply(&store, &team, &[]).removed, ["style"]);
     }
 
     /// Whatever a command signs inside `atomically` stands or falls together. A

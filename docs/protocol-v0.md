@@ -309,6 +309,13 @@ not matter.
 | fingerprint of a key | first 20 hex chars of `SHA-256("peerharness-fingerprint-v0" \|\| 0x00 \|\| pubkey_32_bytes)`, grouped as `xxxx-xxxx-xxxx-xxxx-xxxx` |
 | bundle digest | `"sha256:" + hex(SHA-256("peerharness-bundle-v0" \|\| 0x00 \|\| JCS(manifest)))` (section 10) |
 
+An event id does not cover the signature. The holder of a key can sign the same bytes
+more than once, and each signature verifies. One event can therefore exist in two
+transmitted forms that differ in `signature` alone. They are one event with one id: a
+node keeps the form that reached it first and treats the other as a duplicate (section
+13.4), and nothing that is counted or decided reads the signature bytes. Only the
+author can make a second form: a signature that anyone else changed does not verify.
+
 The circle id and the fingerprint hash the **raw 32 key bytes**, not the `ed25519:`
 string. Fingerprints are for humans to compare out of band (for example the root
 fingerprint shown when joining). They are 80 bits and are not used for authorization.
@@ -523,11 +530,14 @@ Members of every kind:
 * `related_question`: optional QUESTION event id.
 * `supersedes`: optional earlier `adopt` PROPOSAL event id. Lineage only: approvals never
   move to the superseding proposal. Reference rule: it names an `adopt` PROPOSAL in the
-  same circle with the same `skill_name`.
+  same circle with the same `skill_name`. A `supersedes` that names anything else
+  records no lineage, and the proposal is kept and counted like any other (section
+  12.5).
 
 `repeal` (take a rule out of force). Required: `target`, the event id of the `adopt`
-PROPOSAL whose rule is to be repealed. Reference rule (checked once the target is
-stored): the target is an `adopt` PROPOSAL in the same circle with the **same scope**.
+PROPOSAL whose rule is to be repealed. Reference rule: the target is an `adopt`
+PROPOSAL in the same circle with the **same scope**. A repeal whose target is anything
+else is kept, can be voted on and takes nothing out of force (sections 12.5 and 14.4).
 
 `amend` (replace the charter). Required: `next`, the complete proposed charter content
 (section 9.6): `rules`, `roll` and `carried`. It MUST satisfy the content structure
@@ -543,8 +553,9 @@ error.
 {"proposal_id": "sha256:<event id>", "decision": "approve" | "reject" | "revise", "rationale?": "<text>"}
 ```
 
-* `proposal_id` is the event id of the PROPOSAL, which is the hash of the entire signed
-  proposal. A ballot is therefore bound to every byte of what was proposed, including
+* `proposal_id` is the event id of the PROPOSAL, which is the hash of everything the
+  proposer signed (section 5: the signature itself is not hashed). A ballot is
+  therefore bound to every signed byte of what was proposed, including
   the bundle digest of an `adopt` proposal; a ballot for proposal A never counts for a
   proposal B that differs in anything. There is no separate `bundle_digest` member.
 * `rationale`: 0 to 2000 code points, multi-line. The reference client is stricter
@@ -1019,16 +1030,18 @@ run things, so every bundle, whether built locally or received, is also refused 
 (`check_instruction_only`):
 
 * its frontmatter declares `allowed-tools`, which pre-approves tools for the agent; or
-* a line of its body contains syntax that Claude Code executes as a shell command when
-  the skill loads, before the model sees anything (`has_shell_injection`):
-  * an exclamation mark directly followed by a backtick, with another backtick later on
-    the same line; or
-  * a line that, after leading whitespace, starts with three backticks or three tildes
-    directly followed by an exclamation mark.
+* its file contains, anywhere, syntax that Claude Code executes as a shell command
+  when the skill loads, before the model sees anything (`has_shell_injection`):
+  * an exclamation mark directly followed by a backtick, with another backtick
+    anywhere after it in the file, on that line or a later one; or
+  * three backticks or three tildes directly followed by an exclamation mark,
+    wherever on a line they stand.
 
-These are exact syntactic rules, applied to every line of the body, and they err towards
-refusing (a line containing two separate code spans, the first of which ends in an
-exclamation mark, is refused). No vote, flag or confirmation overrides them (section
+These are syntactic rules applied to the whole file, the frontmatter included, and not
+line by line: Claude Code finds a fence in the middle of a sentence and a command that
+runs over several lines (ADR-051). They err towards refusing. Text with two separate
+code spans, the first of which ends in an exclamation mark, is refused, on one line or
+across the file. No vote, flag or confirmation overrides them (section
 14.6). Received skill text is otherwise untrusted prose: a risk scanner gives advisory
 findings, and what happens to a rule that passed is a local decision (section 14.6).
 
@@ -1077,6 +1090,15 @@ Reference: `crates/ph-protocol/src/wire.rs`, `crates/ph-network/src/`.
 Every frame body is one JSON object tagged by a `"type"` member whose value is the
 snake_case message name. The message fields are siblings of `"type"`. Unknown members
 are rejected.
+
+A frame has this one form, and a receiver MUST refuse every other: an array of the
+members in place of an object (`["hello",["0.1"]]`), for the frame or for an object
+inside it, another spelling of a value (`{"unauthorized":null}` for `"unauthorized"`),
+and a member that its sender is to omit (an empty `circles`, section 11.5). The
+reference implementation writes the frame it decoded out again and requires the result
+to be the value it read. Member order and whitespace are not form. The events inside
+`push_events` and `events` are checked one by one (section 7.4), so that one bad event
+does not cost the frame.
 
 | request `type` | response `type` on success |
 |---|---|
@@ -1470,8 +1492,9 @@ the current charter if it is a legitimate successor, or is kept as history if th
 the node holds names it (section 14.5). A STANCE has none.
 
 In the reference node (`apps/peerharness/src/governance.rs`, `ingest`) the check in
-step 5 covers `supersedes`, the repeal `target` and an ANSWER's `question_id` (a VOTE's,
-a RESULT's and a STANCE's proposal is already resolved in step 4). An ANSWER whose
+step 5 covers an ANSWER's `question_id` (a VOTE's, a RESULT's and a STANCE's proposal is
+already resolved in step 4; a PROPOSAL's `supersedes` and repeal `target` are not
+checked when it arrives, section 12.5). An ANSWER whose
 QUESTION is not stored is rejected as retryable (`missing_question`); one whose QUESTION
 is in another circle or has another scope is rejected for good. Before step 6 a QUESTION
 authored by another device also passes the local guard of section 14.8: a blocked
@@ -1485,11 +1508,18 @@ Pushing a stored event again is harmless: it is a `duplicate`.
 An ANSWER, a VOTE, a RESULT, a STANCE, an `adopt` PROPOSAL with `supersedes` and a
 `repeal` PROPOSAL reference another event. If the referenced event is not stored yet,
 the reference is *missing*. A VOTE, RESULT, STANCE or ANSWER is then rejected as
-retryable (section 12.4). A PROPOSAL whose `supersedes` or repeal `target` is missing is
-kept; the reference is checked only when the PROPOSAL arrives, and it has no effect
-until the referenced event is there. If the referenced event is stored but inconsistent
-(wrong type, kind, circle, scope or skill name, as listed in section 8), the event is
-rejected.
+retryable (section 12.4). If the referenced event is stored but inconsistent (wrong
+type, circle or scope, as listed in section 8), the ANSWER is rejected.
+
+A PROPOSAL is different: it is kept whatever its `supersedes` or its repeal `target`
+names, and whether or not the event it names is stored. A receiver MUST NOT make
+keeping a PROPOSAL depend on what else it holds. If it did, a member who sent a proposal
+and the event it names in one order to some nodes and in the other order to the rest
+would leave them with different records, and so with different rules in force. The
+reference rules of section 8 are applied where the reference is used, on the records the
+node holds at that moment: a `supersedes` that does not name an `adopt` PROPOSAL of the
+same circle and `skill_name` records no lineage (14.7), and a repeal takes a rule out of
+force only if it has that rule's scope (14.4).
 
 A RESULT also references the ballots it lists and a CHARTER references the RESULT that
 justifies it. Those are resolved when the result or charter is verified (sections 14.3
@@ -1732,7 +1762,8 @@ Notes for implementers:
 no duplicate questions or proposals, and a ballot received twice is one ballot (the
 count in section 14.2 also ignores a repeated event id). A replayed event is a duplicate; a
 modified one has a different `event_id` and a broken signature or a new author's
-signature (and is then judged on its own).
+signature (and is then judged on its own). The same event signed a second time by its
+author has the same `event_id` and is a duplicate as well (section 5).
 
 ### 13.5 Offline behaviour
 
@@ -2014,11 +2045,16 @@ The rules in force are then a pure function of `c` and the proposals that count 
 
 ```text
 A = { adopt proposals that count under c }          (carried, or passed by vote)
-R = { target of every repeal proposal that counts under c }
+R = { (target, scope) of every repeal proposal that counts under c }
 for each skill name s:
     winner(s) = the proposal in A with skill_name s and the greatest (created_at, event_id)
-    s is in force, with winner(s)'s bundle, iff winner(s) is not in R
+    s is in force, with winner(s)'s bundle, iff (winner(s), scope of winner(s)) is not in R
 ```
+
+A repeal therefore counts only against a rule of its own envelope scope: the electorate
+that adopted a rule is the one that repeals it. A repeal that names a proposal of
+another scope, a proposal that is not an `adopt`, or nothing the node holds, takes
+nothing out of force.
 
 `created_at` here is the proposal's own signed `created_at` and `event_id` is compared
 as a string. A newer rule of the same name replaces the older one. Repealing the winner
@@ -2176,7 +2212,8 @@ of the owner. An owner can instead place the rules of a scope in one project dir
 `adopt` proposals in the same circle and scope with the same `skill_name` and different
 bundle digests are alternatives that coexist. Each is counted on its own ballots; if
 more than one reaches its threshold, 14.4 decides which is in force. `supersedes`
-records lineage only; it moves no approvals and is not a veto.
+records lineage only; it moves no approvals and is not a veto. A `supersedes` that names
+an event of another kind, another circle or another `skill_name` is ignored.
 
 ### 14.8 Received questions
 
@@ -2194,6 +2231,12 @@ question text; local mute and block lists. The verdicts, in order of precedence:
 Keeping the event in the first place makes sync idempotent and lets an ANSWER to it be
 checked. A question the node's own owner asked is never held back. The peer that carried
 the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
+
+A quota counts questions that were shown. A question that was held back, for a muted
+author or for a quota, counts against no quota and takes no text: the same question
+from another member is shown, and one member who sends a hundred questions in a day
+uses twenty of the circle's hundred. What the node's own owner asked does not count
+against the circle's day either.
 
 ### 14.9 Known limits
 
@@ -2284,6 +2327,18 @@ the question is told nothing beyond `accepted`, `duplicate` or `rejected`.
   `fetch_events` that carries `after` with `bad_request`; and fails to read an
   `authenticated` that carries `circles`. A session between such a node and a current
   one therefore fails as soon as one of these members is sent.
+* One change in place narrowed what a receiver takes and changed no frame a sender
+  writes: a frame is read only in the form of section 11.3. The binaries up to 0.4.0
+  also read a frame written as an array of its members, and a variant written as an
+  object with a `null` in it. Nothing was decided differently for such a frame.
+* One change in place is about what a receiver keeps, and changed no object: a
+  PROPOSAL is kept whatever its `supersedes` or its repeal `target` names, and a repeal
+  takes a rule out of force only in that rule's scope (sections 12.5 and 14.4). The
+  binaries up to 0.4.0 refuse a PROPOSAL whose `supersedes` or `target` names a stored
+  event that the reference rules of section 8 do not allow. The two therefore hold
+  different records
+  only for a proposal that the stock commands do not write: they write no
+  `supersedes`, and a repeal with its target's scope.
 * A node that supports several versions lists them in `hello`; the requester picks one
   both list. v0 nodes support only `0.1`.
 * Protocol versions are independent of the `peerharness` binary's semantic version.
@@ -2474,7 +2529,7 @@ or different:
   envelopes nest two levels inside them. Each embedded envelope is still limited to 8.
 * **Strictness.** Besides rejecting unknown members at every level, the source rejects
   explicit `null` for optional members and requires an exact re-serialization round
-  trip.
+  trip, of an envelope and of a frame (section 11.3).
 * **Size checks.** The 64 KiB envelope limit applies to the received bytes and to the
   canonical transmitted form (with `signature` and `event_id`).
 * **MEMBERSHIP events.** The envelope scope must be `*` or covered by a credential

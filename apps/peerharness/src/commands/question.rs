@@ -23,7 +23,7 @@ use crate::consent::{confirm, human_only};
 use crate::error::{refused, usage};
 use crate::governance;
 use crate::node::Node;
-use crate::output::{safe, short_id, Report, Text};
+use crate::output::{continued, quoted, safe, short_id, Report, Text, MEMBERS_WORDS};
 
 pub fn run(ctx: &Ctx, command: QuestionCommand) -> Result<Report> {
     match command {
@@ -291,7 +291,7 @@ fn answer_lines(t: &mut Text, list: &[Answer]) {
             .rationale
             .as_deref()
             .filter(|r| !r.is_empty())
-            .map(|r| format!(": {}", safe(r)))
+            .map(|r| format!(": {}", continued(r, MEMBERS_WORDS)))
             .unwrap_or_default();
         t.line(format!(
             "      {:<8} {}{}{why}",
@@ -314,13 +314,15 @@ fn list(ctx: &Ctx) -> Result<Report> {
     }
     for q in &asked {
         let list = answers(&node, q)?;
+        // What PeerHarness says about a row stands before the member's words, here
+        // and below (ADR-051): a text cannot end with counts or a sender of its own.
         t.line(format!(
-            "  {}  {}  [{} agree, {} disagree, {} unsure]",
+            "  {}  [{} agree, {} disagree, {} unsure]  {}",
             short_id(&q.event_id),
-            safe(&q.question),
             count(&list, AnswerChoice::Agree),
             count(&list, AnswerChoice::Disagree),
             count(&list, AnswerChoice::Unsure),
+            continued(&q.question, MEMBERS_WORDS),
         ));
         answer_lines(&mut t, &list);
         asked_json.push(question_json(&node, q, &list)?);
@@ -338,12 +340,12 @@ fn list(ctx: &Ctx) -> Result<Report> {
         let list = answers(&node, q)?;
         let charter = node.store.current_charter(&q.circle_id)?;
         t.line(format!(
-            "  {}  {}  (from {}, scope {}, {})",
+            "  {}  from {}, scope {}, {}: {}",
             short_id(&q.event_id),
-            safe(&q.question),
             member_name(charter.as_ref(), &q.author),
             q.scope,
             q.status,
+            continued(&q.question, MEMBERS_WORDS),
         ));
         answer_lines(&mut t, &list);
         received_json.push(question_json(&node, q, &list)?);
@@ -396,18 +398,21 @@ fn answer_question(
     if rationale.as_ref().is_some_and(|r| r.chars().count() > 2000) {
         return Err(usage("a rationale is at most 2000 characters"));
     }
+    // The question is another member's text, and it can hold several lines: every
+    // one of them stands behind a mark, so that none can pass for a line of this
+    // preview (ADR-051).
     let mut preview = format!(
         "You are about to share this answer with the members of {} (scope {}):\n  \
-         {} to \"{}\"",
+         {} to this question:\n{}",
         safe(&circle.name),
         q.scope,
         choice_str(choice),
-        safe(&q.question),
+        quoted(&q.question, MEMBERS_WORDS),
     );
     if let Some(r) = &rationale {
         preview.push_str(&format!(
-            "\n  with this rationale, exactly as sent: {}",
-            safe(r)
+            "\n  with this rationale, exactly as sent:\n{}",
+            quoted(r, MEMBERS_WORDS)
         ));
     }
     preview.push_str(

@@ -136,6 +136,37 @@ fn check_member_name(name: &str) -> Result<()> {
     }
 }
 
+/// A circle's name, when a coding agent's session gives it (ADR-051).
+///
+/// The name is local, and every later preview puts it among PeerHarness's own words
+/// ("This shares the following with the members of <name> ..."), in a window too. A
+/// name of several words could say something there that reads as PeerHarness's. So
+/// inside a session a name is one word: letters and digits of any script, and `.`, `_`
+/// and `-` after the first character. In their own terminal a person names a circle as
+/// they like (the store's rule: one line of 1-64 characters).
+fn check_name_from_a_session(name: &str) -> Result<()> {
+    if !in_agent_session() {
+        return Ok(());
+    }
+    let letter = |c: char| {
+        let mut buf = [0u8; 4];
+        let as_shown: &str = c.encode_utf8(&mut buf);
+        c.is_alphanumeric() && safe(as_shown) == as_shown
+    };
+    let mut chars = name.chars();
+    let one_word = chars.next().is_some_and(letter)
+        && chars.all(|c| letter(c) || matches!(c, '.' | '_' | '-'));
+    if one_word {
+        return Ok(());
+    }
+    Err(refused(
+        "inside a coding agent's session a circle's name is one word: letters and digits, \
+         with '.', '_' and '-' after the first. The name is shown later among PeerHarness's \
+         own words, in windows too. Nothing was done. In your own terminal you can name a \
+         circle as you like.",
+    ))
+}
+
 /// The charter as human text: rules, then the roll.
 pub fn describe_charter(charter: &Charter, me: Option<&DeviceKey>) -> String {
     let rules = charter.content.rules;
@@ -158,10 +189,17 @@ pub fn describe_charter(charter: &Charter, me: Option<&DeviceKey>) -> String {
         "  changing these rules needs more than {}/{}",
         rules.amend.num, rules.amend.den
     ));
+    // Binding or advisory is what a member starts with when they join. After that
+    // the mode is each member's own (`circle mode`), and an amendment does not change
+    // it: the lines say so, because "each member is asked" was not true of a member
+    // who joined while rules were binding (ADR-051).
     t.line(if rules.binding {
-        "  passed rules are binding: they are installed for every member (you can opt out of any rule)"
+        "  passed rules are binding: they are installed for every member who has not chosen \
+         to be asked first (you can opt out of any rule)"
     } else {
-        "  passed rules are advisory: each member is asked before anything is installed"
+        "  passed rules are advisory: a member who joins is asked before a rule is installed. \
+         A member who chose to follow the circle's rules, or joined while they were binding, \
+         gets them installed without being asked until they switch (`peerharness circle mode ask`)"
     });
     t.line("  roll:");
     for entry in &charter.content.roll {
@@ -208,23 +246,44 @@ fn create(ctx: &Ctx, name: &str, member: Option<&str>) -> Result<Report> {
             "a circle named {name:?} already exists here"
         )));
     }
+    // Before a key exists (ADR-051): a name the store would refuse used to be found
+    // out after the circle's root key was in the keystore, where it stayed.
+    ph_store::check_circle_name(name).map_err(|e| usage(e.to_string()))?;
+    check_name_from_a_session(name)?;
     let now = node.now();
     let device = node.device()?;
+    let keystore = node.keystore()?;
     let (authority, circle_id) =
-        CircleAuthority::create(node.keystore()?).context("cannot create the circle root key")?;
-    let founder = RollEntry::new(&handle, vec![device.public()], vec![Scope::all()]);
-    let charter = governance::found_circle(
-        &node.store,
-        &authority,
-        name,
-        founder,
-        Some(authority.keystore_label()),
-        now,
-    )?;
-    // The founder's own credential, for the network transport later on.
-    let credential = authority.issue_founder_credential(device.public(), now)?;
-    let proof = accept_credential(&credential, device, now)?;
-    node.store.upsert_membership_proof(&proof, true, now)?;
+        CircleAuthority::create(keystore).context("cannot create the circle root key")?;
+    let founded = (|| -> Result<Charter> {
+        let founder = RollEntry::new(&handle, vec![device.public()], vec![Scope::all()]);
+        let charter = governance::found_circle(
+            &node.store,
+            &authority,
+            name,
+            founder,
+            Some(authority.keystore_label()),
+            now,
+        )?;
+        // The founder's own credential, for the network transport later on.
+        let credential = authority.issue_founder_credential(device.public(), now)?;
+        let proof = accept_credential(&credential, device, now)?;
+        node.store.upsert_membership_proof(&proof, true, now)?;
+        Ok(charter)
+    })();
+    let charter = match founded {
+        Ok(charter) => charter,
+        Err(e) => {
+            // A key with no circle is of no use to anyone, and `reset` could not name
+            // it. It is taken out again, unless the circle did get stored: then the
+            // key is that circle's, and the only one there will ever be. When the
+            // store cannot be asked, the key stays.
+            if matches!(node.store.circle(&circle_id), Ok(None)) {
+                let _ = keystore.delete(&authority.keystore_label());
+            }
+            return Err(e);
+        }
+    };
 
     let mut t = Text::new();
     t.line(format!("Founded the circle {}.", safe(name)));
@@ -302,6 +361,14 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     let next = admit_member(&current.content, &rules, entry)
         .map_err(|e| usage(format!("cannot propose that admission: {e}")))?;
     let need = current.content.rules.pass.need(current.content.roll.len());
+    // What the preview says about the new member is read from the charter that was
+    // drafted, which is what gets signed: the device and the scopes (ADR-051). The
+    // scopes come from the command line, and inside a session that is the agent's.
+    let admitted = next
+        .roll
+        .iter()
+        .find(|e| e.member == args.member)
+        .ok_or_else(|| anyhow!("the drafted charter does not hold the new member"))?;
 
     // A file with the circle's records is the person's own step (`events export`): inside
     // an agent's session none is written, and asking for one there is refused.
@@ -311,12 +378,12 @@ fn invite(ctx: &Ctx, args: CircleInviteArgs) -> Result<Report> {
     }
     let mut preview = format!(
         "This puts an amendment of {circle} to the vote and casts your approval:\n  \
-         admit {member} (device {fp}) to the roll of charter {seq}\n  \
+         admit {member} {entry} to the roll of charter {seq}\n  \
          it passes with {need} of {n} member approval(s); yours is one\n\
          An approval cannot be withdrawn.",
         circle = safe(&circle.name),
         member = args.member,
-        fp = device.fingerprint(),
+        entry = crate::amendment::entry_line(admitted),
         seq = current.seq,
         n = current.content.roll.len(),
     );
@@ -1311,6 +1378,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
         for kept in &applied.kept_edited {
             t.line(format!("  {}", kept.line()));
         }
+        for kept in &applied.kept_for {
+            t.line(format!("  {}", kept.line()));
+        }
         t.line(format!(
             "No request to take you off the roll was made: {}",
             why.explain(&circle.name, "")
@@ -1408,6 +1478,7 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
     let mut removed = applied.removed;
     let mut not_removed = applied.not_removed;
     let mut kept_edited = applied.kept_edited;
+    let mut kept_for = applied.kept_for;
     let mut report = match outcome {
         Ok(put) => {
             t.line(format!(
@@ -1433,6 +1504,11 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                     kept_edited.push(kept.clone());
                 }
             }
+            for kept in &put.settled.applied.kept_for {
+                if !kept_for.contains(kept) {
+                    kept_for.push(kept.clone());
+                }
+            }
             for skill in &removed {
                 t.line(format!("  removed rule {skill}"));
             }
@@ -1440,6 +1516,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                 t.line(format!("  {}", governance::not_removed_line(skill)));
             }
             for kept in &kept_edited {
+                t.line(format!("  {}", kept.line()));
+            }
+            for kept in &kept_for {
                 t.line(format!("  {}", kept.line()));
             }
             let mut report = amendment_report(&circle, &put, "You are off the roll.", t);
@@ -1456,6 +1535,9 @@ fn leave(ctx: &Ctx, args: CircleLeaveArgs) -> Result<Report> {
                 t.line(format!("  {}", governance::not_removed_line(skill)));
             }
             for kept in &kept_edited {
+                t.line(format!("  {}", kept.line()));
+            }
+            for kept in &kept_for {
                 t.line(format!("  {}", kept.line()));
             }
             let mut json = json!({ "requested": false, "reason": why.code() });
@@ -1563,6 +1645,9 @@ fn leave_again(ctx: &Ctx, node: &Node, circle: &CircleRow, yes: bool) -> Result<
         machine.line(governance::not_removed_line(skill));
     }
     for kept in &applied.kept_edited {
+        machine.line(kept.line());
+    }
+    for kept in &applied.kept_for {
         machine.line(kept.line());
     }
     let machine = machine.finish();
@@ -2003,6 +2088,9 @@ fn place(ctx: &Ctx, args: CirclePlaceArgs) -> Result<Report> {
     for kept in &settled.applied.kept_edited {
         t.line(format!("  {}", kept.line()));
     }
+    for kept in &settled.applied.kept_for {
+        t.line(format!("  {}", kept.line()));
+    }
     for held in &settled.applied.held {
         t.line(format!("  {}", held.line(&circle.name)));
     }
@@ -2104,6 +2192,16 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
              to remove the member, `peerharness circle remove {m}`."
         ));
     }
+    if owner.is_none() {
+        // A key is long, and a revocation is for ever: say when it names nobody the
+        // founder can see on the roll (ADR-051). It is not refused, because a device
+        // that was voted off, or one about to be admitted, can be what is meant.
+        preview.push_str(&format!(
+            "\n  No member on the roll of charter {} has that device. If you meant a \
+             member's device, check the key before you continue.",
+            charter.seq
+        ));
+    }
     if !reason.is_empty() {
         preview.push_str(&format!(
             "\nEvery member can read this reason, exactly as sent: {}",
@@ -2147,6 +2245,9 @@ fn revoke(ctx: &Ctx, args: CircleRevokeArgs) -> Result<Report> {
         t.line(format!("  {}", governance::not_removed_line(skill)));
     }
     for kept in &settled.applied.kept_edited {
+        t.line(format!("  {}", kept.line()));
+    }
+    for kept in &settled.applied.kept_for {
         t.line(format!("  {}", kept.line()));
     }
     Ok(Report::new(
@@ -2270,6 +2371,10 @@ fn plan_join(
         .name
         .clone()
         .unwrap_or_else(|| format!("circle-{}", &fingerprint[..fingerprint.len().min(9)]));
+    // The name is checked before anything is shown, and it is shown: the owner's yes
+    // covers what the circle is called here from now on (ADR-051).
+    ph_store::check_circle_name(&name).map_err(|e| usage(e.to_string()))?;
+    check_name_from_a_session(&name)?;
     let member = charter
         .content
         .member_of(me)
@@ -2277,9 +2382,11 @@ fn plan_join(
         .member
         .clone();
     let mut preview = format!(
-        "You are about to join a circle as {member}.\n  root fingerprint {fingerprint}\n\
+        "You are about to join a circle as {member}.\n  root fingerprint {fingerprint}\n  \
+         on this machine it will be called {called}\n\
          Check that fingerprint with the founder through another channel before you continue.\n\n{charter}\n\
          Joining means accepting this charter and the way it is amended.{binding}",
+        called = safe(&name),
         charter = describe_charter(&charter, Some(me)).trim_end(),
         binding = if charter.content.rules.binding {
             "\nThe rules this circle has passed are installed for your agent when you join, \

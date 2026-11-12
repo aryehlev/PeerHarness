@@ -814,8 +814,8 @@ pub enum EventsCommand {
     ///
     /// Meant for a directory your team already shares, such as one in a git repository:
     /// sync, commit, push; the others pull and sync. Every record is its own file, so
-    /// nothing needs merging. Anyone who can read the directory can read the circle's
-    /// roll, proposals and ballots.
+    /// members who add different records never touch the same file. Anyone who can read
+    /// the directory can read the circle's roll, proposals and ballots.
     Sync {
         /// The shared directory (created if missing).
         dir: PathBuf,

@@ -107,7 +107,18 @@ pub fn run(ctx: &Ctx) -> Result<Report> {
                     );
                 }
                 if cfg.learning.provider.is_active() {
-                    c.add("provider", Level::Warn, format!("advisory provider `{}` enabled; remote providers send previewed text off this device", cfg.learning.provider.kind));
+                    // No command calls a provider in this version (ADR-051): say what
+                    // the setting does today, and what it would do.
+                    c.add(
+                        "provider",
+                        Level::Warn,
+                        format!(
+                            "advisory provider `{}` is set in config.toml. No command of \
+                             this version calls one; a remote provider would send previewed \
+                             text off this device",
+                            cfg.learning.provider.kind
+                        ),
+                    );
                 } else {
                     c.add("provider", Level::Ok, "no advisory provider (fully local)");
                 }

@@ -16,7 +16,8 @@ ph-core.workspace = true
 serde.workspace = true
 # Not `preserve_order`: Cargo would unify it workspace-wide and break ph-protocol's
 # vector files. Settings key order is preserved by our own `json_doc` module instead.
-serde_json.workspace = true
+# `raw_value`: a number of a settings file is written back as it was read (json_doc.rs).
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true

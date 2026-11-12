@@ -218,7 +218,8 @@ impl VoteView {
     pub fn voter(&self) -> DeviceKey {
         self.env.author
     }
-    /// The proposal id the ballot signs. It is the hash of the whole signed proposal.
+    /// The proposal id the ballot signs. It is the hash of everything the proposer
+    /// signed (the signature itself is not hashed).
     pub fn proposal_id(&self) -> EventId {
         self.body.proposal_id
     }

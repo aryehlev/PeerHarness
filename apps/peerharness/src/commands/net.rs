@@ -251,6 +251,9 @@ fn change_lines(
     for kept in &changes.kept_edited {
         t.line(format!("{indent}{}", kept.line()));
     }
+    for kept in &changes.kept_for {
+        t.line(format!("{indent}{}", kept.line()));
+    }
     for waiting in &changes.asking {
         t.line(format!("{indent}{}", waiting.line()));
     }

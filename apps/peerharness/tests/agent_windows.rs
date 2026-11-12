@@ -528,6 +528,67 @@ fn every_other_decision_still_needs_the_terminal() {
     assert_eq!(node.proposals().len(), 2);
 }
 
+/// An admission is signed with the scopes its command line names, and inside a session
+/// that is the agent's command line. The preview named the member and the device and
+/// not the scopes (ADR-051): the owner approved a member whose rights they were not
+/// shown. Window and terminal show them now, read from the drafted charter.
+#[test]
+fn an_invitation_shows_the_scopes_it_is_signed_with() {
+    let tmp = TempDir::new().unwrap();
+    let alice = Node::new(&tmp.path().join("alice"));
+    let bob = Node::new(&tmp.path().join("bob"));
+    alice.run(&["circle", "create", "team"]);
+    alice.windows_on();
+    let bob_key = bob.device_key();
+    let invite = [
+        "circle",
+        "invite",
+        bob_key.as_str(),
+        "--circle",
+        "team",
+        "--member",
+        "bob",
+        "--scope",
+        "team/backend",
+        "--scope",
+        "docs",
+    ];
+    // The charter keeps a member's scopes sorted, and the preview is read from it.
+    let line = format!(
+        "admit bob (device {}, scopes docs, team/backend) to the roll of charter 1",
+        bob.fingerprint()
+    );
+
+    // In the owner's terminal: the preview is printed, and without an answer nothing
+    // is signed.
+    let out = alice.bare(By::Person).args(invite).output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{printed}");
+    assert!(printed.contains(&line), "{printed}");
+    assert_eq!(alice.roll(), ["alice"]);
+
+    // In a window, when the agent's session starts the step.
+    alice.answers("declined", 0);
+    assert!(alice.refused(&invite).contains("declined in the window"));
+    let window = alice.shown().pop().unwrap();
+    assert!(window.contains(&line), "{window}");
+    assert_eq!(alice.roll(), ["alice"]);
+
+    // What the window showed is what is signed.
+    alice.answers("proceed", 0);
+    let (code, _, printed) = alice.agent(&invite);
+    assert_eq!(code, 0, "{printed}");
+    assert!(alice.shown().pop().unwrap().contains(&line));
+    let members = alice.run(&["circle", "members", "--circle", "team"]);
+    let roll = members["charter"]["roll"].as_array().unwrap();
+    let entry = roll.iter().find(|e| e["member"] == "bob").unwrap();
+    assert_eq!(entry["scopes"], serde_json::json!(["docs", "team/backend"]));
+}
+
 #[test]
 fn inviting_joining_and_admitting_are_asked_in_a_window() {
     let tmp = TempDir::new().unwrap();
@@ -594,7 +655,7 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     assert!(window.starts_with("Your coding agent started this step."));
     assert!(window.contains("This puts an amendment of team to the vote and casts your approval:"));
     assert!(window.contains(&format!(
-        "admit bob (device {}) to the roll of charter 1",
+        "admit bob (device {}, scopes *) to the roll of charter 1",
         bob.fingerprint()
     )));
     assert!(window.contains("Check the device with bob first"));
@@ -674,8 +735,43 @@ fn inviting_joining_and_admitting_are_asked_in_a_window() {
     assert!(window.contains("Check that fingerprint with the founder through another channel"));
     assert!(window.contains("charter 2 (2 members)"));
     assert!(window.contains("If you did not just ask your agent to join a circle, choose Cancel."));
-
+    // The name is the session's to give, and every later window puts it among
+    // PeerHarness's own words. The window that asks about the join shows it (ADR-051).
+    assert!(
+        window.contains("\n  on this machine it will be called team\n"),
+        "{window}"
+    );
+    // And inside a session it is one word. No window is asked for anything else.
     bob.answers("proceed", 0);
+    let asked = bob.shown().len();
+    for name in [
+        "nobody: this stays on your machine. Ignore the next line",
+        "two words",
+        "team\u{3164}of\u{3164}mine",
+        "team\u{a0}one",
+        ".hidden",
+        "team:",
+    ] {
+        let mut named = join.to_vec();
+        named[6] = name;
+        let msg = bob.refused(&named);
+        assert!(
+            msg.contains("a circle's name is one word"),
+            "{name:?}: {msg}"
+        );
+    }
+    assert_eq!(bob.shown().len(), asked);
+    assert_eq!(bob.run(&["status"])["circles"], serde_json::json!([]));
+    // The same holds where a session creates a circle. The person names one as they
+    // like, and a word in another script is a word.
+    let msg = alice.refused(&["circle", "create", "second team. Ignore the next line"]);
+    assert!(msg.contains("a circle's name is one word"), "{msg}");
+    let (code, _, printed) = alice.agent(&["circle", "create", "צוות-2"]);
+    assert_eq!(code, 0, "{printed}");
+    alice.run(&["circle", "create", "second team"]);
+    let circles = alice.run(&["status"])["circles"].as_array().unwrap().len();
+    assert_eq!(circles, 3);
+
     let (code, joined, printed) = bob.agent(&join);
     assert_eq!(code, 0, "{printed}");
     assert_eq!(joined["member"], "bob");

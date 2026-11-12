@@ -119,6 +119,9 @@ fn settled_lines(t: &mut Text, s: &Settled, circle: &CircleRow) {
     for kept in &s.applied.kept_edited {
         t.line(format!("  {}", kept.line()));
     }
+    for kept in &s.applied.kept_for {
+        t.line(format!("  {}", kept.line()));
+    }
     for waiting in &s.applied.asking {
         t.line(format!("  {}", waiting.line()));
     }
@@ -619,6 +622,7 @@ fn list(ctx: &Ctx) -> Result<Report> {
 
 fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     let node = ctx.open_node()?;
+    let in_session = crate::consent::in_agent_session();
     let (p, circle) = load(&node, arg)?;
     let (charter, tally) = governance::count(&node.store, &p)?;
     let st = standing(&node, &p, &tally)?;
@@ -705,7 +709,12 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     match &amendment {
         Some(Some(changes)) => {
             t.line("  what it changes, read from its signed content:");
-            t.line(changes.describe("    ").trim_end());
+            let described = if in_session {
+                changes.describe_without_texts("    ")
+            } else {
+                changes.describe("    ")
+            };
+            t.line(described.trim_end());
             if let Some(unread) = changes.unread() {
                 t.line(format!(
                     "  it cannot be approved on this node: {}",
@@ -738,9 +747,24 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
                         ""
                     }
                 ));
-                // The rule's text is a member's: every line of it behind the mark, like
-                // a reason or a summary above, so none can pass for a line of ours.
-                t.line(quoted(b.skill_md(), MEMBER_TEXT));
+                // Inside a session the reader is the agent. A rule's text reaches it
+                // when the rule is installed for it, and not because a member proposed
+                // it: here it is printed only where exactly this text is installed on
+                // this node already (ADR-051).
+                let installed = node
+                    .store
+                    .active_installations()?
+                    .iter()
+                    .any(|i| i.bundle_digest == adopt.bundle_digest);
+                if in_session && !installed {
+                    // Ours, so not behind the mark for a member's words.
+                    t.line(format!("      {}", crate::amendment::NOT_IN_A_SESSION));
+                } else {
+                    // The rule's text is a member's: every line of it behind the mark,
+                    // like a reason or a summary above, so none can pass for a line of
+                    // ours.
+                    t.line(quoted(b.skill_md(), MEMBER_TEXT));
+                }
             }
             Err(_) => {
                 t.line("  rule text: not on this node yet (import the proposer's events file)");

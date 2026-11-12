@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::home::{read_bounded_file, write_private_file, Home};
 
 /// The lock file's name inside the home.
-const LOCK_FILE: &str = "daemon.lock";
+const LOCK_FILE: &str = crate::home::DAEMON_LOCK_FILE;
 
 /// The exclusive lock a running daemon holds on its home. Dropping it releases the lock.
 pub struct DaemonLock(#[allow(dead_code)] std::fs::File);
