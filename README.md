@@ -19,8 +19,9 @@ screen that shows the exact text. It cannot answer the window: inside its sessio
 keeping a rule, sharing one, voting, inviting and joining take your click. That stops
 an agent that is trying to help. It is not a sandbox ([Limits](#limits)).
 
-> **Status: v0.4.0, early and not audited.** Made for Claude Code on macOS first; the
-> other agents get the rules and the tools. On Linux it works from a terminal, without
+> **Status: v0.5.0, early and not audited.** Made for Claude Code on macOS first; the
+> other agents get the rules and the tools, and seven of them the hook that notices a
+> correction. On Linux it works from a terminal, without
 > the windows. Windows is not supported. Read [Limits](#limits) before you rely on it.
 
 PeerHarness is also a command-line tool (CLI): every step here is a command too, and

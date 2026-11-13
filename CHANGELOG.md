@@ -9,6 +9,12 @@ database schema it writes.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.5.0 (2026-11-13)
+
+Protocol `0.1` and database schema 4, as in 0.4.0.
+
 * Seven of the other coding agents get the hook that notices a correction: Codex,
   Droid, Gemini CLI, Qwen Code, Cursor, Copilot CLI and goose. `watch <agent>
   --install` and `setup` add it to the agent's hooks file after a preview that shows

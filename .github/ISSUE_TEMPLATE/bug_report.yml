@@ -14,7 +14,7 @@ body:
     attributes:
       label: Version
       description: The output of `peerharness --version`.
-      placeholder: peerharness 0.4.0
+      placeholder: peerharness 0.5.0
     validations:
       required: true
   - type: input
