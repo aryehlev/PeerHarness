@@ -32,7 +32,7 @@ apps/peerharness depends on everything and is the only place crates are wired to
 | `ph-identity` | keystores, device identity, circle authority (credentials, revocations, charter issuance), invites, `MembershipRegistry` | store private keys anywhere but the keystore; decide whether a charter change was voted |
 | `ph-store` | SQLite schema, migrations, typed repositories | make authorization decisions |
 | `ph-network` | libp2p QUIC transport, framing, rate limits; opt-in LAN discovery; opt-in internet mode (lookup by peer id, relay reservations, hole punching) | know about circles or authorize anything; dial a peer the application named unless told to |
-| `ph-observer` | hook parsing, settings install/remove, the tools entry in another agent's configuration (`agent_config`), spool, notification throttle | open paths from hook payloads |
+| `ph-observer` | hook parsing, settings install/remove, the tools entry in another agent's configuration (`agent_config`) and the hooks in its hooks file (`agent_hooks`), spool, notification throttle | open paths from hook payloads |
 | `ph-learning` | detectors, free-text notes, drafts, advisory providers | let provider or agent output drive any decision |
 | `ph-governance` | incoming-event authorization, the roll as membership (`RollOracle`), read rules, tally, result verification, rules in force, charter succession, conflicts, anti-spam, adoption gate | do storage or networking; read a clock when counting |
 | `ph-skills` | `SKILL.md` parsing and validation, the instruction-only rule, scanner, bundles, bundle store, installer, copies for other agents (`mirror`) | execute skill content |
@@ -236,6 +236,17 @@ stop, leave the feature disabled, and document the blocker.
   such text prints lengths.
 * `transcript_path` and any other path from a hook payload is never opened. Hooks always
   exit 0, never block, and print nothing for `UserPromptSubmit`.
+* The same holds for the hooks of the other agents (ADR-053), under whatever name the
+  agent gives its prompt event: nothing on standard output and nothing on standard
+  error. An agent gets a hook at the end of a turn (`HookSpec::stop_event`) only where
+  its own source shows that the message reaches the person and is not sent to the
+  model; elsewhere the hook prints nothing there, whoever runs it. Do not print a
+  notice the model would read, and do not add an agent's hooks from its documentation
+  alone where that leaves open what an empty output does.
+* Hooks keep a copy of what the owner types. They are added to another agent only
+  after a preview that says so (`watch <agent> --install`), are left out with
+  `--no-hooks`, and an agent that was connected without them gets them only after
+  that preview: the yes to the rules and the tools does not cover them.
 * Joining a circle never uploads existing local data.
 * Remote advisory providers stay off by default and need both config opt-in and a
   per-invocation exact preview.
@@ -394,7 +405,12 @@ stop, leave the feature disabled, and document the blocker.
 * Changes to Claude settings are idempotent, backed up and atomic. So is the tools entry
   in another agent's configuration (`ph_observer::agent_config`), which changes or
   removes only an entry that is exactly what PeerHarness writes, never rewrites a file
-  it cannot parse, and never re-serializes a TOML file.
+  it cannot parse, and never re-serializes a TOML file. And so are the hooks in
+  another agent's hooks file (`ph_observer::agent_hooks`): an entry is PeerHarness's
+  only when its command is this binary's hook command for the same home and the same
+  agent, a new one goes to the end of its array so that the owner's hooks keep their
+  index, and a file is never created where that would make the agent stop reading
+  the owner's hooks elsewhere (Droid's `hooks.json`).
 * Rules are installed and decided in Claude Code's skills directory only (ADR-050).
   Another agent's directory holds copies (`ph_skills::mirror`, `crate::copies`) of the
   managed, unmodified skills there, and only for an agent the owner connected. A copy

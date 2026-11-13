@@ -111,7 +111,7 @@ through types and traits defined in `ph-core` and `ph-protocol`.
 | ph-identity | keystore backends (OS keychain, encrypted file, explicit insecure dev), device identity, circle authority keys, credential issuance, charter issuance (founding charter, and notarizing successors), invite creation/validation, acceptance, revocation issuance, `MembershipRegistry` implementing `MembershipOracle` |
 | ph-store | SQLite migrations and typed repositories for every table in section 8 |
 | ph-network | libp2p QUIC swarm with request/response, length-prefixed bounded codec, per-peer rate limits, async `NetworkHandle` API plus an inbound `RequestHandler` trait; it knows wire types but nothing about circles |
-| ph-observer | Claude Code hook payload parsing and normalization, idempotent settings.json install/remove with backups, spool, notification throttle |
+| ph-observer | hook payload parsing and normalization (Claude Code's, and the shapes of the other agents with hooks), idempotent settings.json install/remove with backups, the tools entry and the hook entries in another agent's files, spool, notification throttle |
 | ph-learning | `CandidateDetector` trait, deterministic correction detector, free-text notes (section 12.1), candidate dedup keys, skill-draft text, optional advisory agent providers (Claude Code CLI, Codex CLI, Ollama-compatible local endpoint) |
 | ph-governance | incoming-event authorization (by the membership oracle, by roll, by embedded proof, by root key), read rules, counting a vote (`tally`), result certificates, the rules in force, charter succession and amendment drafting, the local adoption gate and `LocalPolicy`, conflict and supersede handling, question anti-spam (quotas, dedup, mute, block) |
 | ph-skills | strict SKILL.md frontmatter parser and validator (Agent Skills spec), the instruction-only rule for bundles, content risk scanner, bundle build and hostile-bundle validation, diff, atomic install, uninstall and rollback |
@@ -1374,7 +1374,7 @@ written down directly.
   and `setup --no-dialogs`. For a node that is already there it names the keystore,
   and warns about a plaintext one (ADR-045).
 
-### 12.2 Other coding agents (ADR-050, ADR-052)
+### 12.2 Other coding agents (ADR-050, ADR-052, ADR-053)
 
 Codex, opencode, Pi, Google Antigravity, DeepSeek Harness, Gemini CLI, Qwen Code,
 GitHub Copilot CLI, Cursor, Amp, Factory's Droid, Crush, Kilo and goose are connected
@@ -1395,6 +1395,22 @@ beside Claude Code (`apps/peerharness/src/agents.rs`), each by `watch <agent> --
   block, added to the JSON of the others in the shape each one's own `mcp add` writes
   (Pi's `exposure: direct`, Amp's one key `amp.mcpServers`), and shown for DeepSeek
   Harness and goose, whose YAML is not edited.
+* **Hooks (ADR-053).** Codex, Droid, Gemini CLI, Qwen Code, Cursor, Copilot CLI and
+  goose run command hooks from a JSON file. `Agent::hook_spec` says, for each, where
+  the events are in the file, what its events are called, what an entry looks like and
+  where its payload keeps the prompt, the session and the directory
+  (`ph_observer::PayloadShape`). The command is Claude Code's with the agent's id as
+  its last word (`HookCommand::render_for`): `peerharness hook user-prompt-submit
+  <agent>` under the agent's prompt event and, only for the four agents that show a
+  hook's `systemMessage` to the person and not to the model (Codex, Droid, Gemini
+  CLI, Qwen Code), `peerharness hook stop <agent>` at the end of a turn. The hook
+  takes the event from its command line, reads the payload in that agent's shape and
+  follows every rule of section 1: exit 0, no output for a prompt, no path opened.
+  `ph_observer::agent_hooks` edits the file as `settings` edits Claude Code's: an
+  entry is PeerHarness's by its command (same home, same agent), is replaced in place
+  or appended, and is the only thing removed. The preview says what is stored;
+  `--no-hooks` leaves the hooks out or takes them out. The other seven agents have no
+  hook of this kind and rely on the note.
 * **Sessions.** Each agent's marks are in `consent::AGENT_SESSION_ENV`
   (`Agent::session_env`). Antigravity documents none; goose is recognized by
   `AGENT_SESSION_ID`, which its terminal integration also sets in its user's shell.

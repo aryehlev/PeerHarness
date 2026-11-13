@@ -60,8 +60,10 @@ Then start a new session of your agent and [try it](#try-it-in-your-agent).
 Copilot CLI, opencode, Amp, goose and more), `setup` shows a preview and then puts your
 rules in the skills it reads and gives it the same tools. For goose and DeepSeek
 Harness it shows the tools entry for you to add yourself. If you use `goose term
-init`, run `setup` from a shell without it: PeerHarness takes that shell for goose's. The hooks are Claude Code's alone, so in the others a
-correction is noted only when the agent notes it. See
+init`, run `setup` from a shell without it: PeerHarness takes that shell for goose's.
+Codex, Droid, Gemini CLI, Qwen Code, Cursor, Copilot CLI and goose also get the hook
+that notices a correction, after a preview of what it stores; in the other
+seven a correction is noted only when the agent notes it. See
 [other coding agents](docs/terminal.md#other-coding-agents).
 
 More: [what setup adds and stores](docs/terminal.md#what-setup-adds-and-what-is-stored)

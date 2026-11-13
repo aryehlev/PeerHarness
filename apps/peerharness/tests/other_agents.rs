@@ -657,7 +657,7 @@ fn every_agent_is_connected_gets_the_rules_and_is_disconnected_alone() {
         match e.copies {
             None => {
                 // It reads Claude Code's directory: nothing is copied anywhere.
-                assert!(!m.agents.join(".agents").exists(), "{}", e.agent);
+                assert!(!m.agents.join(".agents/skills").exists(), "{}", e.agent);
                 assert!(!m.agents.join(".config/opencode/skills").exists());
                 assert_eq!(st["skills_dir"], Value::Null, "{}: {st}", e.agent);
             }
@@ -709,4 +709,406 @@ fn kilo_gets_the_entry_in_the_file_it_reads() {
     assert_eq!(v["model"], "mine");
     assert_eq!(v["mcp"]["peerharness"]["type"], "local");
     assert_eq!(v["mcp"]["peerharness"]["command"][0], exe().as_str());
+}
+
+/// What one agent's hooks are expected to be (ADR-053): the file, where the command of
+/// the prompt hook stands in it, where that of the hook at the end of a turn stands
+/// (`None`: the agent gets none), and a prompt as the agent hands it over.
+struct Hooked {
+    agent: &'static str,
+    detect: &'static str,
+    file: &'static str,
+    prompt_at: &'static str,
+    stop_at: Option<&'static str>,
+    payload: fn(&str) -> Value,
+}
+
+fn claude_shaped(prompt: &str) -> Value {
+    serde_json::json!({"session_id": "s", "cwd": "/work/repo", "transcript_path": "/nowhere",
+        "hook_event_name": "UserPromptSubmit", "prompt": prompt})
+}
+
+const HOOKED: [Hooked; 7] = [
+    Hooked {
+        agent: "codex",
+        detect: ".codex",
+        file: ".codex/hooks.json",
+        prompt_at: "/hooks/UserPromptSubmit/0/hooks/0/command",
+        stop_at: Some("/hooks/Stop/0/hooks/0/command"),
+        payload: claude_shaped,
+    },
+    Hooked {
+        agent: "droid",
+        detect: ".factory",
+        file: ".factory/hooks.json",
+        prompt_at: "/UserPromptSubmit/0/hooks/0/command",
+        stop_at: Some("/Stop/0/hooks/0/command"),
+        payload: claude_shaped,
+    },
+    Hooked {
+        agent: "gemini",
+        detect: ".gemini/settings.json",
+        file: ".gemini/settings.json",
+        prompt_at: "/hooks/BeforeAgent/0/hooks/0/command",
+        stop_at: Some("/hooks/AfterAgent/0/hooks/0/command"),
+        payload: |p| {
+            serde_json::json!({"session_id": "s", "cwd": "/work/repo",
+            "hook_event_name": "BeforeAgent", "timestamp": "2026-11-13T00:00:00Z", "prompt": p})
+        },
+    },
+    Hooked {
+        agent: "qwen",
+        detect: ".qwen",
+        file: ".qwen/settings.json",
+        prompt_at: "/hooks/UserPromptSubmit/0/hooks/0/command",
+        stop_at: Some("/hooks/Stop/0/hooks/0/command"),
+        payload: |p| {
+            serde_json::json!({"session_id": "s", "cwd": "/work/repo",
+            "hook_event_name": "UserPromptSubmit", "prompt": p, "submitted_prompt": p})
+        },
+    },
+    Hooked {
+        agent: "cursor",
+        detect: ".cursor",
+        file: ".cursor/hooks.json",
+        prompt_at: "/hooks/beforeSubmitPrompt/0/command",
+        stop_at: None,
+        payload: |p| {
+            serde_json::json!({"conversation_id": "c", "generation_id": "g",
+            "hook_event_name": "beforeSubmitPrompt", "workspace_roots": ["/work/repo"],
+            "transcript_path": null, "prompt": p, "attachments": []})
+        },
+    },
+    Hooked {
+        agent: "copilot",
+        detect: ".copilot",
+        file: ".copilot/hooks/peerharness.json",
+        prompt_at: "/hooks/userPromptSubmitted/0/bash",
+        stop_at: None,
+        payload: |p| serde_json::json!({"sessionId": "s", "timestamp": 1, "cwd": "/work/repo", "prompt": p}),
+    },
+    Hooked {
+        agent: "goose",
+        detect: ".config/goose",
+        file: ".agents/plugins/peerharness/hooks/hooks.json",
+        prompt_at: "/hooks/UserPromptSubmit/0/hooks/0/command",
+        stop_at: None,
+        payload: |p| {
+            serde_json::json!({"event": "UserPromptSubmit", "session_id": "s",
+            "matcher_context": p, "message": p, "working_dir": "/work/repo"})
+        },
+    },
+];
+
+/// Runs a hook's command line as the agent's shell would, with `payload` on standard
+/// input, inside that agent's session.
+fn run_hook(m: &Machine, line: &str, payload: &Value) -> Output {
+    use std::io::Write;
+    let mut child = Command::new("sh")
+        .arg("-c")
+        .arg(line)
+        .env("HOME", &m.fake_home)
+        .env("PEERHARNESS_AGENTS_HOME", &m.agents)
+        .env("PEERHARNESS_AGENT_SESSION", "1")
+        .env_remove("PEERHARNESS_HOME")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(payload.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// The agents that run command hooks from a file get the hook that notices a
+/// correction, and the notice at the end of a turn only where the agent shows it to
+/// the person alone. The hook prints nothing for a prompt, and `--remove` takes the
+/// hooks out again.
+#[test]
+fn the_agents_with_hooks_get_them_and_a_correction_typed_there_is_noticed() {
+    for h in HOOKED {
+        let tmp = TempDir::new().unwrap();
+        let m = Machine::new(tmp.path());
+        let found = m.agents.join(h.detect);
+        if found.extension().is_some() {
+            std::fs::create_dir_all(found.parent().unwrap()).unwrap();
+            std::fs::write(&found, "{\"theme\": \"mine\"}\n").unwrap();
+        } else {
+            std::fs::create_dir_all(&found).unwrap();
+        }
+        let out = m.setup(&["--agent", h.agent]);
+        let said = flat(&text(&out));
+        assert!(out.status.success(), "{}: {said}", h.agent);
+        // The preview said what is stored, before anything was written.
+        assert!(
+            said.contains("keeps a redacted copy of each prompt you type in"),
+            "{}: {said}",
+            h.agent
+        );
+        assert!(said.contains("which is not encrypted"), "{}", h.agent);
+        assert_eq!(
+            said.contains("shows to you and not to its model"),
+            h.stop_at.is_some(),
+            "{}: {said}",
+            h.agent
+        );
+        let file = m.agents.join(h.file);
+        let st = m.json(&["watch", h.agent, "--status"]);
+        assert_eq!(st["hooks"], "installed", "{}: {st}", h.agent);
+        assert_eq!(st["hooks_file"], file.to_str().unwrap(), "{}", h.agent);
+
+        let doc = read_json(&file);
+        let prompt_line = doc.pointer(h.prompt_at).and_then(Value::as_str).unwrap();
+        assert!(
+            prompt_line.ends_with(&format!("hook user-prompt-submit {}", h.agent)),
+            "{}: {prompt_line}",
+            h.agent
+        );
+        assert!(prompt_line.contains(&exe()), "{}", h.agent);
+        // No hook at the end of a turn where its output would not reach the person alone.
+        let stop_line = h
+            .stop_at
+            .map(|at| doc.pointer(at).and_then(Value::as_str).unwrap().to_owned());
+        if h.stop_at.is_none() {
+            assert!(!std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("hook stop"));
+        }
+
+        // The same correction twice, as this agent hands a prompt over: the hook says
+        // nothing, on either stream, and exits 0.
+        for _ in 0..2 {
+            let out = run_hook(&m, prompt_line, &(h.payload)("No, use pnpm, not npm"));
+            assert!(out.status.success(), "{}", h.agent);
+            assert!(
+                out.stdout.is_empty() && out.stderr.is_empty(),
+                "{}: {}",
+                h.agent,
+                text(&out)
+            );
+        }
+        let status = m.json(&["status"]);
+        assert_eq!(status["observations"], 2, "{}: {status}", h.agent);
+        assert_eq!(status["candidates"]["detected"], 1, "{}: {status}", h.agent);
+
+        match &stop_line {
+            Some(line) => {
+                // A count, in the message the agent shows to the person.
+                let out = run_hook(
+                    &m,
+                    line,
+                    &serde_json::json!({"session_id": "s", "cwd": "/work/repo"}),
+                );
+                assert!(out.status.success() && out.stderr.is_empty(), "{}", h.agent);
+                let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+                assert_eq!(v.as_object().unwrap().len(), 1, "{}: {v}", h.agent);
+                assert!(
+                    v["systemMessage"]
+                        .as_str()
+                        .unwrap()
+                        .contains("1 possible convention to review"),
+                    "{}: {v}",
+                    h.agent
+                );
+                assert!(!v.to_string().contains("pnpm"), "{}: {v}", h.agent);
+            }
+            None => {
+                // Even run by hand, the hook prints nothing there for this agent.
+                let line = prompt_line.replace("hook user-prompt-submit", "hook stop");
+                let out = run_hook(&m, &line, &serde_json::json!({"session_id": "s"}));
+                assert!(out.status.success(), "{}", h.agent);
+                assert!(
+                    out.stdout.is_empty() && out.stderr.is_empty(),
+                    "{}",
+                    h.agent
+                );
+            }
+        }
+
+        // Connecting again changes nothing.
+        let again = m.json(&["watch", h.agent, "--install", "--yes"]);
+        assert_eq!(again["changed"], false, "{}: {again}", h.agent);
+
+        // Disconnected: the hooks go, and what was the owner's stays.
+        let st = m.json(&["watch", h.agent, "--remove", "--yes"]);
+        assert_eq!(st["hooks"], "not_installed", "{}: {st}", h.agent);
+        if matches!(h.agent, "gemini" | "qwen") {
+            // Its settings file: the hooks member PeerHarness added is gone.
+            let left = read_json(&file);
+            assert_eq!(left.get("hooks"), None, "{}: {left}", h.agent);
+            if h.file == h.detect {
+                assert_eq!(left["theme"], "mine", "{}", h.agent);
+            }
+        } else {
+            // A file that held nothing but PeerHarness's hooks.
+            assert!(!file.exists(), "{}", h.agent);
+        }
+        if h.agent == "goose" {
+            assert!(!m.agents.join(".agents/plugins/peerharness").exists());
+        }
+    }
+}
+
+/// The owner can leave the hooks out, and an agent connected without them gets them
+/// only after a preview of their own. The owner's own hooks keep their place.
+#[test]
+fn hooks_are_left_out_on_request_and_added_later_only_after_their_own_preview() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    std::fs::create_dir_all(m.agents.join(".codex")).unwrap();
+    let hooks = m.agents.join(".codex/hooks.json");
+    let mine = serde_json::json!({"hooks": {"Stop": [
+        {"hooks": [{"type": "command", "command": "say done"}]}
+    ]}});
+    std::fs::write(&hooks, mine.to_string()).unwrap();
+
+    let out = m.setup(&["--agent", "codex", "--no-agent-hooks"]);
+    let said = flat(&text(&out));
+    assert!(out.status.success(), "{said}");
+    assert!(!said.contains("redacted copy"), "{said}");
+    assert_eq!(read_json(&hooks), mine);
+    let st = m.json(&["watch", "codex", "--status"]);
+    assert_eq!(
+        (&st["connected"], &st["hooks"]),
+        (&Value::Bool(true), &Value::from("not_installed"))
+    );
+
+    // Later, and without the flag: a preview about the hooks alone.
+    let out = m
+        .cmd(&["watch", "codex", "--install", "--yes"])
+        .output()
+        .unwrap();
+    let said = flat(&text(&out));
+    assert!(out.status.success(), "{said}");
+    assert!(
+        said.contains("Codex is connected to PeerHarness already"),
+        "{said}"
+    );
+    assert!(
+        said.contains("keeps a redacted copy of each prompt you type in Codex"),
+        "{said}"
+    );
+    assert!(said.contains("only after you trusted it"), "{said}");
+    assert!(!said.contains("Tools: this adds"), "{said}");
+    let now = read_json(&hooks);
+    // Theirs is still the first under its event: Codex ties trust to the position.
+    assert_eq!(now["hooks"]["Stop"][0], mine["hooks"]["Stop"][0]);
+    assert!(now["hooks"]["Stop"][1]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .ends_with("hook stop codex"));
+    // A backup of the owner's file was made.
+    let backups: Vec<_> = std::fs::read_dir(m.home.join("backups"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with("hooks.json"))
+        .collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&std::fs::read(backups[0].path()).unwrap()).unwrap(),
+        mine
+    );
+
+    // `--no-hooks` takes them out again and leaves Codex connected.
+    let out = m
+        .cmd(&["watch", "codex", "--install", "--no-hooks", "--yes"])
+        .output()
+        .unwrap();
+    let said = flat(&text(&out));
+    assert!(out.status.success(), "{said}");
+    assert!(
+        said.contains("no copy of what you type in Codex is kept any more"),
+        "{said}"
+    );
+    assert_eq!(read_json(&hooks), mine);
+    let st = m.json(&["watch", "codex", "--status"]);
+    assert_eq!(st["connected"], true);
+    assert_eq!(st["tools"], "registered");
+    assert_eq!(st["hooks"], "not_installed");
+
+    m.json(&["watch", "codex", "--install", "--yes"]);
+    m.json(&["watch", "codex", "--remove", "--yes"]);
+    assert_eq!(read_json(&hooks), mine);
+}
+
+/// A hooks file PeerHarness cannot edit safely is left as it is and the entries are
+/// shown; Droid's `hooks.json` is not created while its settings hold hooks, which
+/// Droid would stop reading.
+#[test]
+fn a_hooks_file_that_cannot_be_edited_safely_is_left_and_the_entries_shown() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    std::fs::create_dir_all(m.agents.join(".cursor")).unwrap();
+    let commented = "{\n  // mine\n  \"version\": 1,\n  \"hooks\": {}\n}\n";
+    std::fs::write(m.agents.join(".cursor/hooks.json"), commented).unwrap();
+    std::fs::create_dir_all(m.agents.join(".factory")).unwrap();
+    let settings =
+        "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"mine\"}]}]}}";
+    std::fs::write(m.agents.join(".factory/settings.json"), settings).unwrap();
+
+    let out = m.setup(&[]);
+    let said = flat(&text(&out));
+    assert!(out.status.success(), "{said}");
+    assert_eq!(
+        std::fs::read_to_string(m.agents.join(".cursor/hooks.json")).unwrap(),
+        commented
+    );
+    assert!(said.contains("hook user-prompt-submit cursor"), "{said}");
+    assert_eq!(
+        m.json(&["watch", "cursor", "--status"])["hooks"],
+        "file_not_editable"
+    );
+
+    assert!(!m.agents.join(".factory/hooks.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(m.agents.join(".factory/settings.json")).unwrap(),
+        settings
+    );
+    assert!(
+        said.contains("creating that file would turn yours off"),
+        "{said}"
+    );
+    assert!(said.contains("hook stop droid"), "{said}");
+    assert_eq!(
+        m.json(&["watch", "droid", "--status"])["hooks"],
+        "file_not_editable"
+    );
+}
+
+/// A hook that names an agent this build gives no hooks to, or no agent at all that
+/// it knows, reads nothing and stores nothing. Qwen Code's prompt event also fires
+/// when tool results go back to the model: only what the person submitted is kept.
+#[test]
+fn a_hook_stores_only_what_the_person_typed_in_an_agent_that_has_hooks() {
+    let tmp = TempDir::new().unwrap();
+    let m = Machine::new(tmp.path());
+    assert!(m.setup(&[]).status.success());
+    let hook = |agent: &str, payload: Value| {
+        let line = format!(
+            "PEERHARNESS_HOME='{}' '{}' hook user-prompt-submit {agent}",
+            m.home.display(),
+            exe()
+        );
+        let out = run_hook(&m, &line, &payload);
+        assert!(out.status.success(), "{agent}");
+        assert!(out.stdout.is_empty() && out.stderr.is_empty(), "{agent}");
+    };
+    for agent in ["crush", "antigravity", "opencode", "nosuch", "Codex"] {
+        hook(agent, claude_shaped("No, use pnpm, not npm"));
+    }
+    hook(
+        "qwen",
+        serde_json::json!({"session_id": "s", "cwd": "/w", "prompt": "tool output"}),
+    );
+    assert_eq!(m.json(&["status"])["observations"], 0);
+    hook(
+        "qwen",
+        serde_json::json!({"session_id": "s", "cwd": "/w", "prompt": "x", "submitted_prompt": "No, use pnpm, not npm"}),
+    );
+    assert_eq!(m.json(&["status"])["observations"], 1);
 }

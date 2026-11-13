@@ -41,8 +41,8 @@ use crate::output::{Output, Report};
 fn main() {
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     // Before clap: even a malformed hook invocation exits 0 without printing.
-    if let Some((home, event)) = hook::detect_hook_invocation(&args) {
-        hook::run_and_exit(home, event.as_deref());
+    if let Some((home, event, agent)) = hook::detect_hook_invocation(&args) {
+        hook::run_and_exit(home, event.as_deref(), agent.as_deref());
     }
     let cli = Cli::parse();
     init_logging(cli.verbose);

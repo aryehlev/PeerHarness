@@ -13,11 +13,19 @@
 //!   not write is left alone, and a file that does not parse is not changed: the entry
 //!   is shown for the owner to add.
 //!
+//! For an agent that runs command hooks from a file (`Agent::hook_spec`, ADR-053) it
+//! also adds the hook that keeps a redacted copy of each prompt, and, where the agent
+//! shows a hook's message to the person alone, the one that prints the notice at the
+//! end of a turn. The preview says what is stored; `--no-hooks` leaves them out, and an
+//! agent that was connected before gets them only after a preview of their own.
+//!
 //! What the agent may start through those tools is what the owner allowed for every
 //! agent (`config::Asked`, `peerharness setup`): connecting one allows nothing more.
 
 use anyhow::Result;
 use ph_observer::agent_config::{self, AgentConfigError, Entry};
+use ph_observer::agent_hooks::{self, Ours, Place};
+use ph_observer::{HookCommand, HookEvent};
 use serde_json::{json, Value};
 
 use super::Ctx;
@@ -29,7 +37,7 @@ use crate::output::{Report, Text};
 
 pub fn run(ctx: &Ctx, agent: Agent, a: &WatchOtherArgs) -> Result<Report> {
     if a.install {
-        install(ctx, agent, a.yes)
+        install(ctx, agent, a.yes, a.no_hooks)
     } else if a.remove {
         remove(ctx, agent, a.yes)
     } else {
@@ -62,6 +70,209 @@ impl Tools {
             Tools::Manual => "manual",
         }
     }
+}
+
+/// Where PeerHarness's hooks stand in the agent's hooks file.
+#[derive(Debug)]
+enum Hooks {
+    /// The agent gets none (`Agent::hook_spec`).
+    None,
+    /// None of ours is there.
+    Absent,
+    /// Exactly the ones this binary and home would write.
+    Installed,
+    /// Ours, but for another path of the binary or another set of events.
+    Outdated,
+    /// The file cannot be edited safely: the reason.
+    Unreadable(String),
+    /// Creating the file would make the agent stop reading the hooks in this one.
+    Shadowed(std::path::PathBuf),
+}
+
+impl Hooks {
+    const fn code(&self) -> &'static str {
+        match self {
+            Hooks::None => "none",
+            Hooks::Absent => "not_installed",
+            Hooks::Installed => "installed",
+            Hooks::Outdated => "outdated",
+            Hooks::Unreadable(_) | Hooks::Shadowed(_) => "file_not_editable",
+        }
+    }
+
+    /// Whether `--install` has something to write.
+    const fn wanted(&self) -> bool {
+        matches!(self, Hooks::Absent | Hooks::Outdated)
+    }
+}
+
+/// The hooks PeerHarness writes for one agent on this machine.
+struct HookPlan {
+    spec: agents::HookSpec,
+    file: std::path::PathBuf,
+    first: Vec<(&'static str, Value)>,
+    /// Event name, entry and command, the prompt's first.
+    entries: Vec<(&'static str, Value, String)>,
+    home: Option<String>,
+}
+
+impl HookPlan {
+    fn new(agent: Agent, paths: &Paths, cmd: &HookCommand) -> Option<Self> {
+        let spec = agent.hook_spec()?;
+        let file = paths.hooks.clone()?;
+        let mut entries = Vec::new();
+        for (name, event) in [
+            (Some(spec.prompt_event), HookEvent::UserPromptSubmit),
+            (spec.stop_event, HookEvent::Stop),
+        ] {
+            let Some(name) = name else { continue };
+            let command = cmd.render_for(event, agent.id())?;
+            entries.push((name, agent.hook_entry(&command)?, command));
+        }
+        Some(Self {
+            spec,
+            file,
+            first: if spec.version {
+                vec![("version", json!(1))]
+            } else {
+                Vec::new()
+            },
+            entries,
+            home: cmd.home().map(str::to_owned),
+        })
+    }
+
+    fn place(&self) -> Place<'_> {
+        Place {
+            path: &self.file,
+            at: self.spec.at,
+            first: &self.first,
+            own_dirs: self.spec.own_dirs,
+        }
+    }
+
+    fn ours(&self, agent: Agent) -> Ours<'_> {
+        Ours {
+            home: self.home.as_deref(),
+            agent: agent.id(),
+        }
+    }
+
+    fn want(&self) -> Vec<(&str, Value)> {
+        self.entries
+            .iter()
+            .map(|(name, entry, _)| (*name, entry.clone()))
+            .collect()
+    }
+
+    /// The entries as the owner would add them by hand.
+    fn text(&self) -> String {
+        let mut events = serde_json::Map::new();
+        for (name, entry, _) in &self.entries {
+            events.insert((*name).to_owned(), json!([entry]));
+        }
+        let mut v = Value::Object(events);
+        for key in self.spec.at.iter().rev() {
+            v = json!({ *key: v });
+        }
+        serde_json::to_string_pretty(&v).unwrap_or_default()
+    }
+}
+
+fn hooks_state(agent: Agent, paths: &Paths, plan: Option<&HookPlan>) -> Hooks {
+    let Some(plan) = plan else {
+        return Hooks::None;
+    };
+    match agent_hooks::hooks(&plan.place(), plan.ours(agent), &plan.want()) {
+        Ok(agent_hooks::Hooks::Installed) => Hooks::Installed,
+        Ok(agent_hooks::Hooks::Outdated) => Hooks::Outdated,
+        Ok(agent_hooks::Hooks::Absent) => match &paths.hooks_shadow {
+            // The agent reads the hooks of the other file only while this one does not
+            // exist. Whatever the other file holds that cannot be read counts as hooks.
+            Some(other) if !plan.file.exists() && holds_hooks(other) => {
+                Hooks::Shadowed(other.clone())
+            }
+            _ => Hooks::Absent,
+        },
+        Err(e) => Hooks::Unreadable(not_editable(&e)),
+    }
+}
+
+/// Whether the JSON file at `path` has a `hooks` member, or cannot be read as JSON.
+fn holds_hooks(path: &std::path::Path) -> bool {
+    match std::fs::read(path) {
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        Ok(bytes) => {
+            serde_json::from_slice::<Value>(&bytes).map_or(true, |v| v.get("hooks").is_some())
+        }
+    }
+}
+
+/// What `install` says about the hooks, before it asks.
+fn hooks_preview(agent: Agent, plan: &HookPlan, hooks: &Hooks, days: u32) -> Option<String> {
+    let file = plan.file.display();
+    let name = agent.name();
+    Some(match hooks {
+        Hooks::None | Hooks::Installed => return None,
+        Hooks::Absent | Hooks::Outdated => {
+            let mut s = format!(
+                "Hooks: this {} {file} (a backup of an existing file is made first; your own \
+                 hooks are kept):",
+                if matches!(hooks, Hooks::Outdated) {
+                    "brings PeerHarness's hooks up to date in"
+                } else if plan.entries.len() == 1 {
+                    "adds one hook to"
+                } else {
+                    "adds two hooks to"
+                }
+            );
+            for (event, _, command) in &plan.entries {
+                s.push_str(&format!("\n  {event:<19} {command}"));
+            }
+            s.push_str(&format!(
+                "\n{} keeps a redacted copy of each prompt you type in {name}, so that \
+                 a correction can be noticed. The copies stay on this machine, for {days} \
+                 days, in PeerHarness's database, which is not encrypted. Nothing is sent \
+                 anywhere.",
+                if plan.entries.len() == 1 {
+                    "It"
+                } else {
+                    "The first"
+                }
+            ));
+            s.push_str(&if plan.spec.stop_event.is_some() {
+                format!(
+                    " The second prints, at the end of a turn and at most twice a day, how \
+                     many proposals and notes wait for you: a count, which {name} shows to \
+                     you and not to its model."
+                )
+            } else {
+                format!(
+                    " {name} has no way to show you a line at the end of a turn without its \
+                     model reading it, so there is no notice there: look with `peerharness \
+                     inbox`."
+                )
+            });
+            if let Some(note) = plan.spec.note {
+                s.push(' ');
+                s.push_str(note);
+            }
+            s.push_str(" Leave the hooks out with --no-hooks.");
+            s
+        }
+        Hooks::Unreadable(why) => format!(
+            "Hooks: {file} is not changed: {why}. To let PeerHarness notice your corrections \
+             in {name}, add this yourself:\n{}",
+            indented(&plan.text())
+        ),
+        Hooks::Shadowed(other) => format!(
+            "Hooks: none are added. {name} reads the hooks in {} only while {file} does not \
+             exist, so creating that file would turn yours off. To let PeerHarness notice \
+             your corrections in {name}, add this to your hooks there:\n{}",
+            other.display(),
+            indented(&plan.text())
+        ),
+    })
 }
 
 fn locate(agent: Agent) -> Result<Paths> {
@@ -204,7 +415,7 @@ fn tools_preview(
     }
 }
 
-fn install(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
+fn install(ctx: &Ctx, agent: Agent, yes: bool, no_hooks: bool) -> Result<Report> {
     let what = format!("connecting {}", agent.name());
     human_only(&what)?;
     if !ctx.home.is_initialized() {
@@ -221,8 +432,13 @@ fn install(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
         .to_owned();
     let tools = tools_state(agent, &paths, &server);
     let connected = config.agents.has(agent);
+    let plan = HookPlan::new(agent, &paths, &super::hook_command(&ctx.home)?);
+    let hooks = hooks_state(agent, &paths, plan.as_ref());
+    let want_hooks = !no_hooks && hooks.wanted();
+    // `--no-hooks` also takes out the ones that are there.
+    let drop_hooks = no_hooks && matches!(hooks, Hooks::Installed | Hooks::Outdated);
 
-    if connected && !matches!(tools, Tools::Absent) {
+    if connected && !matches!(tools, Tools::Absent) && !want_hooks && !drop_hooks {
         return Ok(done(
             ctx,
             agent,
@@ -230,17 +446,45 @@ fn install(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
             "install",
             false,
             &tools,
+            &hooks,
             None,
             "Already connected; nothing changed.",
         ));
     }
 
     let mut preview = Text::new();
-    preview.line(format!("This connects {} to PeerHarness.", agent.name()));
+    preview.line(if connected {
+        format!(
+            "{} is connected to PeerHarness already. This adds to it.",
+            agent.name()
+        )
+    } else {
+        format!("This connects {} to PeerHarness.", agent.name())
+    });
     if !connected {
         preview.line(rules_line(agent, &paths)?);
     }
-    preview.line(tools_preview(agent, &paths, &tools, &server, &line));
+    if !connected || matches!(tools, Tools::Absent) {
+        preview.line(tools_preview(agent, &paths, &tools, &server, &line));
+    }
+    // A file that cannot be edited is said once, when the agent is connected.
+    let days = config.retention.observation_days.clamp(1, 3650);
+    let hooks_text = match (&plan, no_hooks) {
+        (Some(plan), false) if want_hooks || !connected => hooks_preview(agent, plan, &hooks, days),
+        _ => None,
+    };
+    if let Some(text) = &hooks_text {
+        preview.line(text);
+    }
+    if let (Some(plan), true) = (&plan, drop_hooks) {
+        preview.line(format!(
+            "Hooks: the ones PeerHarness wrote are removed from {} (a backup is made first), \
+             so no copy of what you type in {} is kept any more. The copies it already keeps \
+             go when their days are over.",
+            plan.file.display(),
+            agent.name()
+        ));
+    }
     if !connected {
         preview.line(session_line(agent));
         preview.line(
@@ -294,6 +538,32 @@ fn install(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
     } else {
         tools
     };
+    let mut hooks_backup = None;
+    let hooks = match (&plan, want_hooks) {
+        (Some(plan), true) => {
+            match agent_hooks::add_hooks(
+                &plan.place(),
+                plan.ours(agent),
+                &plan.want(),
+                &ctx.home.backups_dir(),
+            ) {
+                Ok(e) => {
+                    hooks_backup = e.backup_path;
+                    hooks_state(agent, &paths, Some(plan))
+                }
+                Err(e) => Hooks::Unreadable(not_editable(&e)),
+            }
+        }
+        (Some(plan), false) if drop_hooks => {
+            hooks_backup =
+                agent_hooks::remove_hooks(&plan.place(), plan.ours(agent), &ctx.home.backups_dir())
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+                    .map_err(|e| e.context(format!("cannot update {}", plan.file.display())))?
+                    .backup_path;
+            hooks_state(agent, &paths, Some(plan))
+        }
+        _ => hooks,
+    };
     let node = ctx.open_node()?;
     crate::copies::sync(&config, Some(&node.store));
     let mut r = done(
@@ -303,14 +573,31 @@ fn install(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
         "install",
         true,
         &tools,
+        &hooks,
         backup.as_deref(),
-        "Connected.",
+        if connected {
+            "Brought up to date."
+        } else {
+            "Connected."
+        },
     );
+    if let Some(b) = &hooks_backup {
+        r.json["hooks_backup"] = json!(b);
+        r.text
+            .push_str(&format!("\n  hooks backup: {}", b.display()));
+    }
     if let Tools::Unreadable(_) = tools {
         r.text.push_str(&format!(
             "\n{}",
             tools_preview(agent, &paths, &tools, &server, &line)
         ));
+    }
+    if let (Some(plan), false, Hooks::Unreadable(_) | Hooks::Shadowed(_)) =
+        (&plan, no_hooks, &hooks)
+    {
+        if let Some(text) = hooks_preview(agent, plan, &hooks, days) {
+            r.text.push_str(&format!("\n{text}"));
+        }
     }
     Ok(r)
 }
@@ -329,7 +616,10 @@ fn remove(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
     let tools = tools_state(agent, &paths, &server);
     let connected = config.agents.has(agent);
     let ours = matches!(tools, Tools::Same);
-    if !connected && !ours {
+    let plan = HookPlan::new(agent, &paths, &super::hook_command(&ctx.home)?);
+    let hooks = hooks_state(agent, &paths, plan.as_ref());
+    let our_hooks = matches!(hooks, Hooks::Installed | Hooks::Outdated);
+    if !connected && !ours && !our_hooks {
         return Ok(done(
             ctx,
             agent,
@@ -337,6 +627,7 @@ fn remove(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
             "remove",
             false,
             &tools,
+            &hooks,
             None,
             "Not connected; nothing changed.",
         ));
@@ -381,10 +672,25 @@ fn remove(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
             paths.tools.path().display()
         ));
     }
+    if let (Some(plan), true) = (&plan, our_hooks) {
+        preview.line(format!(
+            "Hooks: the ones PeerHarness wrote are removed from {} (a backup is made first). \
+             The copies of your prompts it already keeps go when their days are over.",
+            plan.file.display()
+        ));
+    }
     confirm(&ctx.out, &preview.finish(), yes, &what)?;
 
     if config.agents.disconnect(agent) {
         config.save(&ctx.home)?;
+    }
+    let mut hooks_backup = None;
+    if let (Some(plan), true) = (&plan, our_hooks) {
+        hooks_backup =
+            agent_hooks::remove_hooks(&plan.place(), plan.ours(agent), &ctx.home.backups_dir())
+                .map_err(|e| anyhow::anyhow!("{e}"))
+                .map_err(|e| e.context(format!("cannot update {}", plan.file.display())))?
+                .backup_path;
     }
     let mut backup = None;
     if ours {
@@ -435,6 +741,7 @@ fn remove(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
         }
     }
     let tools = tools_state(agent, &paths, &server);
+    let hooks = hooks_state(agent, &paths, plan.as_ref());
     let mut r = done(
         ctx,
         agent,
@@ -442,9 +749,15 @@ fn remove(ctx: &Ctx, agent: Agent, yes: bool) -> Result<Report> {
         "remove",
         true,
         &tools,
+        &hooks,
         backup.as_deref(),
         "Disconnected.",
     );
+    if let Some(b) = &hooks_backup {
+        r.json["hooks_backup"] = json!(b);
+        r.text
+            .push_str(&format!("\n  hooks backup: {}", b.display()));
+    }
     r.json["copies_removed"] = json!(removed);
     r.text.push_str(&format!("\n  copies removed: {removed}"));
     if !left.is_empty() {
@@ -461,6 +774,8 @@ fn status(ctx: &Ctx, agent: Agent) -> Result<Report> {
     let paths = locate(agent)?;
     let server = agents::utf8_command(&super::setup::server_command(ctx)?)?;
     let tools = tools_state(agent, &paths, &server);
+    let plan = HookPlan::new(agent, &paths, &super::hook_command(&ctx.home)?);
+    let hooks = hooks_state(agent, &paths, plan.as_ref());
     Ok(done(
         ctx,
         agent,
@@ -468,6 +783,7 @@ fn status(ctx: &Ctx, agent: Agent) -> Result<Report> {
         "status",
         false,
         &tools,
+        &hooks,
         None,
         agent.name(),
     ))
@@ -493,6 +809,7 @@ fn done(
     action: &str,
     changed: bool,
     tools: &Tools,
+    hooks: &Hooks,
     backup: Option<&std::path::Path>,
     headline: &str,
 ) -> Report {
@@ -509,6 +826,8 @@ fn done(
         "copies": copies,
         "tools": tools.code(),
         "tools_file": paths.tools.path(),
+        "hooks": hooks.code(),
+        "hooks_file": paths.hooks,
         "backup": backup,
         "session_env": agent.session_env(),
     });
@@ -532,6 +851,33 @@ fn done(
                 format!("{} cannot be edited: {why}", paths.tools.path().display())
             }
             Tools::Manual => format!("added by you, in {}", paths.tools.path().display()),
+        },
+    );
+    let hooks_file = paths
+        .hooks
+        .as_deref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    t.kv(
+        "hooks",
+        match hooks {
+            Hooks::None => format!(
+                "none: {} has no hooks PeerHarness can use, so a correction is noted when \
+                 its agent notes it",
+                agent.name()
+            ),
+            Hooks::Absent => "not installed".to_owned(),
+            Hooks::Installed => format!("installed in {hooks_file}"),
+            Hooks::Outdated => format!(
+                "in {hooks_file}, from another version or place of PeerHarness: `peerharness \
+                 watch {} --install` brings them up to date",
+                agent.id()
+            ),
+            Hooks::Unreadable(why) => format!("{hooks_file} cannot be edited: {why}"),
+            Hooks::Shadowed(other) => format!(
+                "not installed: {} holds your hooks, which {hooks_file} would turn off",
+                other.display()
+            ),
         },
     );
     if let Some(b) = backup {

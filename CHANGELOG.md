@@ -9,6 +9,22 @@ database schema it writes.
 
 ## Unreleased
 
+* Seven of the other coding agents get the hook that notices a correction: Codex,
+  Droid, Gemini CLI, Qwen Code, Cursor, Copilot CLI and goose. `watch <agent>
+  --install` and `setup` add it to the agent's hooks file after a preview that shows
+  the command and says what is kept: a redacted copy of each prompt you type there,
+  on your machine, as for Claude Code. Codex, Droid, Gemini CLI and Qwen Code also get
+  the line at the end of a turn that says how many proposals and notes wait for you;
+  the other three cannot show one to you without their model reading it. Your own
+  hooks keep their place and a backup is made. `watch <agent> --install --no-hooks`
+  and `setup --no-agent-hooks` leave the hooks out, or take them out again. An agent
+  you connected before gets them the next time you run `setup` or `watch <agent>
+  --install`, after that preview. Codex runs them once you trusted them in `/hooks`.
+  opencode, Pi, Antigravity, DeepSeek Harness, Amp, Crush and Kilo have no hook
+  PeerHarness can use: there a correction is still noted only when the agent notes it
+  (ADR-053). None of the seven was seen running the hooks. `watch <agent> --status`
+  has two new members, `hooks` and `hooks_file`. The protocol and the database schema
+  are unchanged.
 * PeerHarness connects nine more coding agents: Gemini CLI, Qwen Code, GitHub Copilot
   CLI, Cursor, Amp, Factory's Droid, Crush, Kilo and goose (`watch gemini`, `qwen`,
   `copilot`, `cursor`, `amp`, `droid`, `crush`, `kilo`, `goose`). Gemini CLI, Qwen

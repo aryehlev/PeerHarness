@@ -104,14 +104,14 @@ pub enum AgentConfigError {
     },
 }
 
-type Result<T> = std::result::Result<T, AgentConfigError>;
+pub(crate) type Result<T> = std::result::Result<T, AgentConfigError>;
 
-fn io_err(op: &'static str) -> impl FnOnce(io::Error) -> AgentConfigError {
+pub(crate) fn io_err(op: &'static str) -> impl FnOnce(io::Error) -> AgentConfigError {
     move |e| AgentConfigError::Io { op, kind: e.kind() }
 }
 
 /// Follows a symlinked file to its target, so that the link survives the rewrite.
-fn resolve_target(path: &Path) -> Result<PathBuf> {
+pub(crate) fn resolve_target(path: &Path) -> Result<PathBuf> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => {
             fs::canonicalize(path).map_err(io_err("resolve configuration symlink"))
@@ -120,7 +120,7 @@ fn resolve_target(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn read(path: &Path) -> Result<Option<Vec<u8>>> {
+pub(crate) fn read(path: &Path) -> Result<Option<Vec<u8>>> {
     match read_capped(path, MAX_AGENT_CONFIG_BYTES).map_err(io_err("read configuration"))? {
         CappedRead::Missing => Ok(None),
         CappedRead::Bytes(b) => Ok(Some(b)),
@@ -132,7 +132,7 @@ fn read(path: &Path) -> Result<Option<Vec<u8>>> {
 }
 
 /// Backs up `original`, checks that the file still holds it, and writes `bytes`.
-fn commit(
+pub(crate) fn commit(
     target: &Path,
     original: Option<&[u8]>,
     bytes: &[u8],
@@ -188,7 +188,7 @@ fn write_backup(backups_dir: &Path, target: &Path, bytes: &[u8]) -> Result<PathB
 // ---------------------------------------------------------------------------------
 // JSON
 
-fn parse_json(bytes: &[u8]) -> Result<Doc> {
+pub(crate) fn parse_json(bytes: &[u8]) -> Result<Doc> {
     if bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(Doc::Object(Obj::new()));
     }
@@ -202,7 +202,7 @@ fn parse_json(bytes: &[u8]) -> Result<Doc> {
     })
 }
 
-fn to_doc(value: &Value) -> Result<Doc> {
+pub(crate) fn to_doc(value: &Value) -> Result<Doc> {
     serde_json::from_value::<Doc>(value.clone()).map_err(|_| {
         AgentConfigError::UnexpectedStructure {
             what: "the entry could not be built",

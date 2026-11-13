@@ -1,4 +1,7 @@
-//! `peerharness hook <event>`: invoked by Claude Code.
+//! `peerharness hook <event> [<agent>]`: invoked by Claude Code, and by the other
+//! coding agents whose hooks PeerHarness installed (ADR-053). With an agent's id the
+//! payload is read in that agent's shape, and the notice at the end of a turn is
+//! printed only for an agent that shows it to the person and not to the model.
 //!
 //! Rules (architecture section 1, app brief "Hook"):
 //! * ALWAYS exit 0, never block, never prompt, never unlock a key;
@@ -18,6 +21,7 @@ use ph_core::{CandidateStatus, ObservationId, Timestamp};
 use ph_observer::{HookEvent, HookOutput};
 use ph_store::Store;
 
+use crate::agents::Agent;
 use crate::config::Config;
 use crate::detect;
 use crate::home::Home;
@@ -35,12 +39,17 @@ pub const VOTE_TOPIC: &str = "votes";
 const NOTIFICATION_HISTORY_SECS: i64 = 30 * 86_400;
 
 /// Runs the hook and exits the process with status 0, whatever happens.
-pub fn run_and_exit(home_arg: Option<PathBuf>, event_arg: Option<&str>) -> ! {
+pub fn run_and_exit(
+    home_arg: Option<PathBuf>,
+    event_arg: Option<&str>,
+    agent_arg: Option<&str>,
+) -> ! {
     // A panic must not print anything (stdout or stderr) nor change the exit status.
     std::panic::set_hook(Box::new(|_| {}));
-    let output =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(home_arg, event_arg)))
-            .unwrap_or_default();
+    let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(home_arg, event_arg, agent_arg)
+    }))
+    .unwrap_or_default();
     if !output.is_silent() {
         let mut out = std::io::stdout().lock();
         let _ = output.write_to(&mut out);
@@ -49,12 +58,21 @@ pub fn run_and_exit(home_arg: Option<PathBuf>, event_arg: Option<&str>) -> ! {
     std::process::exit(HookOutput::EXIT_CODE)
 }
 
-fn run(home_arg: Option<PathBuf>, event_arg: Option<&str>) -> HookOutput {
+fn run(home_arg: Option<PathBuf>, event_arg: Option<&str>, agent_arg: Option<&str>) -> HookOutput {
     if std::env::var_os(ph_learning::providers::ADVISORY_CHILD_ENV).is_some() {
         return HookOutput::silent();
     }
     let Some(event) = event_arg.and_then(HookEvent::from_cli_arg) else {
         return HookOutput::silent();
+    };
+    // Another agent's hook names the agent. An id this build does not know, or an
+    // agent that gets no hooks, is nobody's hook: nothing is read.
+    let spec = match agent_arg {
+        None => None,
+        Some(id) => match Agent::from_id(id).and_then(Agent::hook_spec) {
+            Some(spec) => Some(spec),
+            None => return HookOutput::silent(),
+        },
     };
     let Ok(home) = Home::resolve(home_arg.as_deref()) else {
         return HookOutput::silent();
@@ -64,7 +82,10 @@ fn run(home_arg: Option<PathBuf>, event_arg: Option<&str>) -> HookOutput {
     }
     let now = Timestamp::now();
     let observation = ph_observer::read_bounded_stdin()
-        .and_then(|b| ph_observer::parse_hook_payload(&b))
+        .and_then(|b| match &spec {
+            None => ph_observer::parse_hook_payload(&b),
+            Some(spec) => ph_observer::parse_hook_payload_as(&b, &spec.payload),
+        })
         .ok()
         .and_then(|payload| {
             let id = ObservationId::random().ok()?;
@@ -98,6 +119,10 @@ fn run(home_arg: Option<PathBuf>, event_arg: Option<&str>) -> HookOutput {
             detect::drain_spool(&home.spool_path(), &store, retention);
             if let Some(obs) = &observation {
                 let _ = detect::run_detection(&store, Some(&obs.repo_key), retention, now);
+            }
+            // Only where the agent shows it to the person and not to the model.
+            if spec.is_some_and(|s| s.stop_event.is_none()) {
+                return HookOutput::silent();
             }
             stop_notice(&store, &config, now)
         }
@@ -172,11 +197,12 @@ pub fn vote_notice_text(n: usize) -> String {
     }
 }
 
-/// If the raw arguments invoke `hook`, returns `(home, event)` without clap, so that even
-/// malformed hook invocations exit 0 silently.
-pub fn detect_hook_invocation(
-    args: &[std::ffi::OsString],
-) -> Option<(Option<PathBuf>, Option<String>)> {
+/// How `hook` was invoked: the home, the event and the agent's id, each as given.
+pub type HookInvocation = (Option<PathBuf>, Option<String>, Option<String>);
+
+/// If the raw arguments invoke `hook`, returns `(home, event, agent)` without clap, so
+/// that even malformed hook invocations exit 0 silently.
+pub fn detect_hook_invocation(args: &[std::ffi::OsString]) -> Option<HookInvocation> {
     let mut home: Option<PathBuf> = None;
     let mut i = 1;
     while i < args.len() {
@@ -202,9 +228,9 @@ pub fn detect_hook_invocation(
             continue;
         }
         if a == "hook" {
-            let event = args.get(i + 1).map(|e| e.to_string_lossy().into_owned());
+            let word = |n: usize| args.get(i + n).map(|e| e.to_string_lossy().into_owned());
             let home = home.or_else(|| std::env::var_os("PEERHARNESS_HOME").map(PathBuf::from));
-            return Some((home, event));
+            return Some((home, word(1), word(2)));
         }
         return None;
     }
@@ -236,16 +262,21 @@ mod tests {
 
     #[test]
     fn hook_invocation_detection() {
-        let (h, e) = detect_hook_invocation(&args(&["ph", "hook", "stop"])).unwrap();
+        let (h, e, a) = detect_hook_invocation(&args(&["ph", "hook", "stop"])).unwrap();
         assert_eq!(e.as_deref(), Some("stop"));
+        assert_eq!(a, None);
         let _ = h;
-        let (h, e) = detect_hook_invocation(&args(&[
+        let (_, e, a) =
+            detect_hook_invocation(&args(&["ph", "hook", "user-prompt-submit", "codex"])).unwrap();
+        assert_eq!(e.as_deref(), Some("user-prompt-submit"));
+        assert_eq!(a.as_deref(), Some("codex"));
+        let (h, e, _) = detect_hook_invocation(&args(&[
             "ph", "--home", "/x", "-vv", "hook", "bogus", "--x",
         ]))
         .unwrap();
         assert_eq!(h, Some(PathBuf::from("/x")));
         assert_eq!(e.as_deref(), Some("bogus"));
-        let (_, e) = detect_hook_invocation(&args(&["ph", "--home=/y", "hook"])).unwrap();
+        let (_, e, _) = detect_hook_invocation(&args(&["ph", "--home=/y", "hook"])).unwrap();
         assert_eq!(e, None);
         assert!(detect_hook_invocation(&args(&["ph", "status"])).is_none());
         assert!(detect_hook_invocation(&args(&["ph", "circle", "create", "hook"])).is_none());

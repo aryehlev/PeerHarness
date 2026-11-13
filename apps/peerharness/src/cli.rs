@@ -184,6 +184,11 @@ pub struct SetupArgs {
     /// goose. Without it, every one of them found on this machine.
     #[arg(long, value_enum, value_name = "AGENT")]
     pub agent: Vec<crate::agents::Agent>,
+    /// Add no hooks to those other agents, and take out the ones PeerHarness added
+    /// (Claude Code's are part of setup): it then keeps no copy of what you type in
+    /// them.
+    #[arg(long)]
+    pub no_agent_hooks: bool,
     /// Where a new node keeps its private key, as for `init`.
     #[command(flatten)]
     pub init: InitArgs,
@@ -235,6 +240,8 @@ pub enum ObserveCommand {
 pub struct HookArgs {
     /// user-prompt-submit | stop | post-tool-use-failure
     pub event: String,
+    /// The coding agent whose hook this is, when it is not Claude Code.
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -282,11 +289,18 @@ pub enum WatchAgent {
 #[derive(Debug, Args)]
 #[command(group(ArgGroup::new("action").args(["install", "remove", "status"])))]
 pub struct WatchOtherArgs {
-    /// Connect the agent: keep copies of your rules where it reads skills, and give it
-    /// the PeerHarness tools. Shows every change first and asks.
+    /// Connect the agent: keep copies of your rules where it reads skills, give it the
+    /// PeerHarness tools and, for an agent that has them, add the hooks that notice
+    /// your corrections. Shows every change first and asks.
     #[arg(long)]
     pub install: bool,
-    /// Disconnect it: remove the copies PeerHarness made and the tools entry it wrote.
+    /// With --install: add no hooks to the agent, and take out the ones PeerHarness
+    /// added, so that it keeps no copy of what you type there. A correction is then
+    /// noted only when the agent notes it.
+    #[arg(long, requires = "install")]
+    pub no_hooks: bool,
+    /// Disconnect it: remove the copies PeerHarness made, and the tools entry and the
+    /// hooks it wrote.
     #[arg(long)]
     pub remove: bool,
     /// Show whether it is connected (default).

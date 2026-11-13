@@ -66,7 +66,29 @@ The other limits:
     rule copied that way is Kilo's: PeerHarness does not remove it when the rule goes.
   * Cline CLI and Kiro CLI are not connected: Cline marks none of the commands its
     agent runs, and Kiro could not be checked without an AWS login.
-  * The hooks, and the notice at the end of a turn, are Claude Code's alone.
+  * The hook that notices a correction is added to Codex, Droid, Gemini CLI, Qwen
+    Code, Cursor, Copilot CLI and goose, and the notice at the end of a turn to the
+    first four (ADR-053). They were written from each agent's source or
+    documentation (Copilot CLI's from its documentation alone) and not seen running
+    in a session. In the other seven a correction is noted only when the agent notes
+    it: Crush's hook gets no prompt, Antigravity's could not be relied on from its
+    documentation, opencode, Kilo, Pi and Amp take code plugins and not commands, and
+    DeepSeek Harness needs a package installed first.
+  * Codex runs a hook only after you trusted it (it asks when it starts, or `/hooks`),
+    and asks again when you change the hooks before it in `hooks.json`. It shows the
+    notice in its interface, not in `codex exec`. Gemini CLI runs hooks only in a
+    folder you trusted, and shows the notice only when you use it interactively.
+  * Cursor, Copilot CLI and goose get no notice at the end of a turn: nothing a hook
+    prints there reaches you without the model reading it. Look with `peerharness
+    inbox`. Cursor's log says of each run of the hook that it printed nothing.
+  * Droid reads the hooks in `~/.factory/settings.json` only while `hooks.json` does
+    not exist. If yours are in the settings, PeerHarness creates no `hooks.json` and
+    shows the entries for you to add. A hooks file with comments is not edited either.
+  * If you ran Codex's import of Claude Code's hooks, a prompt typed in Codex is
+    stored twice, and a correction typed once counts as typed twice: take one of the
+    two entries out.
+  * goose lists the plugin folder PeerHarness adds under `plugins` in its
+    `config.yaml`. `watch goose --remove` removes the folder and leaves that line.
 
 * **The founder's key is needed to change the roll.** It notarizes charter changes. If
   it is lost the circle keeps working (members still sync, propose, vote and repeal),

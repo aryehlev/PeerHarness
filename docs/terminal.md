@@ -205,6 +205,35 @@ variable that said so. goose's terminal integration (`goose term init`) sets
 `AGENT_SESSION_ID` in your own shell too: run PeerHarness's consent steps from a shell
 without it.
 
+Seven of them also get a hook that keeps a redacted copy of each prompt you type
+there, so that PeerHarness notices a correction without the agent's help, and four of
+those the line at the end of a turn that says how many proposals and notes wait for
+you:
+
+| agent | hooks in | notices a correction | notice at the end of a turn |
+|---|---|---|---|
+| Codex | `~/.codex/hooks.json`; Codex runs them once you trusted them (`/hooks`) | yes | yes |
+| Droid | `~/.factory/hooks.json` | yes | yes |
+| Gemini CLI | `~/.gemini/settings.json`; only in a folder you trusted | yes | yes |
+| Qwen Code | `~/.qwen/settings.json` | yes | yes |
+| Cursor | `~/.cursor/hooks.json` | yes | no |
+| Copilot CLI | `~/.copilot/hooks/peerharness.json` | yes | no |
+| goose | `~/.agents/plugins/peerharness/hooks/hooks.json` | yes | no |
+
+The preview shows each command and says what is kept before anything is written. Your
+own hooks stay where they are, and a backup of the file is made first. To connect an
+agent without the hooks, or to take them out later and keep the rest:
+
+```sh
+peerharness watch codex --install --no-hooks
+peerharness setup --no-agent-hooks            # the same for every other agent
+```
+
+In opencode, Pi, Antigravity, DeepSeek Harness, Amp, Crush and Kilo a correction is
+noted only when the agent notes it, as the skill asks: they have no hook PeerHarness
+can use ([Known limits](limits.md)). Where there is no notice, look with `peerharness
+inbox`.
+
 What your agent may start through the tools is what you allowed with `setup`, for every
 agent alike. The limits of each are in [Known limits](limits.md).
 
@@ -222,16 +251,18 @@ agent alike. The limits of each are in [Known limits](limits.md).
 * **The tools**: the line `claude mcp add --scope user peerharness -- … mcp`, which
   setup shows you before it runs it.
 * **For each other agent it connects**: copies of your rules where it reads skills,
-  and one entry in its configuration file, after a backup of the file
-  ([Other coding agents](#other-coding-agents)).
+  and one entry in its configuration file, after a backup of the file. For seven of
+  them also one or two hooks, which keep the same redacted copy of each prompt you
+  type there ([Other coding agents](#other-coding-agents)).
 
 The copies of your prompts stay on your machine and are never sent anywhere. Each
 expires after 14 days by default (`[retention] observation_days` in
 `~/.peerharness/config.toml`) and is deleted the next time the inbox is read. The
 database is not encrypted: it relies on file permissions and on your disk's
 encryption. To stop the recording, take the hooks out with `peerharness watch claude
---remove`. There is no switch for the hooks alone: that command also removes the skill
-and turns the windows off.
+--remove`. There is no switch for Claude Code's hooks alone: that command also removes
+the skill and turns the windows off. For another agent, `peerharness watch <agent>
+--install --no-hooks` takes its hooks out and leaves the rest.
 
 ### Without windows
 
@@ -838,7 +869,8 @@ peerharness circle leave --circle <team>              # or all of that team's ru
 # 2. The two hooks and the skill. This also turns the windows off.
 peerharness watch claude --remove
 
-# 3. The tools, and the other agents: their copies of your rules and their entry.
+# 3. The tools, and the other agents: their copies of your rules, their entry and
+#    their hooks.
 claude mcp remove peerharness --scope user
 peerharness watch codex --remove                      # and so on, for each one connected
 

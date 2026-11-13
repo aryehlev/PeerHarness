@@ -11,6 +11,8 @@
 //!   the POSIX-shell-safe command line.
 //! * [`agent_config`]: the one entry PeerHarness writes in another coding agent's
 //!   configuration (its MCP server), with the same backups and atomic writes.
+//! * [`agent_hooks`]: the hook entries PeerHarness writes in another coding agent's
+//!   hooks file (ADR-053), recognised by their command as in [`settings`].
 //! * [`spool`]: the append-only JSON-lines fallback spool used when SQLite is busy.
 //! * [`notify`]: the pure throttle that keeps unsolicited notifications to at most two
 //!   a day, with a per-topic cooldown and quiet hours.
@@ -35,6 +37,16 @@
 //! * `{"systemMessage": "..."}` is a warning shown to the user; `Stop` does not discard
 //!   it, so it is how our `Stop` hook surfaces a throttled notice.
 //!
+//! ## The other agents' hooks (ADR-053)
+//!
+//! Codex, Droid, Gemini CLI, Qwen Code, Cursor, Copilot CLI and goose run a command on
+//! a prompt as Claude Code does, with a payload whose members are named differently:
+//! [`hook::PayloadShape`] says where one agent keeps the prompt, the session and the
+//! directory, and [`hook::parse_hook_payload_as`] reads it. The event comes from the
+//! command line. What each agent does with a hook's output was read in its source on
+//! 2026-11-13 and is recorded in `docs/decisions.md`; the application decides from it
+//! which agents get a hook at the end of a turn.
+//!
 //! ## Privacy
 //!
 //! Nothing in this crate opens `transcript_path` or any other path taken from a hook
@@ -44,6 +56,7 @@
 #![warn(missing_docs)]
 
 pub mod agent_config;
+pub mod agent_hooks;
 mod fsutil;
 pub mod hook;
 mod json_doc;
@@ -53,9 +66,9 @@ mod shell;
 pub mod spool;
 
 pub use hook::{
-    normalize, observe_hook_input, parse_hook_payload, read_bounded, read_bounded_stdin, repo_key,
-    repo_label, session_hash, HookEvent, HookInputError, HookObservation, HookOutput, HookPayload,
-    PayloadEvent, MAX_HOOK_INPUT_BYTES,
+    normalize, observe_hook_input, parse_hook_payload, parse_hook_payload_as, read_bounded,
+    read_bounded_stdin, repo_key, repo_label, session_hash, HookEvent, HookInputError,
+    HookObservation, HookOutput, HookPayload, PayloadEvent, PayloadShape, MAX_HOOK_INPUT_BYTES,
 };
 pub use notify::{evaluate, should_notify, NotifyDecision, NotifyPolicy, QuietHours};
 pub use settings::{

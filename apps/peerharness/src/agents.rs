@@ -4,7 +4,7 @@
 //!
 //! Claude Code stays where rules are installed: its skills directory (or a project's
 //! `.claude/skills`) is where every decision about installing, holding and removing a
-//! rule is taken (`governance::apply_rules`). An agent connected here gets three things,
+//! rule is taken (`governance::apply_rules`). An agent connected here gets these,
 //! each checked against its own source or documentation on 2026-11-12:
 //!
 //! * **The rules.** An agent that reads Claude Code's skills directory itself (opencode,
@@ -18,6 +18,10 @@
 //!   with a backup, when the agent has one PeerHarness can edit safely: a TOML block for
 //!   Codex, a JSON entry for the others. DeepSeek Harness and goose keep their servers in
 //!   YAML, which PeerHarness does not edit, so the entry is shown for the owner to add.
+//! * **The hooks**, for the seven agents that run command hooks from a JSON file
+//!   (ADR-053, [`Agent::hook_spec`]): the hook that keeps a redacted copy of each
+//!   prompt, and, for the four that show a hook's message to the person alone, the
+//!   notice at the end of a turn. Checked on 2026-11-13.
 //! * **Its sessions are recognized.** The variables each agent sets in the commands it
 //!   runs are in [`crate::consent::AGENT_SESSION_ENV`], so a decision started there is
 //!   refused, or asked in a window, as from Claude Code.
@@ -121,7 +125,56 @@ pub struct Paths {
     pub skills: Option<PathBuf>,
     /// Where its MCP servers are registered.
     pub tools: ToolsFile,
+    /// The file its hooks go in, for an agent of [`Agent::hook_spec`].
+    pub hooks: Option<PathBuf>,
+    /// A file whose hooks the agent stops reading once [`Paths::hooks`] exists
+    /// (Droid's `settings.json`).
+    pub hooks_shadow: Option<PathBuf>,
 }
+
+/// What an entry in an agent's hooks file looks like.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookEntry {
+    /// Claude Code's: a group of one hook, with a timeout in the agent's unit.
+    Group { timeout: u64 },
+    /// Cursor's: the command and a timeout in seconds.
+    Flat,
+    /// Copilot CLI's: the command under `bash`, and `timeoutSec`.
+    Bash,
+}
+
+/// How PeerHarness's hooks fit one agent (ADR-053), as read in its source or its
+/// documentation on 2026-11-13.
+#[derive(Clone, Copy, Debug)]
+pub struct HookSpec {
+    /// The members down to the object of events in the file.
+    pub at: &'static [&'static str],
+    /// Whether a new file starts with `"version": 1`.
+    pub version: bool,
+    /// Directories above the file that exist only for it.
+    pub own_dirs: usize,
+    /// The event that fires when the person submits a prompt.
+    pub prompt_event: &'static str,
+    /// The event at the end of a turn, only where what the hook prints there is shown
+    /// to the person and not to the model. Elsewhere no such hook is installed.
+    pub stop_event: Option<&'static str>,
+    pub entry: HookEntry,
+    /// Where the payload keeps the prompt, the session and the directory.
+    pub payload: ph_observer::PayloadShape,
+    /// What the owner has to know or do besides.
+    pub note: Option<&'static str>,
+}
+
+/// The payload of the agents that kept Claude Code's names.
+const CLAUDE_PAYLOAD: ph_observer::PayloadShape = ph_observer::PayloadShape {
+    prompt: &["prompt"],
+    session: &["session_id"],
+    cwd: &["cwd"],
+    cwd_list: None,
+};
+
+/// The seconds a hook may take, as in Claude Code's settings.
+const HOOK_TIMEOUT_SECS: u64 = ph_observer::HookCommand::TIMEOUT_SECS;
 
 /// The base the agents' paths are resolved from.
 struct Base {
@@ -296,6 +349,8 @@ impl Agent {
                     detect: vec![codex.clone()],
                     skills: Some(b.join(&[".agents", "skills"])),
                     tools: ToolsFile::Toml(codex.join("config.toml")),
+                    hooks: Some(codex.join("hooks.json")),
+                    hooks_shadow: None,
                 }
             }
             Agent::Opencode => {
@@ -315,6 +370,8 @@ impl Agent {
                     detect: vec![dir],
                     skills: None,
                     tools: ToolsFile::Json { file, at },
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Pi => {
@@ -328,6 +385,8 @@ impl Agent {
                         file: dir.join("mcp.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Antigravity => {
@@ -343,6 +402,8 @@ impl Agent {
                         file: config.join("mcp_config.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Deepseek => {
@@ -354,6 +415,8 @@ impl Agent {
                     detect: vec![dsh.clone()],
                     skills: Some(agents.join("skills")),
                     tools: ToolsFile::Manual(dsh.join("cordis.patch.yml")),
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Gemini => {
@@ -373,6 +436,8 @@ impl Agent {
                         file: dir.join("settings.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: Some(dir.join("settings.json")),
+                    hooks_shadow: None,
                 }
             }
             Agent::Qwen => {
@@ -385,6 +450,8 @@ impl Agent {
                         file: dir.join("settings.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: Some(dir.join("settings.json")),
+                    hooks_shadow: None,
                 }
             }
             Agent::Copilot => {
@@ -402,6 +469,8 @@ impl Agent {
                         file: dir.join("mcp-config.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: Some(dir.join("hooks").join("peerharness.json")),
+                    hooks_shadow: None,
                 }
             }
             Agent::Crush => {
@@ -417,6 +486,8 @@ impl Agent {
                         file: dir.join("crush.json"),
                         at: &["mcp"],
                     },
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Kilo => {
@@ -434,6 +505,8 @@ impl Agent {
                     detect: vec![dir],
                     skills: Some(b.join(&[".agents", "skills"])),
                     tools: ToolsFile::Json { file, at: &["mcp"] },
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Goose => {
@@ -447,6 +520,16 @@ impl Agent {
                     // It reads `~/.claude/skills`.
                     skills: None,
                     tools: ToolsFile::Manual(dir.join("config.yaml")),
+                    hooks: Some(
+                        b.var("GOOSE_PATH_ROOT")
+                            .map(|r| r.join(".agents"))
+                            .unwrap_or_else(|| b.join(&[".agents"]))
+                            .join("plugins")
+                            .join("peerharness")
+                            .join("hooks")
+                            .join("hooks.json"),
+                    ),
+                    hooks_shadow: None,
                 }
             }
             Agent::Cursor => {
@@ -460,6 +543,8 @@ impl Agent {
                         file: dir.join("mcp.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: Some(dir.join("hooks.json")),
+                    hooks_shadow: None,
                 }
             }
             Agent::Amp => {
@@ -485,6 +570,8 @@ impl Agent {
                         file,
                         at: &["amp.mcpServers"],
                     },
+                    hooks: None,
+                    hooks_shadow: None,
                 }
             }
             Agent::Droid => {
@@ -500,6 +587,8 @@ impl Agent {
                         file: dir.join("mcp.json"),
                         at: &["mcpServers"],
                     },
+                    hooks: Some(dir.join("hooks.json")),
+                    hooks_shadow: Some(dir.join("settings.json")),
                 }
             }
         })
@@ -549,6 +638,141 @@ impl Agent {
             command: program,
             args,
         }
+    }
+
+    /// The agent with this id.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.id() == id)
+    }
+
+    /// How PeerHarness's hooks fit this agent, or `None` for one that gets none: it has
+    /// no command hooks in a file (opencode, Kilo, Pi and Amp run code plugins,
+    /// DeepSeek Harness a package to install), its event carries no prompt (Crush), or
+    /// what its documentation says could not be relied on (Antigravity). ADR-053 has
+    /// the reasons.
+    pub const fn hook_spec(self) -> Option<HookSpec> {
+        let claude_like = HookSpec {
+            at: &["hooks"],
+            version: false,
+            own_dirs: 0,
+            prompt_event: "UserPromptSubmit",
+            stop_event: Some("Stop"),
+            entry: HookEntry::Group {
+                timeout: HOOK_TIMEOUT_SECS,
+            },
+            payload: CLAUDE_PAYLOAD,
+            note: None,
+        };
+        Some(match self {
+            Agent::Codex => HookSpec {
+                note: Some(
+                    "Codex runs a hook only after you trusted it: it asks when it next \
+                     starts, and `/hooks` in Codex shows them. It does not show the notice \
+                     in `codex exec`.",
+                ),
+                ..claude_like
+            },
+            // The events are the top level of its `hooks.json`.
+            Agent::Droid => HookSpec {
+                at: &[],
+                ..claude_like
+            },
+            // Its timeout is in milliseconds.
+            Agent::Gemini => HookSpec {
+                prompt_event: "BeforeAgent",
+                stop_event: Some("AfterAgent"),
+                entry: HookEntry::Group {
+                    timeout: HOOK_TIMEOUT_SECS * 1000,
+                },
+                note: Some(
+                    "Gemini CLI runs hooks only in a folder you trusted, and shows the \
+                     notice only when you work with it interactively.",
+                ),
+                ..claude_like
+            },
+            // Its prompt event also fires when tool results go back to the model;
+            // `submitted_prompt` is there only for what the person submitted.
+            Agent::Qwen => HookSpec {
+                payload: ph_observer::PayloadShape {
+                    prompt: &["submitted_prompt"],
+                    ..CLAUDE_PAYLOAD
+                },
+                ..claude_like
+            },
+            // At the end of a turn its hook can only start another turn.
+            Agent::Cursor => HookSpec {
+                version: true,
+                prompt_event: "beforeSubmitPrompt",
+                stop_event: None,
+                entry: HookEntry::Flat,
+                payload: ph_observer::PayloadShape {
+                    prompt: &["prompt"],
+                    session: &["conversation_id", "session_id"],
+                    cwd: &[],
+                    cwd_list: Some("workspace_roots"),
+                },
+                note: Some(
+                    "Cursor's log says of each run that the hook printed nothing: that is \
+                     how it is meant.",
+                ),
+                ..claude_like
+            },
+            // A file of PeerHarness's own in its hooks directory. Nothing a hook
+            // prints at the end of a turn is known to reach the person alone.
+            Agent::Copilot => HookSpec {
+                version: true,
+                prompt_event: "userPromptSubmitted",
+                stop_event: None,
+                entry: HookEntry::Bash,
+                payload: ph_observer::PayloadShape {
+                    prompt: &["prompt"],
+                    session: &["sessionId", "session_id"],
+                    cwd: &["cwd"],
+                    cwd_list: None,
+                },
+                note: Some("Copilot CLI reads its hooks when it starts."),
+                ..claude_like
+            },
+            // Hooks come in a plugin's folder. Anything a hook prints at the end of a
+            // turn counts as a failure there.
+            Agent::Goose => HookSpec {
+                own_dirs: 2,
+                stop_event: None,
+                payload: ph_observer::PayloadShape {
+                    prompt: &["message"],
+                    session: &["session_id"],
+                    cwd: &["working_dir"],
+                    cwd_list: None,
+                },
+                note: Some(
+                    "goose finds the folder when a session starts and lists it under \
+                     `plugins` in its config.yaml.",
+                ),
+                ..claude_like
+            },
+            Agent::Opencode
+            | Agent::Pi
+            | Agent::Antigravity
+            | Agent::Deepseek
+            | Agent::Crush
+            | Agent::Kilo
+            | Agent::Amp => return None,
+        })
+    }
+
+    /// The entry for `command` in this agent's hooks file.
+    pub fn hook_entry(self, command: &str) -> Option<Value> {
+        Some(match self.hook_spec()?.entry {
+            HookEntry::Group { timeout } => json!({
+                "hooks": [{ "type": "command", "command": command, "timeout": timeout }]
+            }),
+            HookEntry::Flat => json!({ "command": command, "timeout": HOOK_TIMEOUT_SECS }),
+            HookEntry::Bash => json!({
+                "type": "command",
+                "bash": command,
+                "timeoutSec": HOOK_TIMEOUT_SECS,
+            }),
+        })
     }
 
     /// What the owner has to do besides, for the agent to start the tools.

@@ -246,8 +246,8 @@ pub fn run(ctx: &Ctx, args: ResetArgs) -> Result<Report> {
         .into_iter()
         .chain(connected.iter().map(|a| {
             format!(
-                "  for {}, the copies of your rules and its tools entry (`peerharness \
-                 watch {} --remove`: run it before the reset)",
+                "  for {}, the copies of your rules, its tools entry and its hooks \
+                 (`peerharness watch {} --remove`: run it before the reset)",
                 a.name(),
                 a.id()
             )

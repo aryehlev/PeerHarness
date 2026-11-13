@@ -77,9 +77,11 @@ fn run(ctx: &Ctx, command: Command) -> Result<Report> {
             ObserveCommand::Import { file } => observe::import(ctx, &file),
         },
         // Normally handled before clap (see main); reached only when clap parsed it.
-        Command::Hook(a) => {
-            crate::hook::run_and_exit(Some(ctx.home.root().to_path_buf()), Some(&a.event))
-        }
+        Command::Hook(a) => crate::hook::run_and_exit(
+            Some(ctx.home.root().to_path_buf()),
+            Some(&a.event),
+            a.agent.as_deref(),
+        ),
         Command::Watch { agent } => match agent {
             WatchAgent::Claude(a) => watch::claude(ctx, a),
             WatchAgent::Codex(a) => agent::run(ctx, crate::agents::Agent::Codex, &a),

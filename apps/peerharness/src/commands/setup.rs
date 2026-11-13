@@ -158,6 +158,7 @@ pub fn run(ctx: &Ctx, a: SetupArgs) -> Result<Report> {
             other,
             &WatchOtherArgs {
                 install: true,
+                no_hooks: a.no_agent_hooks,
                 remove: false,
                 status: false,
                 yes: a.yes,

@@ -252,6 +252,13 @@ impl HookCommand {
         s
     }
 
+    /// The shell command for `event` in another coding agent (ADR-053): the command of
+    /// [`HookCommand::render`] followed by the agent's id, which tells the hook whose
+    /// payload it reads. `None` when `agent` is not a plain lowercase word.
+    pub fn render_for(&self, event: HookEvent, agent: &str) -> Option<String> {
+        is_agent_id(agent).then(|| format!("{} {agent}", self.render(event)))
+    }
+
     /// The full hook entry object for `event`:
     /// `{"type": "command", "command": render(event), "timeout": 5}`.
     pub fn entry(&self, event: HookEvent) -> Value {
@@ -270,6 +277,37 @@ impl HookCommand {
         m.insert("timeout", Doc::number(Self::TIMEOUT_SECS));
         Doc::Object(m)
     }
+}
+
+/// Whether `s` can stand as an agent's id in a hook command: lowercase letters only.
+pub(crate) fn is_agent_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase())
+}
+
+/// Recognises `[PEERHARNESS_HOME=<h>] <.../peerharness> hook <event-arg> <agent>`, the
+/// command [`HookCommand::render_for`] writes: the pinned home and the agent's id.
+pub(crate) fn parse_agent_command(cmd: &str) -> Option<(Option<String>, String)> {
+    let mut words = split_words(cmd)?;
+    let agent = words.pop()?;
+    if !is_agent_id(&agent) {
+        return None;
+    }
+    // What is left must be a command of ours for a known event.
+    let (home, rest) = match words.split_first()? {
+        (first, rest) if first.starts_with("PEERHARNESS_HOME=") => {
+            (Some(first.get(HOME_ENV_VAR.len() + 1..)?.to_owned()), rest)
+        }
+        _ => (None, &words[..]),
+    };
+    let [exe, hook, arg] = rest else {
+        return None;
+    };
+    let name = Path::new(exe).file_name()?.to_str()?;
+    if hook != "hook" || (name != "peerharness" && name != "peerharness.exe") {
+        return None;
+    }
+    HookEvent::from_cli_arg(arg)?;
+    Some((home, agent))
 }
 
 /// A recognised PeerHarness command.
@@ -773,6 +811,35 @@ mod tests {
 
     fn cmd(home: Option<&str>) -> HookCommand {
         HookCommand::new(Path::new("/opt/ph bin/peerharness"), home.map(Path::new)).unwrap()
+    }
+
+    #[test]
+    fn a_command_for_another_agent_ends_in_its_id_and_is_no_claude_code_command() {
+        let c = cmd(Some("/x y"));
+        let line = c.render_for(HookEvent::Stop, "codex").unwrap();
+        assert_eq!(
+            line,
+            "PEERHARNESS_HOME='/x y' '/opt/ph bin/peerharness' hook stop codex"
+        );
+        assert_eq!(
+            parse_agent_command(&line),
+            Some((Some("/x y".to_owned()), "codex".to_owned()))
+        );
+        // Claude Code's installer does not take it for one of its own entries.
+        assert_eq!(parse_our_command(&line), None);
+        // And the other way round.
+        assert_eq!(parse_agent_command(&c.render(HookEvent::Stop)), None);
+        for bad in ["", "Codex", "co dex", "x;y", "a1"] {
+            assert_eq!(c.render_for(HookEvent::Stop, bad), None, "{bad}");
+        }
+        for not_ours in [
+            "'/bin/other' hook stop codex",
+            "'/bin/peerharness' hook nothing codex",
+            "'/bin/peerharness' hook stop codex extra",
+            "'/bin/peerharness' hook stop codex | tee x",
+        ] {
+            assert_eq!(parse_agent_command(not_ours), None, "{not_ours}");
+        }
     }
 
     #[test]

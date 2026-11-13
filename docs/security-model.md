@@ -420,8 +420,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   is ever opened; the hook always exits 0, never blocks, and prints nothing for
   `UserPromptSubmit` (whose stdout would become model context). The installed hook
   command quotes its paths for `sh`. Settings changes are idempotent, backed up and
-  written atomically.
-* **Residual risk.** Anyone who can write the user's Claude settings or invoke the hook
+  written atomically. The hooks of the other agents (ADR-053) are the same program
+  with the agent's id as a last word: the payload is read in that agent's shape, with
+  the same cap and the same members dropped, and the notice at the end of a turn is
+  printed only for an agent that shows it to the person and not to the model.
+* **Residual risk.** Anyone who can write the user's Claude settings, or another
+  agent's hooks file, or invoke the hook
   as the user already controls the agent. The hook stores (redacted) prompt text that
   the agent was given, including text pasted from untrusted sources.
 
@@ -621,7 +625,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   edited, and is kept only for an agent the owner connected. A copy is text the agent
   acts on, as the rule it copies is. The configuration entry is written only where it
   is absent, changed or removed only when it is exactly what PeerHarness writes, with
-  a backup, and a file that does not parse is left alone.
+  a backup, and a file that does not parse is left alone. For seven of these agents
+  the same step adds hooks to the agent's hooks file (ADR-053), after a preview that
+  shows each command and says that a redacted copy of each prompt typed there is kept
+  on the machine. They are the hooks of section 4.14, run by another agent; the owner
+  can leave them out (`--no-hooks`), and an agent connected without them gets them
+  only after that preview.
 * **Residual risk.** A human can be persuaded by a model's wording. The deterministic
   detector can be wrong; it never claims more than medium confidence. The agent-session
   check reads environment variables: an agent that clears them, or one that sets none,

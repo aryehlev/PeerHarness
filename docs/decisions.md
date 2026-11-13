@@ -3358,7 +3358,8 @@ Antigravity, which publishes none, its documentation at antigravity.google/docs.
   only after its user trusted it in `/hooks`; opencode and Pi have plugins and
   extensions in TypeScript; Antigravity's payloads carry the prompt and a transcript
   path. The note the skill asks for works in all of them, so the observer stays
-  Claude Code's, and the notice at the end of a turn too.
+  Claude Code's, and the notice at the end of a turn too. (ADR-053 changed this for
+  seven of the fourteen agents.)
 * *Copying into `$CODEX_HOME/skills` as well.* Codex lists a skill once per directory
   it finds it in: two copies would show twice.
 
@@ -4312,3 +4313,109 @@ run without an account, so its entry was not seen in use; the human's `!` (or `$
 Gemini CLI, Qwen Code, Copilot CLI and Amp, and everything in Kilo's terminal, is
 refused like its agent's commands; Kilo copied Claude Code's skills once when its
 migration ran, and such a copy is Kilo's, which PeerHarness does not remove.
+
+## ADR-053: Hooks for the agents that run command hooks from a file
+ADR-050 left the hooks to Claude Code: in the other agents a correction was noted
+only when the agent followed the notes skill. The owner asked for both parts there
+too: the hook that keeps a copy of each prompt so that a repeated correction is
+noticed without the agent's help, and the notice at the end of a turn. Each of the
+fourteen agents was looked at again on 2026-11-13, in its source where it has one
+(codex `16280e1`, gemini-cli `b977656`, qwen-code `767fd0a`, crush `dd40fd9`, goose
+`ef8933e`, opencode `acc8c26` and `fb11429`, kilocode `caf1f60`, pi-mono `275dde4`,
+deepseek-harness `e8f7b93`), in the shipped program where it has none (Droid 1.10.0,
+Cursor's agent CLI 2026.11.11, Copilot CLI 1.0.110, Antigravity 1.5.8, Amp), and in
+its documentation. Nothing was run with a model.
+
+| agent | hooks file | prompt event, and where the prompt is | at the end of a turn |
+|---|---|---|---|
+| Codex | `$CODEX_HOME/hooks.json`, `hooks.<Event>`, Claude Code's groups, seconds | `UserPromptSubmit`, `prompt` | `Stop`: `systemMessage` is shown as a warning in its interface, not sent to the model |
+| Droid | `~/.factory/hooks.json`, events at the top level, groups, seconds | `UserPromptSubmit`, `prompt` | `Stop`: `systemMessage` is stored for the user only |
+| Gemini CLI | `~/.gemini/settings.json`, `hooks.<Event>`, groups, milliseconds | `BeforeAgent`, `prompt` | `AfterAgent`: `systemMessage` goes to the interface only |
+| Qwen Code | `~/.qwen/settings.json`, `hooks.<Event>`, groups, seconds | `UserPromptSubmit`, `submitted_prompt` | `Stop`: `systemMessage` is shown as "Stop says:" |
+| Cursor | `~/.cursor/hooks.json`, `version` and `hooks.<event>`, flat entries, seconds | `beforeSubmitPrompt`, `prompt`; no `cwd`, but `workspace_roots` | `stop` reads only `followup_message`, which starts another turn |
+| Copilot CLI | any `*.json` in `~/.copilot/hooks/`, `version` and `hooks.<event>`, `bash` and `timeoutSec` | `userPromptSubmitted`, `prompt` (documentation only) | no message for the person alone is documented |
+| goose | `~/.agents/plugins/<name>/hooks/hooks.json`, `hooks.<Event>`, groups, seconds | `UserPromptSubmit`, `message`, with `working_dir` | `Stop`: any output but `allow` or `block` counts as the hook failing |
+| Crush | `crush.json`, `hooks.<Event>` | `TurnStart` carries no prompt | the output of a turn's hooks is thrown away |
+| Antigravity | `~/.gemini/config/hooks.json` | no prompt event: `PreInvocation` runs before every call of the model, with the last prompt | `Stop` can only continue the loop |
+| opencode, Kilo, Pi, Amp | none: a plugin or an extension in JavaScript or TypeScript | | |
+| DeepSeek Harness | none without a package (`@deepseek-ai/dsh-hooks-claude-code`) installed into a profile | | its bridge ignores `systemMessage` |
+
+**Decision.**
+
+* **Seven agents get the prompt hook, four of them the notice.** `watch <agent>
+  --install` (and so `setup`) adds to the hooks file of Codex, Droid, Gemini CLI, Qwen
+  Code, Cursor, Copilot CLI and goose the command `peerharness hook
+  user-prompt-submit <agent>`, under the agent's own event. Codex, Droid, Gemini CLI
+  and Qwen Code also get `peerharness hook stop <agent>`, because what a hook prints
+  there as `systemMessage` is shown to the person and not sent to the model. Cursor,
+  Copilot CLI and goose get no hook at the end of a turn: nothing printed there
+  reaches the person alone, and a notice the model reads is not what the notice is
+  (spec 7.2). The table is `Agent::hook_spec`; an agent is given a `stop_event` only
+  when its source shows that.
+* **The hook is the same program with the agent's id as its last word.** The id tells
+  it whose payload it reads (`ph_observer::PayloadShape`: which member holds the
+  prompt, the session and the directory). The event is taken from the command line
+  and never from the payload, whose names differ. Everything else in a payload is
+  dropped when it is parsed, a transcript path included, as for Claude Code. An id
+  this build does not know, or that of an agent without hooks, reads and stores
+  nothing. For Qwen Code only `submitted_prompt` is a prompt: its event also fires
+  when tool results go back to the model, with their text in `prompt`. The rules of
+  the hook are unchanged: it exits 0, blocks nothing, and prints nothing for a prompt,
+  on either stream (Gemini CLI reads standard error where standard output is empty).
+* **What is stored is said before it is stored.** The preview of `watch <agent>
+  --install` names the file, shows each command, and says that a redacted copy of
+  each prompt typed in that agent is kept on the machine, for how many days, in a
+  database that is not encrypted. An agent that was connected without hooks gets them
+  only by a later `--install`, with that preview alone: the earlier yes was to the
+  rules and the tools. `--install --no-hooks` connects without them and takes out the
+  ones that are there, and `setup --no-agent-hooks` does so for every other agent.
+* **The entries are edited as Claude Code's are** (`ph_observer::agent_hooks`). An
+  element of an event's array is PeerHarness's when its command is exactly this
+  binary's hook command for the same home and the same agent; such an element is
+  replaced in place, so a moved binary is not added twice, and a new one goes to the
+  end of the array, so that every hook of the owner's keeps its index (Codex ties a
+  hook's trust to it). Removing takes out those elements, the arrays and the `hooks`
+  member this emptied, and the file itself when nothing but what PeerHarness starts a
+  file with is left; for goose the plugin's folder goes too. A backup comes first, the
+  write is atomic, and a file that does not parse is not rewritten: the entries are
+  shown. Copilot CLI and goose get a file of PeerHarness's own
+  (`hooks/peerharness.json`, the plugin `peerharness`), so nothing of the owner's is
+  edited there.
+* **Droid's `hooks.json` is not created over hooks in its settings.** Droid reads the
+  `hooks` of `~/.factory/settings.json` only while `hooks.json` does not exist. Where
+  the settings hold hooks, or cannot be read, and there is no `hooks.json`, nothing is
+  written and the entries are shown.
+
+**Not added.**
+
+* *Crush.* Its event at the start of a turn carries the session and the directory and
+  no prompt, and what a hook prints at the end is thrown away: neither part can work.
+* *Antigravity.* Its documentation says a hook must print a JSON object, which the
+  prompt hook never does, and whether an empty output is taken as one could not be
+  read anywhere. Its nearest event runs before every call of the model, several times
+  a turn. Whether a hook another program wrote runs without a trust step is not
+  documented either, and its `Stop` has no message for the person.
+* *opencode, Kilo, Pi and Amp.* Each would need a file of code in the agent's plugins
+  directory, written against an interface that differs between opencode's two major
+  versions and that could not be run here. A hook entry is a command the owner reads
+  in the preview; a plugin is a program PeerHarness would have to keep working inside
+  another program.
+* *DeepSeek Harness.* Its bridge for Claude Code's hooks is a package the owner would
+  have to install into a profile first, and it drops the notice.
+* *Printing `{"continue": true}` for Cursor*, which notes each run of the prompt hook
+  as one with empty output. The hook prints nothing for a prompt in any agent; the
+  preview says what Cursor's log will say.
+* *Writing Codex's `hooks.state`* so that the hooks run at once. That record is the
+  user's own approval of a hook; the preview says that Codex asks.
+
+**Limits** (also in `docs/limits.md`). Nothing here was run with a model: the shapes
+are from source and documentation, and Copilot CLI's from its documentation alone.
+Codex runs the hooks only after its user trusted them, and shows the notice in its
+interface, not in `codex exec`. Gemini CLI runs hooks only in a trusted folder and
+shows the notice only interactively. A hook's process carries no mark of an agent's
+session in several of these agents, which changes nothing: the hook asks nothing.
+Cursor and Codex can also be made to run Claude Code's own hooks. Cursor reads
+`~/.claude/settings.json` when one of its groups has a matcher; Claude Code's hook
+then gets a payload whose event it does not know and stores nothing. Codex has a
+migration that copies Claude Code's hooks into its own file; after it, a prompt typed
+in Codex is stored twice, and a correction typed once counts as typed twice.

@@ -285,6 +285,66 @@ pub fn parse_hook_payload(bytes: &[u8]) -> Result<HookPayload, HookInputError> {
     })
 }
 
+/// Where another coding agent's hook payload keeps what PeerHarness uses (ADR-053).
+///
+/// The agents do not agree on names: the prompt is `prompt`, `submitted_prompt` or
+/// `message`, the session `session_id`, `sessionId` or `conversation_id`, the directory
+/// `cwd`, `working_dir` or the first of `workspace_roots`. A shape names, for one
+/// agent, the members to read, in order. Everything else is dropped at parse time, as
+/// for Claude Code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PayloadShape {
+    /// Members that may hold the prompt the person typed; the first string wins.
+    pub prompt: &'static [&'static str],
+    /// Members that may hold the session's id (only ever hashed).
+    pub session: &'static [&'static str],
+    /// Members that may hold the working directory (only ever hashed).
+    pub cwd: &'static [&'static str],
+    /// An array member whose first string is the working directory, read when none of
+    /// `cwd` is present.
+    pub cwd_list: Option<&'static str>,
+}
+
+/// Parses another agent's hook payload, as leniently as [`parse_hook_payload`].
+///
+/// The event is never taken from the payload: the agents name their events
+/// differently, so the command line says which hook this is ([`normalize`] falls back
+/// to it when [`HookPayload::event`] is [`PayloadEvent::Absent`]).
+pub fn parse_hook_payload_as(
+    bytes: &[u8],
+    shape: &PayloadShape,
+) -> Result<HookPayload, HookInputError> {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| HookInputError::Malformed {
+        line: e.line(),
+        column: e.column(),
+    })?;
+    let Value::Object(obj) = value else {
+        return Err(HookInputError::NotAnObject);
+    };
+    let first = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| obj.get(*k).and_then(Value::as_str))
+            .map(str::to_owned)
+    };
+    let cwd = first(shape.cwd).or_else(|| {
+        obj.get(shape.cwd_list?)?
+            .as_array()?
+            .first()?
+            .as_str()
+            .map(str::to_owned)
+    });
+    Ok(HookPayload {
+        event: PayloadEvent::Absent,
+        session_id: first(shape.session),
+        cwd,
+        prompt: first(shape.prompt),
+        stop_hook_active: obj.get("stop_hook_active").and_then(Value::as_bool),
+        tool_name: None,
+        is_interrupt: None,
+    })
+}
+
 /// `Digest::domain("peerharness-session-v0", session_id)`; `None` for an empty id.
 pub fn session_hash(session_id: &str) -> Option<Digest> {
     if session_id.is_empty() {
@@ -607,6 +667,54 @@ mod tests {
 
     fn id() -> ObservationId {
         ObservationId::new("obs_test").unwrap()
+    }
+
+    #[test]
+    fn another_agents_payload_is_read_in_its_own_shape() {
+        const CURSOR: PayloadShape = PayloadShape {
+            prompt: &["prompt"],
+            session: &["conversation_id", "session_id"],
+            cwd: &[],
+            cwd_list: Some("workspace_roots"),
+        };
+        let p = parse_hook_payload_as(
+            br#"{"hook_event_name":"beforeSubmitPrompt","conversation_id":"c","session_id":"s",
+                "workspace_roots":["/w/a","/w/b"],"prompt":"use pnpm","transcript_path":"/t"}"#,
+            &CURSOR,
+        )
+        .unwrap();
+        // The event is the command line's, whatever the agent calls it.
+        assert_eq!(p.event, PayloadEvent::Absent);
+        assert_eq!(p.session_id.as_deref(), Some("c"));
+        assert_eq!(p.cwd.as_deref(), Some("/w/a"));
+        assert_eq!(p.prompt.as_deref(), Some("use pnpm"));
+        let o = normalize(&p, Some(HookEvent::UserPromptSubmit), id(), ts()).unwrap();
+        assert_eq!(o.repo_key, repo_key("/w/a"));
+
+        // Qwen Code: `prompt` alone is a tool round, not something the person typed.
+        const QWEN: PayloadShape = PayloadShape {
+            prompt: &["submitted_prompt"],
+            session: &["session_id"],
+            cwd: &["cwd"],
+            cwd_list: None,
+        };
+        let p = parse_hook_payload_as(br#"{"prompt":"tool output","cwd":"/w"}"#, &QWEN).unwrap();
+        assert_eq!(p.prompt, None);
+        assert!(normalize(&p, Some(HookEvent::UserPromptSubmit), id(), ts()).is_none());
+        let p = parse_hook_payload_as(
+            br#"{"prompt":"x","submitted_prompt":"use pnpm","cwd":"/w"}"#,
+            &QWEN,
+        )
+        .unwrap();
+        assert_eq!(p.prompt.as_deref(), Some("use pnpm"));
+
+        // Wrong types are absent, and only a non-object is an error.
+        let p = parse_hook_payload_as(br#"{"prompt":7,"workspace_roots":"/w"}"#, &CURSOR).unwrap();
+        assert_eq!((p.prompt, p.cwd), (None, None));
+        assert_eq!(
+            parse_hook_payload_as(b"[]", &CURSOR),
+            Err(HookInputError::NotAnObject)
+        );
     }
 
     #[test]
