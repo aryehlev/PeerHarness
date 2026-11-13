@@ -17,7 +17,7 @@ use libp2p::request_response::{
     ResponseChannel,
 };
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
-use libp2p::swarm::{ConnectionId, NetworkBehaviour, SwarmEvent};
+use libp2p::swarm::{ConnectionId, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, SwarmBuilder};
 use ph_core::DeviceKey;
 use ph_protocol::wire::{ErrorCode, Request, Response};
@@ -190,14 +190,29 @@ enum Command {
     },
 }
 
-#[derive(NetworkBehaviour)]
-#[behaviour(prelude = "libp2p::swarm::derive_prelude")]
-struct Behaviour {
-    policy: PeerPolicy,
-    internet: Internet,
-    rr: request_response::Behaviour<PhCodec>,
-    discovery: Discovery,
+/// The behaviour, in a module of its own for one reason: the code that
+/// `#[derive(NetworkBehaviour)]` writes for a behaviour whose event cannot occur holds
+/// a call that rustc 1.100 reports as unreachable, and the workspace builds with
+/// warnings as errors. The lint is switched off for that generated code and for
+/// nothing else in this crate.
+mod behaviour {
+    #![allow(unreachable_code)]
+
+    use libp2p::request_response;
+    use libp2p::swarm::NetworkBehaviour;
+
+    use super::{Discovery, Internet, PeerPolicy, PhCodec};
+
+    #[derive(NetworkBehaviour)]
+    #[behaviour(prelude = "libp2p::swarm::derive_prelude")]
+    pub(super) struct Behaviour {
+        pub(super) policy: PeerPolicy,
+        pub(super) internet: Internet,
+        pub(super) rr: request_response::Behaviour<PhCodec>,
+        pub(super) discovery: Discovery,
+    }
 }
+use behaviour::{Behaviour, BehaviourEvent};
 
 /// Listen state shared with handles.
 #[derive(Clone, Debug, Default)]
