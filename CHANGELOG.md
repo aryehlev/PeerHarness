@@ -7,7 +7,7 @@ protocol ([docs/release.md](docs/release.md)). Each entry names the protocol ver
 the binary speaks ([docs/protocol-v0.md](docs/protocol-v0.md), section 15) and the
 database schema it writes.
 
-## Unreleased
+## 0.5.0 (2026-11-13)
 
 * A new version of a rule is shown as a change (ADR-053). `proposal create` for a
   rule whose name is in force shows a diff from the rule in force, names that rule as
@@ -198,6 +198,9 @@ database schema it writes.
   section 15). What was left as it is stands in ADR-051 and, where it is a limit for
   whoever uses PeerHarness, in [docs/limits.md](docs/limits.md). How each fix was
   checked is in [docs/checked.md](docs/checked.md).
+
+Protocol `0.1` and database schema 4, as in 0.4.0. The release toolchain is unchanged
+(Rust 1.89.0).
 
 ## 0.4.0 (2026-11-11)
 
