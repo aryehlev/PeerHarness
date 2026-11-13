@@ -677,7 +677,7 @@ one flat object:
 | `charter` | all | digest of the charter in force when proposed |
 | `title` (1-200, single line), `summary` (0-1000, multi-line) | all | human-confirmed text |
 | `skill_name`, `description` (1-1024), `bundle_digest`, `bundle_size` (1 to 256 KiB) | adopt | the rule |
-| `related_question?`, `supersedes?` | adopt | lineage only; approvals never move between proposals |
+| `related_question?`, `supersedes?` | adopt | lineage only; approvals never move between proposals. `proposal create` and `rule restore` set `supersedes` to the rule of the same name in force (ADR-053) |
 | `target` | repeal | event id of the `adopt` proposal to take out of force |
 | `next` | amend | the complete proposed content `{rules, roll, carried}` |
 
@@ -1019,7 +1019,11 @@ what one rule in force means on this machine, in this order:
   notice) or from a file.
 * **CLI.** `circle create` and `circle join` show the charter and record the adoption
   mode; `circle mode` changes it (switching to `follow` is a confirmation step). `rule
-  list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force. `rule
+  list`, `rule opt-out`, `rule opt-in` and `rule repeal` cover the rules in force.
+  `rule history` lists the versions of one rule with who approved each, and `rule
+  restore` puts an earlier one back to the vote. A proposal for a rule whose name is in
+  force is shown with a diff from that rule wherever its text is shown
+  (`crate::versions`, ADR-053). `rule
   opt-out` is immediate and unasked, and waits for no key: it and `proposal refuse`
   change the machine with `apply_on` first, and unlock the device key only afterwards
   and only when `settle` has something to sign (`governance::settle_machine_first`). A

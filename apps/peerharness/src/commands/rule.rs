@@ -33,6 +33,19 @@ pub fn run(ctx: &Ctx, command: RuleCommand) -> Result<Report> {
             repeal(ctx, &node, &circle, &name, reason.as_deref(), yes)
         }
         RuleCommand::List { circle } => list(&node, circle.as_deref()),
+        RuleCommand::History { name, circle } => {
+            let circle = find_circle(&node, Some(&circle))?;
+            history(&node, &circle, &name)
+        }
+        RuleCommand::Restore {
+            name,
+            circle,
+            to,
+            yes,
+        } => {
+            let circle = find_circle(&node, Some(&circle))?;
+            restore(ctx, &node, &circle, &name, &to, yes)
+        }
         RuleCommand::OptOut {
             name,
             circle,
@@ -168,10 +181,11 @@ fn list(node: &Node, circle: Option<&str>) -> Result<Report> {
                 _ => "not installed",
             };
             t.line(format!(
-                "  {}  scope {}  proposal {}  [{here}]",
+                "  {}  scope {}  proposal {}  text {}  [{here}]",
                 rule.skill_name(),
                 rule.scope(),
-                short_id(&rule.proposal_id())
+                short_id(&rule.proposal_id()),
+                short_id(&rule.bundle_digest())
             ));
             if let Some(dir) = &target.dir {
                 t.line(format!("      in the project {dir}"));
@@ -709,6 +723,342 @@ fn repeal(
             "kind": "repeal",
             "skill_name": name,
             "target": target,
+            "circle": circle.name,
+            "scope": scope,
+        }),
+        t.finish(),
+    ))
+}
+
+/// Where one version of a rule stands, in PeerHarness's own words.
+fn version_standing(
+    node: &Node,
+    p: &ph_governance::ProposalView,
+    tally: &ph_governance::Tally,
+    rules: &ph_governance::RuleSet,
+) -> Result<String> {
+    if rules.by_proposal(&p.event_id()).is_some() {
+        return Ok("in force".to_owned());
+    }
+    let standing = crate::commands::proposal::standing(node, p, tally)?;
+    Ok(match standing {
+        // It passed under the charter in force and is not the rule of its name: a
+        // newer version has the name, or a repeal took it out.
+        "passed" | "carried" => match p.skill_name().and_then(|n| rules.get(n)) {
+            Some(newer) => format!(
+                "passed, replaced by proposal {}",
+                short_id(&newer.proposal_id())
+            ),
+            None => "passed, repealed since".to_owned(),
+        },
+        "passed under an earlier charter" => {
+            "passed under an earlier charter, not in force now".to_owned()
+        }
+        other => other.to_owned(),
+    })
+}
+
+/// Every `adopt` proposal for the rule named `name` that this node holds for `circle`,
+/// oldest first: the digest of the text each one signs, who proposed it, who approved
+/// it and where it stands. Then the repeal proposals that name one of them.
+///
+/// It prints no text of a rule and nothing a member wrote: ids, digests, the handles of
+/// the signed charters and the counts. So it reads the same inside a session.
+fn history(node: &Node, circle: &CircleRow, name: &str) -> Result<Report> {
+    if !ph_core::is_valid_skill_name(name) {
+        return Err(usage("that is not a rule (skill) name"));
+    }
+    let id = &circle.circle_id;
+    let (_, rules, _) = governance::rule_set(&node.store, id)?;
+    let mut all = Vec::new();
+    for ev in node.store.proposals(id)? {
+        if let Ok(p) = governance::proposal_view(&node.store, &ev.event_id) {
+            all.push(p);
+        }
+    }
+    all.sort_by_key(|p| (p.created_at(), p.event_id().to_string()));
+    let versions: Vec<&ph_governance::ProposalView> = all
+        .iter()
+        .filter(|p| p.skill_name() == Some(name))
+        .collect();
+    if versions.is_empty() {
+        return Err(usage(format!(
+            "no rule named {name:?} was ever proposed in {} on this node",
+            circle.name
+        )));
+    }
+    let bundles = crate::library::bundle_store(&node.home);
+    let mut rows = Vec::new();
+    let mut t = Text::new();
+    t.line(format!(
+        "{}: {} version(s) of the rule {name} were put to the vote, oldest first",
+        safe(&circle.name),
+        versions.len()
+    ));
+    for (n, p) in versions.iter().enumerate() {
+        let (charter, tally) = governance::count(&node.store, p)?;
+        let standing = version_standing(node, p, &tally, &rules)?;
+        let digest = p.bundle_digest();
+        let approved: Vec<&str> = tally
+            .approvals()
+            .iter()
+            .map(|a| a.member.as_str())
+            .collect();
+        t.line(format!(
+            "  {}. proposal {}  text {}  scope {}  [{standing}]",
+            n + 1,
+            short_id(&p.event_id()),
+            digest.map_or_else(|| "?".to_owned(), |d| short_id(&d)),
+            p.scope(),
+        ));
+        t.line(format!(
+            "       proposed by {} at {}, under charter {}",
+            crate::commands::proposal::proposer(node, p)?,
+            p.created_at(),
+            charter.seq
+        ));
+        t.line(format!(
+            "       approved by {} of {} ({} needed){}{}",
+            approved.len(),
+            tally.electorate().len(),
+            tally.need(),
+            if approved.is_empty() { "" } else { ": " },
+            approved.join(", ")
+        ));
+        if let Some(older) = p.supersedes() {
+            t.line(format!(
+                "       names proposal {} as the version it replaces",
+                short_id(&older)
+            ));
+        }
+        let text_here = digest.is_some_and(|d| bundles.contains(&d));
+        if !text_here {
+            t.line("       its text is not on this node");
+        }
+        rows.push(json!({
+            "proposal_id": p.event_id(),
+            "bundle_digest": digest,
+            "scope": p.scope(),
+            "standing": standing,
+            "in_force": rules.by_proposal(&p.event_id()).is_some(),
+            "proposed_by": p.author().fingerprint(),
+            "created_at": p.created_at().to_string(),
+            "charter": charter.seq,
+            "approvals": tally.approvals().iter().map(|a| json!({
+                "member": a.member,
+                "device": a.device.fingerprint(),
+                "vote_id": a.vote_id,
+            })).collect::<Vec<_>>(),
+            "need": tally.need(),
+            "electorate": tally.electorate(),
+            "supersedes": p.supersedes(),
+            "text_on_this_node": text_here,
+        }));
+    }
+    let mut repeals = Vec::new();
+    for p in &all {
+        let Some(target) = p.repeal_target() else {
+            continue;
+        };
+        if !versions.iter().any(|v| v.event_id() == target) {
+            continue;
+        }
+        let (_, tally) = governance::count(&node.store, p)?;
+        let standing = crate::commands::proposal::standing(node, p, &tally)?;
+        t.line(format!(
+            "  repeal proposal {} names proposal {}  [{standing}]",
+            short_id(&p.event_id()),
+            short_id(&target)
+        ));
+        repeals.push(json!({
+            "proposal_id": p.event_id(),
+            "target": target,
+            "standing": standing,
+        }));
+    }
+    t.line(format!(
+        "Read a version and its changes: `peerharness proposal show <proposal>`. Put an \
+         earlier one back to the vote: `peerharness rule restore {name} --circle {} --to \
+         <proposal>`.",
+        circle.name
+    ));
+    Ok(Report::new(
+        json!({
+            "circle": circle.name,
+            "skill_name": name,
+            "versions": rows,
+            "repeals": repeals,
+        }),
+        t.finish(),
+    ))
+}
+
+/// Puts an earlier version of the rule named `name` back to the vote: a new `adopt`
+/// proposal for exactly the text the proposal `to` signed. Creating it is not a vote,
+/// and nothing changes for anyone until it passes.
+///
+/// It is the team's way back from a version it regrets. Nothing is taken on trust for
+/// it: the members are shown the text in full and the changes from the rule in force,
+/// like for any other proposal, and the approvals of the earlier proposal do not count
+/// for this one. Asked in the terminal only.
+fn restore(
+    ctx: &Ctx,
+    node: &Node,
+    circle: &CircleRow,
+    name: &str,
+    to: &str,
+    yes: bool,
+) -> Result<Report> {
+    use ph_protocol::{AdoptAction, Electorate, ProposalAction};
+
+    if !ph_core::is_valid_skill_name(name) {
+        return Err(usage("that is not a rule (skill) name"));
+    }
+    crate::agent_notes::refuse_reserved_name(name)?;
+    let id = &circle.circle_id;
+    let not_a_version = || {
+        usage(format!(
+            "that is not a version of the rule {name} in {}: `peerharness rule history {name} \
+             --circle {}` lists them",
+            circle.name, circle.name
+        ))
+    };
+    let old_id = crate::ids::resolve_event(&node.store, to)?;
+    let old = governance::proposal_view(&node.store, &old_id).map_err(|_| not_a_version())?;
+    let old_digest = old
+        .bundle_digest()
+        .filter(|_| old.circle_id() == *id && old.skill_name() == Some(name))
+        .ok_or_else(not_a_version)?;
+    // "Restore" is for a text the circle had approved. One that never passed is
+    // proposed like any new rule, from a note.
+    let (_, old_tally) = governance::count(&node.store, &old)?;
+    if !old_tally.passed() {
+        return Err(refused(
+            "that version never passed, so there is nothing to restore. A text the circle \
+             has not approved is proposed with `peerharness proposal create`.",
+        ));
+    }
+    let bundles = crate::library::bundle_store(&node.home);
+    let bundle = bundles.get(&old_digest).map_err(|_| {
+        refused(
+            "this node does not have that version's text, so it cannot show what it would \
+             propose. Import the circle's events or sync first.",
+        )
+    })?;
+    // The charter the preview is built from, and the rule of this name in force now:
+    // the version the restored text would replace.
+    let charter = governance::current_charter(&node.store, id)?;
+    let shown = charter.digest()?;
+    let replaces = crate::versions::in_force(&node.store, &bundles, id, name)?;
+    if replaces
+        .as_ref()
+        .is_some_and(|r| r.bundle_digest == old_digest)
+    {
+        return Err(usage(format!(
+            "that version's text is, word for word, the rule {name} in force in {}",
+            circle.name
+        )));
+    }
+    // Dated so that it takes that rule's place if it passes, or refused before anything
+    // is asked.
+    let signed_at = crate::versions::signing_time(node.now(), replaces.as_ref())?;
+    let scope = old.scope().clone();
+    let title = format!(
+        "Restore {name} to the version of proposal {}",
+        short_id(&old_id)
+    );
+    let electorate = charter
+        .content
+        .electorate(&Electorate::Scope(&scope))
+        .count();
+    let mut preview = format!(
+        "This asks the members of {circle} (scope {scope}) to vote on putting an earlier \
+         version of the rule {name} back in force: the text of proposal {old}.\n\
+         Exactly this text leaves your machine, and nothing else:\n\n\
+         title: {title}\n\n{skill}\n",
+        circle = safe(&circle.name),
+        old = short_id(&old_id),
+        skill = safe(bundle.skill_md()),
+    );
+    crate::commands::proposal::findings_preview(&mut preview, &bundle);
+    if !preview.ends_with('\n') {
+        preview.push('\n');
+    }
+    match &replaces {
+        Some(earlier) => preview.push_str(&format!(
+            "{}\nIf this passes, it takes that rule's place, and the proposal names it as \
+             the version it replaces.\n",
+            earlier.describe(name, &bundle, crate::versions::CHANGE_MARK)
+        )),
+        None => preview.push_str(&format!(
+            "No rule named {name} is in force here now: if this passes, the rule is in \
+             force again with this text.\n"
+        )),
+    }
+    preview.push_str(&format!(
+        "It passes with {need} of {electorate} member approval(s). The approvals of the \
+         earlier proposal do not count for this one. Creating it is not a vote: cast yours \
+         with `peerharness proposal vote`.",
+        need = charter.content.rules.pass.need(electorate),
+    ));
+    crate::consent::confirm(&ctx.out, &preview, yes, "sharing the proposal")?;
+
+    // The key first, then the looks and the signature in one transaction: the rule of
+    // this name is still the one the changes were shown against (or there is still
+    // none), and the charter is still the one the count was read from.
+    let key = node.device()?.signing_key();
+    let superseded = replaces.as_ref().map(|r| r.proposal_id);
+    let proposal = governance::atomically(&node.store, key, |store| {
+        if !governance::name_as_shown(store, key, id, name, superseded.as_ref())? {
+            return Err(refused(governance::VERSION_CHANGED));
+        }
+        // The text is on this node already. Its row is what `events export` and a sync
+        // hand on with the proposal.
+        governance::record_bundle(store, &bundles, &bundle, node.now())?;
+        governance::propose_under(
+            store,
+            key,
+            id,
+            &shown,
+            governance::NewProposal {
+                scope: &scope,
+                title: &title,
+                summary: "",
+                action: ProposalAction::Adopt(AdoptAction {
+                    skill_name: bundle.name().to_owned(),
+                    description: bundle.description().to_owned(),
+                    bundle_digest: bundle.digest(),
+                    bundle_size: bundle.size(),
+                    related_question: None,
+                    supersedes: superseded,
+                }),
+            },
+            signed_at,
+        )
+    })?;
+    let mut t = Text::new();
+    t.line(format!(
+        "Proposed restoring {name} in {} to the version of proposal {} (proposal {}).",
+        safe(&circle.name),
+        short_id(&old_id),
+        short_id(&proposal.event_id())
+    ));
+    t.line(format!(
+        "Vote: `peerharness proposal vote {} approve`.",
+        short_id(&proposal.event_id())
+    ));
+    t.line(format!(
+        "Send it to the others: `peerharness events export --circle {} --out <file>`.",
+        circle.name
+    ));
+    Ok(Report::new(
+        json!({
+            "proposal_id": proposal.event_id(),
+            "kind": "adopt",
+            "skill_name": name,
+            "bundle_digest": bundle.digest(),
+            "restores": old_id,
+            "supersedes": superseded,
             "circle": circle.name,
             "scope": scope,
         }),

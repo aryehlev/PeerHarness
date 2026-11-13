@@ -45,7 +45,7 @@ pub fn run(ctx: &Ctx, command: ProposalCommand) -> Result<Report> {
 }
 
 /// Where a proposal stands on this node.
-fn standing(node: &Node, p: &ProposalView, tally: &Tally) -> Result<&'static str> {
+pub(crate) fn standing(node: &Node, p: &ProposalView, tally: &Tally) -> Result<&'static str> {
     let current = governance::current_charter(&node.store, &p.circle_id())?;
     Ok(if current.content.carried.contains(&p.event_id()) {
         "carried"
@@ -90,6 +90,8 @@ fn proposal_json(p: &ProposalView, tally: &Tally, standing: &str) -> Value {
         "scope": p.scope(),
         "title": p.body().title,
         "skill_name": p.skill_name(),
+        "bundle_digest": p.bundle_digest(),
+        "supersedes": p.supersedes(),
         "author_fingerprint": p.author().fingerprint(),
         "standing": standing,
         "passed": tally.passed(),
@@ -289,7 +291,7 @@ fn one_line_rationale(given: Option<&str>) -> Result<Option<String>> {
 
 /// Who signed a proposal: the member the roll of the charter it names lists the signing
 /// device under, and the device. The handle comes from the signed charter.
-fn proposer(node: &Node, p: &ProposalView) -> Result<String> {
+pub(crate) fn proposer(node: &Node, p: &ProposalView) -> Result<String> {
     let fingerprint = p.author().fingerprint();
     let member = node
         .store
@@ -443,6 +445,27 @@ fn create(
         .content
         .electorate(&ph_protocol::Electorate::Scope(&scope))
         .count();
+    // The rule of this name in force now: the version this proposal would replace. The
+    // preview shows the changes from it, and the proposal names it (`supersedes`).
+    let replaces = crate::versions::in_force(
+        &node.store,
+        &crate::library::bundle_store(&node.home),
+        &circle.circle_id,
+        &name,
+    )?;
+    if replaces
+        .as_ref()
+        .is_some_and(|r| r.bundle_digest == draft.digest())
+    {
+        return Err(usage(format!(
+            "this is, word for word, the rule {name} already in force in {}: there is \
+             nothing to vote on",
+            circle.name
+        )));
+    }
+    // Dated so that it takes that rule's place if it passes, or refused before anything
+    // is asked.
+    let signed_at = crate::versions::signing_time(now, replaces.as_ref())?;
     let mut preview = format!(
         "This shares the following with the members of {circle} (scope {scope}) and puts it to the vote.\n\
          Exactly this text leaves your machine, and nothing else:\n\n\
@@ -454,6 +477,13 @@ fn create(
     let high_risk = findings_preview(&mut preview, &draft);
     if !preview.ends_with('\n') {
         preview.push('\n');
+    }
+    if let Some(earlier) = &replaces {
+        preview.push_str(&format!(
+            "{}\nIf this passes, it takes that rule's place, and the proposal names it as \
+             the version it replaces.\n",
+            earlier.describe(&name, &draft, crate::versions::CHANGE_MARK)
+        ));
     }
     preview.push_str(&format!(
         "It passes with {need} of {electorate} member approval(s). Creating it is not a vote:\n\
@@ -493,6 +523,12 @@ fn create(
         // look, so `propose_under` below finds the same one.
         if !governance::charter_as_shown(store, key, &circle.circle_id, &shown)? {
             return Err(refused(governance::CHARTER_CHANGED));
+        }
+        // And for the changes the preview showed: the rule of this name is still the
+        // one they were shown against, or there is still none.
+        let superseded = replaces.as_ref().map(|r| r.proposal_id);
+        if !governance::name_as_shown(store, key, &circle.circle_id, &name, superseded.as_ref())? {
+            return Err(refused(governance::VERSION_CHANGED));
         }
 
         // Confirmed: save exactly the previewed text to the library. This is inside
@@ -545,10 +581,10 @@ fn create(
                     bundle_digest: bundle.digest(),
                     bundle_size: bundle.size(),
                     related_question,
-                    supersedes: None,
+                    supersedes: superseded,
                 }),
             },
-            now,
+            signed_at,
         )?;
         store.set_candidate_share_target(&cand.id, &circle.circle_id, &scope, now)?;
         store.set_candidate_proposal_event(&cand.id, &proposal.event_id(), now)?;
@@ -578,6 +614,7 @@ fn create(
             "circle": circle.name,
             "scope": scope,
             "related_question": related_question,
+            "supersedes": proposal.supersedes(),
         }),
         t.finish(),
     ))
@@ -648,6 +685,10 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     t.kv("scope", p.scope());
     t.kv("proposed by", proposer(&node, &p)?);
     t.kv("under charter", charter.seq);
+    if let Some(digest) = p.bundle_digest() {
+        // What a ballot on this proposal signs for: the digest of the rule's text.
+        t.kv("text", digest);
+    }
     t.kv("standing", st);
     t.kv("count", &tally);
     if !p.body().summary.trim().is_empty() {
@@ -732,8 +773,9 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
     if amendment.is_some() {
         t.line(format!("  {}", proposers_words(&p.body().title)));
     }
+    let bundles = crate::library::bundle_store(&node.home);
+    let earlier = crate::versions::earlier(&node.store, &bundles, &p)?;
     if let Some(adopt) = p.adopt() {
-        let bundles = crate::library::bundle_store(&node.home);
         match bundles.get(&adopt.bundle_digest) {
             Ok(b) => {
                 let findings = b.scan();
@@ -765,6 +807,16 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
                     // ours.
                     t.line(quoted(b.skill_md(), MEMBER_TEXT));
                 }
+                // The version it stands against, and the changes from it. The changes
+                // hold lines of two rules' texts: never inside a session.
+                if let Some(e) = &earlier {
+                    let said = if in_session {
+                        e.describe_without_texts(&adopt.skill_name)
+                    } else {
+                        e.describe(&adopt.skill_name, &b, MEMBER_TEXT)
+                    };
+                    t.line(format!("  {said}"));
+                }
             }
             Err(_) => {
                 t.line("  rule text: not on this node yet (import the proposer's events file)");
@@ -772,6 +824,9 @@ fn show(ctx: &Ctx, arg: &str) -> Result<Report> {
         }
     }
     let mut json = proposal_json(&p, &tally, st);
+    if let Some(e) = &earlier {
+        json["compared_with"] = e.json();
+    }
     if let Some(changes) = &amendment {
         json["amendment"] = changes.as_ref().map_or(Value::Null, |c| c.json());
     }
@@ -869,12 +924,27 @@ fn vote(
     };
     let mut rule_window = false;
     let mut circle_window = false;
-    let preview = if let (true, Some(bundle)) = (asks_in_window(&node.config), &rule_text) {
+    let preview = if let Some(bundle) = &rule_text {
+        // A ballot on a rule shows what it is cast on: the exact text, what the scanner
+        // finds in it, and the changes from the version it would replace. In the
+        // terminal as in a window (ADR-053).
         let mut preview = format!(
             "{titled}{said}{approval} The rule, exactly as proposed:\n\n{}\n",
             safe(bundle.skill_md()).trim_end()
         );
-        rule_window = !findings_preview(&mut preview, bundle);
+        let high_risk = findings_preview(&mut preview, bundle);
+        if let Some(earlier) = crate::versions::earlier(&node.store, &bundles, &p)? {
+            if !preview.ends_with('\n') {
+                preview.push('\n');
+            }
+            preview.push('\n');
+            preview.push_str(&earlier.describe(
+                bundle.name(),
+                bundle,
+                crate::versions::CHANGE_MARK,
+            ));
+        }
+        rule_window = asks_in_window(&node.config) && !high_risk;
         preview
     } else if let Some((entry, seq)) = admission {
         circle_window = true;
@@ -1002,7 +1072,15 @@ fn adopt(ctx: &Ctx, arg: &str, yes: bool) -> Result<Report> {
         safe(bundle.skill_md()).trim_end()
     );
     // A high-risk finding always asks the owner, and asks them in their terminal.
-    if findings_preview(&mut preview, &bundle) {
+    let high_risk = findings_preview(&mut preview, &bundle);
+    if let Some(earlier) = crate::versions::earlier(&node.store, &bundles, &p)? {
+        if !preview.ends_with('\n') {
+            preview.push('\n');
+        }
+        preview.push('\n');
+        preview.push_str(&earlier.describe(&name, &bundle, crate::versions::CHANGE_MARK));
+    }
+    if high_risk {
         confirm(&ctx.out, &preview, yes, "installing the rule")?;
     } else {
         key_before_window(&node, "installing the rule", asks_in_window(&node.config))?;
