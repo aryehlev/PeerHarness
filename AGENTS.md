@@ -332,6 +332,16 @@ stop, leave the feature disabled, and document the blocker.
   counts only against a rule of its own scope). Do not add a check on arrival whose
   answer changes with what is already stored, other than "a record it depends on is
   missing", which waits and is tried again.
+* A new version of a rule is shown as a change (ADR-053). Where the text of a rule
+  proposal is shown to its proposer, a voter or whoever installs it, the differences
+  from the rule of that name in force on that node are shown with it
+  (`crate::versions`). Take the comparison from the rule in force and not from the
+  proposal's `supersedes` while a rule has the name: the proposer chose that field.
+  Every line of a comparison goes behind a mark, and none is printed inside a session.
+  `proposal create` and `rule restore` sign `supersedes` only for the rule their
+  preview compared with (`governance::name_as_shown`, in the transaction that signs).
+  `rule restore` is a new proposal that needs its threshold: never count an earlier
+  version's approvals for it, and do not give it a window or a tool.
 * A STANCE is a record of what a member says about a rule. Never read one in a tally, a
   result, the rule set or an installation decision (ADR-029).
 * A RESULT and a root-signed CHARTER carry no authority. Nothing takes effect before

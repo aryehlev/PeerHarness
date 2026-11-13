@@ -326,11 +326,12 @@ Each entry gives the threat, the mitigation, and the risk that remains.
   tells the agent to fetch a URL and follow what it finds there, which could change
   after the text was voted on, and a text that gives an instruction about PeerHarness's
   own guard (the variables that mark an agent's session, `--yes`, its configuration).
-  The findings are shown when a rule is kept or proposed, on a ballot asked in a window
-  (which never carries a rule with a high-risk finding) and before an install that asks.
-  A ballot in a terminal shows the proposal's title only: `peerharness proposal show`
-  prints the rule's text, the number of findings and whether one is high-risk, not the
-  findings themselves. (Inside a session it prints the text only of a rule that is
+  The findings are shown when a rule is kept or proposed, on a ballot (a window never
+  carries a rule with a high-risk finding) and before an install that asks. A ballot
+  shows the rule's exact text, in the terminal as in a window, and for a rule whose
+  name is in force the changes from the rule in force on the voter's own node
+  (ADR-053). `peerharness proposal show` prints the rule's text, the number of findings
+  and whether one is high-risk, not the findings themselves. (Inside a session it prints the text only of a rule that is
   installed on the machine, ADR-051.) What then happens to a rule that passed a vote is the owner's
   standing choice (`ph-governance::adoption_step`): in `ask` mode nothing is installed
   without an explicit confirmation; in `follow` mode a passed rule is installed without

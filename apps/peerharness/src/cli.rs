@@ -901,6 +901,28 @@ pub enum RuleCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Every version of a rule that was put to the vote: its text's digest, who
+    /// proposed it, who approved it, and which one is in force.
+    History {
+        /// The rule's skill name.
+        name: String,
+        #[arg(long, value_name = "NAME")]
+        circle: String,
+    },
+    /// Propose putting an earlier version of a rule back in force. It is a vote like
+    /// any other: the members read the text and the changes, and it needs its threshold.
+    Restore {
+        /// The rule's skill name.
+        name: String,
+        #[arg(long, value_name = "NAME")]
+        circle: String,
+        /// The proposal of the version to restore (`peerharness rule history` lists them).
+        #[arg(long, value_name = "PROPOSAL")]
+        to: String,
+        /// Skip the confirmation prompt (after reviewing the preview).
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Args)]

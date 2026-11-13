@@ -4312,3 +4312,104 @@ run without an account, so its entry was not seen in use; the human's `!` (or `$
 Gemini CLI, Qwen Code, Copilot CLI and Amp, and everything in Kilo's terminal, is
 refused like its agent's commands; Kilo copied Claude Code's skills once when its
 migration ran, and such a copy is Kilo's, which PeerHarness does not remove.
+
+## ADR-053: A changed rule is shown as a change, and the versions of a rule can be read and restored
+Two readers of the project asked the same thing in their own words: keep "saved"
+apart from "active for everyone"; show reviewers the exact instructions, the commands
+in them and the changes from the previous version before they vote; pin the approved
+version so that a later edit cannot change what people installed; record who approved
+which version; and give the team a way to disable a rule or roll it back. Each point
+was checked against the code on 2026-11-13.
+
+**What was there already.**
+
+* *Saved is not approved.* A note is a `Detected` candidate and nothing else. Saving
+  it (`review --approve`), keeping it for oneself (`keep`), proposing it (`proposal
+  create`) and voting on it are separate steps, each with its own preview and its own
+  yes, and a rule is installed for a member only after it passed and by that member's
+  own consent (their `follow` choice, or `proposal adopt`).
+* *The approved version is pinned.* An `adopt` proposal signs the SHA-256 digest of
+  the rule's text, and a ballot counts only for the proposal id it signs. A changed
+  text is another proposal with no approvals. An installed copy that was edited by
+  hand is reported (`rule list`) and never passes for the voted text.
+* *Commands.* A rule is one file of instructions. Anything that would run by itself
+  (`allowed-tools`, the loader's shell syntax) is refused outright, and what the
+  scanner finds in the text (a destructive command among it) is shown to the proposer,
+  on the ballot and before an install; a high-risk finding always asks the owner in
+  their terminal.
+* *Disabling.* `rule opt-out` for one machine, at once and unasked; `rule repeal` for
+  the team, by vote.
+
+**What was missing, and is added here.**
+
+1. *The changes from the previous version.* The protocol has had `supersedes` since
+   v0, and no command set it or showed a comparison: a voter on a new version of a
+   rule read the new text alone, and had to find the old one and compare by eye.
+   `proposal create` now reads the rule of the same name in force, shows a unified
+   diff from it in its preview, names it in `supersedes`, and refuses a text that is
+   word for word the rule in force. `proposal show`, the ballot (`proposal vote`) and
+   `proposal adopt` show the same comparison (`crate::versions`).
+2. *The ballot in the terminal shows the text.* It showed the title and pointed to
+   `proposal show`; only the window carried the rule. A ballot on a rule whose text
+   is on the node now shows the text, the scanner's findings and the changes in the
+   terminal too. A window for a rule that replaces nothing reads byte for byte as
+   before.
+3. *Who approved which version.* `rule history <name> --circle <c>` lists every
+   `adopt` proposal of that name the node holds, oldest first: the digest of the text
+   it signs, its proposer, the members whose approvals count, and where it stands (in
+   force, replaced by which proposal, repealed, open, lapsed), and the repeal
+   proposals that name one of them. `proposal show` and `rule list` print the digest.
+4. *Rolling back.* `rule restore <name> --circle <c> --to <proposal>` puts the text
+   of an earlier version that had passed back to the vote.
+
+**Decisions.**
+
+* **The comparison is against the rule in force on the voter's node, not against what
+  the proposer named.** `supersedes` is the proposer's claim. If the diff were taken
+  from it, a proposer could name a text close to theirs and make a large change look
+  small. While a rule of the name is in force, that rule is what the vote would
+  replace, and it is what the diff is taken from. `supersedes` is read only where no
+  other rule of the name is in force (a proposal that is itself in force, or a name
+  with no rule), and there it is labelled as what the proposal names.
+* **The comparison is shown, and decides nothing.** A ballot signs the proposal id and
+  so the whole text, which every preview still shows in full. The rule in force can
+  change while a voter reads; then the diff they read was against an earlier state,
+  and the text they approved is still exactly the text they were shown. For the
+  proposer it is checked: `supersedes` is signed, so `proposal create` and `rule
+  restore` look again, with the key unlocked and in the transaction that signs
+  (`governance::name_as_shown`), and sign nothing when the rule of that name is no
+  longer the one the preview compared with.
+* **A diff is two rules' texts.** Every line of it is behind a mark
+  (`output::quoted`), and inside a coding agent's session it is not printed: `proposal
+  show` says there which version the proposal stands against and no more (the rule of
+  ADR-051 for a rule's text). In a window it is part of the preview, which is shown
+  in full or not at all; a comparison that does not fit sends the step to the
+  terminal.
+* **Restoring is a vote, with nothing carried over.** `rule restore` signs a new
+  `adopt` proposal for the old digest. The approvals of the earlier proposal do not
+  count for it (an approval is for one proposal id), the members read the text and
+  the changes like for any proposal, and until it passes nothing changes. It is asked
+  in the terminal only: no window and no MCP tool, like `rule repeal`. It takes only
+  a version that had passed; a text the circle never approved is proposed from a
+  note. No protocol change: the same PROPOSAL body, the same vectors.
+* **A replacing proposal is dated after the rule it replaces.** Of two passed rules of
+  one name the one with the later `created_at` is in force, and a timestamp counts
+  seconds. A proposal signed in the same second as the rule in force (a script), or
+  on a clock slightly behind its proposer's, could pass and change nothing, after a
+  preview that said it takes the rule's place. `versions::signing_time` dates it one
+  second after that rule where the clock is not already past it, and refuses when
+  that would be more than a minute ahead of the local clock (every node allows 300
+  seconds of skew).
+* **Not added: a list of "the commands in the text".** The text is free prose, and a
+  command need not be marked as code. A list drawn from backticks would look complete
+  and not be. The reviewer reads the whole text, which is short by construction, and
+  the scanner's findings beside it, which say of themselves that they prove nothing.
+
+**Tests.** `apps/peerharness/tests/rule_versions.rs` takes a rule that names a
+destructive command through note, save, proposal, ballot and install and checks after
+every step that the folder it would delete is there and the file it would create is
+not, that nothing is in the agent's directory before the vote and the owner's yes,
+and that the loader's shell syntax is refused before anything is saved. Its second
+test proposes a new version, reads the changes in each preview, checks that the
+approved text stays installed until the new one passes and that a session is shown
+neither text nor changes, then reads the history and restores the first version.

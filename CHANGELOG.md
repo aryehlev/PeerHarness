@@ -9,6 +9,20 @@ database schema it writes.
 
 ## Unreleased
 
+* A new version of a rule is shown as a change (ADR-053). `proposal create` for a
+  rule whose name is in force shows a diff from the rule in force, names that rule as
+  the version it replaces (`supersedes`) and refuses a text that is word for word the
+  one in force. `proposal show`, the ballot and `proposal adopt` show the same diff.
+  The diff is taken from the rule in force on the reader's own node, not from what
+  the proposer named, and is not printed inside a coding agent's session.
+* A ballot on a rule shows the rule's exact text and the scanner's findings in the
+  terminal too, not only in a window.
+* `rule history <name> --circle <team>` lists every version of a rule that was put to
+  the vote: the digest of its text, who proposed it, who approved it and where it
+  stands. `proposal show` and `rule list` print the digest of the text.
+* `rule restore <name> --circle <team> --to <proposal>` puts an earlier version of a
+  rule back to the vote. It is a new proposal: earlier approvals do not count for it.
+  The protocol and the database schema are unchanged.
 * PeerHarness connects nine more coding agents: Gemini CLI, Qwen Code, GitHub Copilot
   CLI, Cursor, Amp, Factory's Droid, Crush, Kilo and goose (`watch gemini`, `qwen`,
   `copilot`, `cursor`, `amp`, `droid`, `crush`, `kilo`, `goose`). Gemini CLI, Qwen

@@ -842,6 +842,32 @@ pub fn rule_as_shown(
     Ok(rules.get(name).is_some_and(|r| r.proposal_id() == *shown))
 }
 
+/// Whether the name `name` still stands in `circle` as a preview said: the rule of that
+/// name in force is the one `shown` put in force, or, for `None`, no rule has the name.
+///
+/// A proposal for a rule's text is shown beside the version it would replace
+/// ([`crate::versions`]), and it names that version in `supersedes`. A rule can take
+/// the name, or leave force, while the owner reads. Like [`rule_as_shown`], this takes
+/// the unlocked key it is checked for and runs in the transaction that signs.
+pub fn name_as_shown(
+    store: &Store,
+    unlocked: &SigningKey,
+    circle: &CircleId,
+    name: &str,
+    shown: Option<&EventId>,
+) -> Result<bool> {
+    let _ = unlocked;
+    let (_, rules, _) = rule_set(store, circle)?;
+    Ok(rules.get(name).map(|r| r.proposal_id()) == shown.copied())
+}
+
+/// The refusal of a proposal for a rule's text when the rule of its name is no longer
+/// the one its preview compared it with. Names nothing a member wrote.
+pub const VERSION_CHANGED: &str =
+    "the rule of that name changed on this node while this was being confirmed: what you \
+     were shown as the version in force is no longer it. Nothing was proposed and nothing \
+     was signed. Run the command again to see the changes as they are now.";
+
 fn sign_proposal(
     store: &Store,
     key: &SigningKey,

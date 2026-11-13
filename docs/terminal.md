@@ -539,6 +539,7 @@ peerharness question answer <question-id> --answer agree --rationale "we already
 
 # Rules, on your own machine.
 peerharness rule list                               # what is in force, and where it stands here
+peerharness rule history <name> --circle team       # every version that was voted on: its text's digest, who approved it
 peerharness rule opt-out <name> --circle team       # keep one rule off your machine; add --announce to put it on record
 peerharness rule opt-in <name> --circle team        # follow it again: shows the rule's text and where it goes, and asks
 peerharness circle mode ask --circle team           # be asked before any rule is installed; what is installed stays
@@ -547,6 +548,7 @@ peerharness circle place repo/web --circle team --project ~/code/web   # rules o
 
 # The circle. Each of these is put to the vote.
 peerharness rule repeal <name> --circle team        # vote a rule out
+peerharness rule restore <name> --circle team --to <proposal-id>   # vote an earlier version back in
 peerharness circle remove <member> --circle team    # vote someone off the roll
 peerharness circle device add <device key> --circle team   # a second device; still one vote
 peerharness circle amend --circle team --pass 2/3   # change the rules of the vote

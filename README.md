@@ -229,6 +229,10 @@ each one. These are done there and not through your agent:
   (`peerharness circle mode ask --circle <team>`), and opting out of one rule
   (`peerharness rule opt-out <name> --circle <team>`).
 * **Removing a member, leaving, changing the rules of the vote and repealing a rule.**
+* **The versions of a rule**: who approved which text
+  (`peerharness rule history <name> --circle <team>`), and voting an earlier one back
+  in (`peerharness rule restore`). A new version of a rule is always shown with its
+  changes from the one in force before anyone votes.
 * **Editing or rejecting a noted rule**, and anything about a rule that the scanner
   calls high-risk.
 * **Every decision on Linux**, where no window can be shown.

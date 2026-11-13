@@ -29,6 +29,7 @@ mod notify;
 mod output;
 mod peer;
 mod runtime;
+mod versions;
 mod window;
 
 use clap::Parser;
