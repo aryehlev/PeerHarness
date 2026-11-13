@@ -652,14 +652,7 @@ pub(crate) fn looks_non_string(s: &str) -> bool {
     }
     // YAML 1.1 timestamps: YYYY-M-D...
     let b = s.as_bytes();
-    if b.len() >= 8
-        && b[..4].iter().all(u8::is_ascii_digit)
-        && b[4] == b'-'
-        && b[5].is_ascii_digit()
-    {
-        return true;
-    }
-    false
+    b.len() >= 8 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-' && b[5].is_ascii_digit()
 }
 
 #[cfg(test)]
